@@ -8,7 +8,7 @@ import { TemplateSettingsPage } from "./settings/pages/TemplateSettingsPage";
 import { SyncSettingsPage } from "./settings/pages/SyncSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
 
-type SettingsTab = "general" | "terminal-theme" | "shortcuts" | "templates" | "sync";
+export type SettingsTab = "general" | "terminal-theme" | "shortcuts" | "templates" | "sync";
 
 interface SettingsTabConfig {
   label: string;
@@ -55,10 +55,11 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
 interface Props {
   open: boolean;
   onClose: () => void;
+  initialTab?: SettingsTab;
 }
 
-export function SettingsModal({ open, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+export function SettingsModal({ open, onClose, initialTab }: Props) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? "general");
   const [searchValue, setSearchValue] = useState("");
   const [mounted, setMounted] = useState(open);
   const [closing, setClosing] = useState(false);
@@ -68,6 +69,7 @@ export function SettingsModal({ open, onClose }: Props) {
 
   useEffect(() => {
     if (open) {
+      if (initialTab) setActiveTab(initialTab);
       setMounted(true);
       setClosing(false);
       return;

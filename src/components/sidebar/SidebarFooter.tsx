@@ -1,6 +1,7 @@
 import { ThemeToggle } from "../ThemeToggle";
 import { BarChart3, Settings, Terminal, TerminalSquare } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
+import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarFooterProps {
   collapsed: boolean;
@@ -9,7 +10,7 @@ interface SidebarFooterProps {
   onToggleExternalTerminal: () => void;
   onToggleCompactMode: () => void;
   onOpenStats?: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
 }
 
 export function SidebarFooter({
@@ -37,7 +38,7 @@ export function SidebarFooter({
             <BarChart3 size={14} strokeWidth={1.5} />
           </button>
           <button
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings()}
             className="ui-focus-ring ui-icon-action"
             title="设置"
             aria-label="打开设置"
@@ -85,7 +86,7 @@ export function SidebarFooter({
             <BarChart3 size={14} strokeWidth={1.5} />
           </button>
           <button
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings()}
             className="ui-focus-ring ui-icon-action"
             title="设置"
             aria-label="打开设置"

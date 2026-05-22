@@ -16,10 +16,11 @@ import { SidebarHeader } from "./SidebarHeader";
 import { SidebarSearch } from "./SidebarSearch";
 import { ProjectTree } from "./ProjectTree";
 import { SidebarFooter } from "./SidebarFooter";
+import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarProps {
   onOpenStats?: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   compactMode?: boolean;
 }
 

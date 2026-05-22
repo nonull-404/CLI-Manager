@@ -7,6 +7,11 @@
 - 修复精简模式在最大化或全屏状态下切换设置时强制还原窗口的问题。
 - 修复终端中文输入法组合输入期间可能触发滚动跳动的问题。
 
+### 设置入口跳转修复
+
+- 修复侧栏左下角「云同步」入口点击后只能进入设置首页（通用）的问题，现在会直接打开「设置 - 同步」页签。
+- `SettingsModal` 支持 `initialTab` 参数；`Sidebar` / `SidebarFooter` / `SyncStatusIndicator` 的 `onOpenSettings` 升级为 `(tab?: SettingsTab) => void`，云同步入口传入 `"sync"`。
+
 ## [V0.1.0] - 2026-05-12
 ### 内部终端性能优化
 
