@@ -1,21 +1,12 @@
 # Frontend Development Guidelines
 
-> Working conventions for the React + Tauri frontend in this repository.
+> Best practices for frontend development in this project.
 
 ---
 
 ## Overview
 
-These guides describe the frontend as it exists today:
-
-- React function components in `src/components/`
-- Global app state with Zustand stores in `src/stores/`
-- Shared business types in `src/lib/types.ts`
-- Styling built from Tailwind utilities plus centralized `ui-*` classes in `src/App.css`
-- Quality gate centered on `npm run build` (`tsc && vite build`), plus manual interaction and accessibility checks
-
-This package does not use a separate `pages/` directory, React Query, SWR, Zod, or a formal frontend test suite.
-Document the current reality and extend existing patterns instead of importing a new architecture.
+This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
 
 ---
 
@@ -23,32 +14,26 @@ Document the current reality and extend existing patterns instead of importing a
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | Documented |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Documented |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Documented |
-| [State Management](./state-management.md) | Local state, global state, async data flow | Documented |
-| [Quality Guidelines](./quality-guidelines.md) | Build gate, review expectations, forbidden patterns | Documented |
-| [Type Safety](./type-safety.md) | Type organization, runtime normalization, TS rules | Documented |
+| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
+| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
+| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
+| [State Management](./state-management.md) | Local state, global state, server state | To fill |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
+| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
 
 ---
 
-## How to Use These Guides
+## How to Fill These Guidelines
 
-1. Start from the guide that matches the layer you are touching.
-2. Reuse existing structures before adding a new folder, helper, hook, or primitive.
-3. Prefer examples from the current codebase over generic React advice.
-4. Treat `src/App.css`, `src/stores/`, and `src/lib/types.ts` as shared foundations, not ad hoc dumping grounds.
+For each guideline file:
 
----
+1. Document your project's **actual conventions** (not ideals)
+2. Include **code examples** from your codebase
+3. List **forbidden patterns** and why
+4. Add **common mistakes** your team has made
 
-## Key Reference Files
-
-- `src/App.tsx` - app shell composition and startup effects
-- `src/App.css` - semantic tokens and shared `ui-*` styling primitives
-- `src/components/sidebar/index.tsx` - feature shell composition and local-vs-global state boundary
-- `src/stores/historyStore.ts` - largest async Zustand store, normalization, caching
-- `src/lib/types.ts` - shared frontend business types
+The goal is to help AI assistants and new team members understand how YOUR project works.
 
 ---
 
-**Language**: All frontend guideline files in this directory are written in English on purpose.
+**Language**: All documentation should be written in **English**.

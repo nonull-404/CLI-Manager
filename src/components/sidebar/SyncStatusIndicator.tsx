@@ -1,13 +1,16 @@
 import { useSyncStore } from "../../stores/syncStore";
 import { Cloud, Upload, Download } from "../icons";
+import type { SettingsTab } from "../SettingsModal";
 
 interface SyncStatusIndicatorProps {
   collapsed?: boolean;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (tab?: SettingsTab) => void;
 }
 
 export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusIndicatorProps) {
   const { status, lastSyncAt, hasPassword, upload, download } = useSyncStore();
+
+  const openSyncSettings = () => onOpenSettings?.("sync");
 
   const getStatusColor = () => {
     if (!hasPassword) return "text-on-surface-variant opacity-60";
@@ -43,7 +46,7 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
 
   const handleUpload = async () => {
     if (!hasPassword) {
-      onOpenSettings?.();
+      openSyncSettings();
       return;
     }
     await upload();
@@ -51,7 +54,7 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
 
   const handleDownload = async () => {
     if (!hasPassword) {
-      onOpenSettings?.();
+      openSyncSettings();
       return;
     }
     await download();
@@ -74,10 +77,10 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
   return (
     <div className="flex items-center justify-between gap-2">
       <button
-        onClick={onOpenSettings}
+        onClick={openSyncSettings}
         className={`ui-sidebar-sync-link ${getStatusColor()}`}
-        title={hasPassword ? undefined : "点击配置云同步"}
-        aria-label={hasPassword ? undefined : "配置云同步"}
+        title={hasPassword ? "点击打开同步设置" : "点击配置云同步"}
+        aria-label={hasPassword ? "打开同步设置" : "配置云同步"}
       >
         <Cloud size={12} strokeWidth={1.5} />
         <span className="text-xs">{getStatusText()}</span>

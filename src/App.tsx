@@ -8,7 +8,7 @@ import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { CommandPalette } from "./components/CommandPalette";
 import { StatsPanel } from "./components/stats/StatsPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -49,6 +49,7 @@ function App() {
   const updateSetting = useSettingsStore((s) => s.update);
   const [statsOpen, setStatsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const restoreWindowWidthRef = useRef<number | null>(null);
   const closeBehaviorRef = useRef(closeBehavior);
@@ -352,7 +353,10 @@ function App() {
         <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
           <Sidebar
             onOpenStats={handleOpenStats}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={(tab) => {
+              setSettingsInitialTab(tab ?? "general");
+              setSettingsOpen(true);
+            }}
             compactMode
           />
         </div>
@@ -360,7 +364,10 @@ function App() {
         <div className="flex min-h-0 flex-1">
           <Sidebar
             onOpenStats={handleOpenStats}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={(tab) => {
+              setSettingsInitialTab(tab ?? "general");
+              setSettingsOpen(true);
+            }}
           />
           <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
             <TerminalTabs />
@@ -374,7 +381,7 @@ function App() {
         onClose={() => setStatsOpen(false)}
         onOpenSession={handleOpenSessionFromStats}
       />
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialTab={settingsInitialTab} />
       <CloseConfirmDialog
         open={closeDialogOpen}
         onMinimize={handleCloseDialogMinimize}

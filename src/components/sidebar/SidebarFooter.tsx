@@ -1,7 +1,7 @@
 import { ThemeToggle } from "../ThemeToggle";
 import { BarChart3, Settings, Terminal, TerminalSquare } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
-import { Switch } from "../ui/switch";
+import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarFooterProps {
   collapsed: boolean;
@@ -10,7 +10,7 @@ interface SidebarFooterProps {
   onToggleExternalTerminal: () => void;
   onToggleCompactMode: () => void;
   onOpenStats?: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
 }
 
 export function SidebarFooter({
@@ -38,7 +38,7 @@ export function SidebarFooter({
             <BarChart3 size={14} strokeWidth={1.5} />
           </button>
           <button
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings()}
             className="ui-focus-ring ui-icon-action"
             title="设置"
             aria-label="打开设置"
@@ -86,7 +86,7 @@ export function SidebarFooter({
             <BarChart3 size={14} strokeWidth={1.5} />
           </button>
           <button
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings()}
             className="ui-focus-ring ui-icon-action"
             title="设置"
             aria-label="打开设置"
@@ -97,21 +97,29 @@ export function SidebarFooter({
       </div>
       <div className="ui-sidebar-footer-card mt-3 flex items-center justify-between gap-3 px-3 py-2.5">
         <div className="text-xs font-semibold text-on-surface">外部终端</div>
-        <Switch
-          checked={useExternalTerminal}
-          onCheckedChange={() => onToggleExternalTerminal()}
+        <button
+          className="switch ui-focus-ring"
+          data-on={useExternalTerminal ? "true" : "false"}
+          onClick={onToggleExternalTerminal}
           title="使用 Windows Terminal 打开"
           aria-label={useExternalTerminal ? "关闭外部终端" : "开启外部终端"}
-        />
+          aria-pressed={useExternalTerminal}
+        >
+          <span className="switch-thumb" />
+        </button>
       </div>
       <div className="ui-sidebar-footer-card mt-2 flex items-center justify-between gap-3 px-3 py-2.5">
         <div className="text-xs font-semibold text-on-surface">精简模式</div>
-        <Switch
-          checked={compactModeEnabled}
-          onCheckedChange={() => onToggleCompactMode()}
+        <button
+          className="switch ui-focus-ring"
+          data-on={compactModeEnabled ? "true" : "false"}
+          onClick={onToggleCompactMode}
           title="隐藏右侧内嵌终端，仅保留左侧启动器"
           aria-label={compactModeEnabled ? "关闭精简模式" : "开启精简模式"}
-        />
+          aria-pressed={compactModeEnabled}
+        >
+          <span className="switch-thumb" />
+        </button>
       </div>
       <div className="mt-2">
         <SyncStatusIndicator onOpenSettings={onOpenSettings} />
