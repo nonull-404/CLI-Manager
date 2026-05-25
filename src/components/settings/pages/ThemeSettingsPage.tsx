@@ -6,6 +6,7 @@ import {
   resolveAutoTerminalThemeId,
 } from "../../../lib/terminalThemes";
 import { useSettingsStore } from "../../../stores/settingsStore";
+import { TerminalBackgroundSection } from "./TerminalBackgroundSection";
 
 const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
 
@@ -53,8 +54,9 @@ export function ThemeSettingsPage() {
   ]);
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
+        <section className="ui-surface-card rounded-2xl border border-border p-4">
         <div className="mb-4">
           <div className="mb-2 text-sm font-semibold text-on-surface">终端主题模式</div>
           <div className="ui-segmented" role="group" aria-label="终端主题模式切换">
@@ -169,6 +171,8 @@ export function ThemeSettingsPage() {
           </div>
         </div>
       </aside>
+      </div>
+      <TerminalBackgroundSection />
     </div>
   );
 }

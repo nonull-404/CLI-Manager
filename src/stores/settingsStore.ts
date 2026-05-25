@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
+import { backgroundImageExists } from "../lib/assetUrl";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type LightThemePalette =
@@ -21,6 +22,48 @@ export type CloseBehavior = "ask" | "minimize" | "exit";
 export type ShortcutAction = "newTerminal" | "closeTerminal" | "nextTab" | "prevTab" | "commandPalette";
 export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 export type TerminalNewlineShortcut = "Shift+Enter" | "Ctrl+Enter" | "Alt+Enter";
+
+export type TerminalBackgroundFit = "cover" | "contain" | "center" | "tile";
+export type TerminalBackgroundPosition =
+  | "top-left"
+  | "top-center"
+  | "top-right"
+  | "center-left"
+  | "center"
+  | "center-right"
+  | "bottom-left"
+  | "bottom-center"
+  | "bottom-right";
+
+export interface TerminalBackgroundSettings {
+  enabled: boolean;
+  imagePath: string | null;
+  imageSizeBytes: number | null;
+  opacity: number;
+  fit: TerminalBackgroundFit;
+  position: TerminalBackgroundPosition;
+  blur: number;
+  overlayDarken: number;
+}
+
+const TERMINAL_BACKGROUND_FITS: readonly TerminalBackgroundFit[] = [
+  "cover",
+  "contain",
+  "center",
+  "tile",
+] as const;
+
+const TERMINAL_BACKGROUND_POSITIONS: readonly TerminalBackgroundPosition[] = [
+  "top-left",
+  "top-center",
+  "top-right",
+  "center-left",
+  "center",
+  "center-right",
+  "bottom-left",
+  "bottom-center",
+  "bottom-right",
+] as const;
 
 interface Settings {
   theme: ThemeMode;
@@ -42,16 +85,20 @@ interface Settings {
   closeBehavior: CloseBehavior;
   keyboardShortcuts: KeyboardShortcutMap;
   terminalNewlineShortcut: TerminalNewlineShortcut;
+  terminalBackground: TerminalBackgroundSettings;
 }
 
 interface SettingsStore extends Settings {
   resolvedTheme: "dark" | "light";
   loaded: boolean;
+  /** Transient flag: set when the saved terminal background image was not found on disk at load. */
+  terminalBackgroundMissing: boolean;
   load: () => Promise<void>;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => Promise<void>;
   setTheme: (mode: ThemeMode) => Promise<void>;
   setTerminalThemeMode: (mode: TerminalThemeMode) => Promise<void>;
   syncSystemTheme: () => void;
+  clearTerminalBackgroundMissing: () => void;
 }
 
 const DEFAULTS: Settings = {
@@ -81,6 +128,16 @@ const DEFAULTS: Settings = {
     commandPalette: "Ctrl+P",
   },
   terminalNewlineShortcut: "Shift+Enter",
+  terminalBackground: {
+    enabled: false,
+    imagePath: null,
+    imageSizeBytes: null,
+    opacity: 50,
+    fit: "cover",
+    position: "center",
+    blur: 0,
+    overlayDarken: 30,
+  },
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -121,6 +178,49 @@ function migrateTerminalThemeName(value: unknown): string | undefined {
   return LEGACY_TERMINAL_THEME_MAP[value] ?? value;
 }
 
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+export function migrateTerminalBackground(value: unknown): TerminalBackgroundSettings {
+  const defaults = DEFAULTS.terminalBackground;
+  if (typeof value !== "object" || value === null) {
+    return { ...defaults };
+  }
+  const raw = value as Record<string, unknown>;
+
+  const enabled = typeof raw.enabled === "boolean" ? raw.enabled : defaults.enabled;
+  const imagePath =
+    typeof raw.imagePath === "string" && raw.imagePath.length > 0
+      ? raw.imagePath
+      : raw.imagePath === null
+      ? null
+      : defaults.imagePath;
+  const imageSizeBytes =
+    typeof raw.imageSizeBytes === "number" && Number.isFinite(raw.imageSizeBytes) && raw.imageSizeBytes >= 0
+      ? raw.imageSizeBytes
+      : defaults.imageSizeBytes;
+  const opacity = clampNumber(raw.opacity, 0, 100, defaults.opacity);
+  const blur = clampNumber(raw.blur, 0, 20, defaults.blur);
+  const overlayDarken = clampNumber(raw.overlayDarken, 0, 80, defaults.overlayDarken);
+
+  const fit: TerminalBackgroundFit =
+    typeof raw.fit === "string" && TERMINAL_BACKGROUND_FITS.includes(raw.fit as TerminalBackgroundFit)
+      ? (raw.fit as TerminalBackgroundFit)
+      : defaults.fit;
+
+  const position: TerminalBackgroundPosition =
+    typeof raw.position === "string" &&
+    TERMINAL_BACKGROUND_POSITIONS.includes(raw.position as TerminalBackgroundPosition)
+      ? (raw.position as TerminalBackgroundPosition)
+      : defaults.position;
+
+  return { enabled, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken };
+}
+
 let store: Store | null = null;
 async function getStore() {
   if (!store) {
@@ -141,6 +241,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...DEFAULTS,
   resolvedTheme: resolveTheme(DEFAULTS.theme),
   loaded: false,
+  terminalBackgroundMissing: false,
 
   load: async () => {
     const s = await getStore();
@@ -211,7 +312,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       entries.keyboardShortcuts = { ...DEFAULTS.keyboardShortcuts, ...entries.keyboardShortcuts };
     }
 
-    set({ ...entries, resolvedTheme, loaded: true });
+    entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+
+    // 检测背景图是否仍存在；若不存在，仅在内存中清空 imagePath，保留 settings.json
+    // 中的原配置，便于后续提示用户「之前选的图丢了」。
+    let terminalBackgroundMissing = false;
+    let runtimeTerminalBackground = entries.terminalBackground;
+    if (entries.terminalBackground.enabled && entries.terminalBackground.imagePath) {
+      const exists = await backgroundImageExists(entries.terminalBackground.imagePath);
+      if (!exists) {
+        terminalBackgroundMissing = true;
+        runtimeTerminalBackground = { ...entries.terminalBackground, imagePath: null };
+      }
+    }
+    entries.terminalBackground = runtimeTerminalBackground;
+
+    set({ ...entries, resolvedTheme, loaded: true, terminalBackgroundMissing });
     void applyDebugMode(debugMode);
   },
 
@@ -252,5 +368,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     await s.set("terminalThemeMode", mode);
     set({ terminalThemeMode: mode, terminalThemeName: nextThemeName });
+  },
+
+  clearTerminalBackgroundMissing: () => {
+    set({ terminalBackgroundMissing: false });
   },
 }));
