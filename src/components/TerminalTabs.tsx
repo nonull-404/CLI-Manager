@@ -11,7 +11,7 @@ import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { HistoryWorkspace } from "./HistoryWorkspace";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { Terminal, Plus, Search } from "./icons";
+import { Terminal, Plus, Search, X } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
 import {
@@ -77,7 +77,7 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, menuCon
             aria-label={`关闭终端 ${title}`}
             title={`关闭终端 ${title}`}
           >
-            &times;
+            <X size={13} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </div>
       </ContextMenuTrigger>
