@@ -8,6 +8,7 @@ import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { CommandPalette } from "./components/CommandPalette";
 import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
+import { StatsPanel } from "./components/stats/StatsPanel";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
 import { AlertTriangle, Check, X } from "./components/icons";
@@ -157,8 +158,12 @@ function App() {
   const viewMode = useSettingsStore((s) => s.viewMode);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const updateSetting = useSettingsStore((s) => s.update);
+  const historySessions = useHistoryStore((s) => s.sessions);
+  const openHistory = useHistoryStore((s) => s.openHistory);
+  const openHistorySession = useHistoryStore((s) => s.openSession);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
+  const [statsOpen, setStatsOpen] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const restoreWindowWidthRef = useRef<number | null>(null);
   const closeBehaviorRef = useRef(closeBehavior);
@@ -175,6 +180,24 @@ function App() {
       toast.error("退出自动同步失败", { description: "请检查 WebDAV 配置或网络连接。" });
     }
   }, []);
+
+  const handleOpenStats = useCallback(() => {
+    setStatsOpen(true);
+    const history = useHistoryStore.getState();
+    if (history.sessions.length === 0) {
+      void history.loadSessions().catch((err) => {
+        toast.error("加载历史会话失败", { description: String(err) });
+      });
+    }
+  }, []);
+
+  const handleOpenStatsSession = useCallback(
+    async (sessionKey: string) => {
+      await openHistory();
+      await openHistorySession(sessionKey);
+    },
+    [openHistory, openHistorySession]
+  );
 
   useKeyboardShortcuts();
 
@@ -491,6 +514,7 @@ function App() {
               setSettingsInitialTab(tab ?? "general");
               setSettingsOpen(true);
             }}
+            onOpenStats={handleOpenStats}
             compactMode
           />
         </div>
@@ -501,6 +525,7 @@ function App() {
               setSettingsInitialTab(tab ?? "general");
               setSettingsOpen(true);
             }}
+            onOpenStats={handleOpenStats}
           />
           <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
             <TerminalTabs />
@@ -509,6 +534,12 @@ function App() {
       )}
       <CommandPalette />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialTab={settingsInitialTab} />
+      <StatsPanel
+        open={statsOpen}
+        sessions={historySessions}
+        onClose={() => setStatsOpen(false)}
+        onOpenSession={handleOpenStatsSession}
+      />
       <CloseConfirmDialog
         open={closeDialogOpen}
         onMinimize={handleCloseDialogMinimize}

@@ -1,5 +1,5 @@
 import { useSyncStore } from "../../stores/syncStore";
-import { Cloud, Upload, Download } from "../icons";
+import { Cloud } from "../icons";
 import type { SettingsTab } from "../SettingsModal";
 
 interface SyncStatusIndicatorProps {
@@ -8,7 +8,7 @@ interface SyncStatusIndicatorProps {
 }
 
 export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusIndicatorProps) {
-  const { status, lastSyncAt, hasPassword, upload, download } = useSyncStore();
+  const { status, lastSyncAt, hasPassword } = useSyncStore();
 
   const openSyncSettings = () => onOpenSettings?.("sync");
 
@@ -44,30 +44,13 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
     }
   };
 
-  const handleUpload = async () => {
-    if (!hasPassword) {
-      openSyncSettings();
-      return;
-    }
-    await upload();
-  };
-
-  const handleDownload = async () => {
-    if (!hasPassword) {
-      openSyncSettings();
-      return;
-    }
-    await download();
-  };
-
   if (collapsed) {
     return (
       <button
-        onClick={handleUpload}
-        disabled={hasPassword && status === "syncing"}
+        onClick={openSyncSettings}
         className={`ui-focus-ring ui-icon-action ${getStatusColor()}`}
-        title={hasPassword ? `云同步: ${getStatusText()} (点击上传)` : "云同步未配置 (点击设置)"}
-        aria-label={hasPassword ? "上传配置到云端" : "配置云同步"}
+        title={hasPassword ? `云同步: ${getStatusText()}` : "云同步未配置 (点击设置)"}
+        aria-label={hasPassword ? "打开同步设置" : "配置云同步"}
       >
         <Cloud size={14} strokeWidth={1.5} />
       </button>
@@ -85,26 +68,6 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
         <Cloud size={12} strokeWidth={1.5} />
         <span className="text-xs">{getStatusText()}</span>
       </button>
-      <div className="ui-sidebar-sync-actions">
-        <button
-          onClick={handleUpload}
-          disabled={hasPassword && status === "syncing"}
-          className="ui-focus-ring rounded p-0.5 text-on-surface-variant hover:text-on-surface disabled:opacity-50"
-          title={hasPassword ? "上传到云端" : "点击配置云同步"}
-          aria-label={hasPassword ? "上传配置到云端" : "配置云同步"}
-        >
-          <Upload size={12} strokeWidth={1.5} />
-        </button>
-        <button
-          onClick={handleDownload}
-          disabled={hasPassword && status === "syncing"}
-          className="ui-focus-ring rounded p-0.5 text-on-surface-variant hover:text-on-surface disabled:opacity-50"
-          title={hasPassword ? "从云端下载" : "点击配置云同步"}
-          aria-label={hasPassword ? "从云端下载配置" : "配置云同步"}
-        >
-          <Download size={12} strokeWidth={1.5} />
-        </button>
-      </div>
     </div>
   );
 }

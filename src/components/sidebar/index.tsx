@@ -20,6 +20,7 @@ import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarProps {
   onOpenSettings: (tab?: SettingsTab) => void;
+  onOpenStats: () => void;
   compactMode?: boolean;
 }
 
@@ -38,7 +39,7 @@ function normalizePersistedSidebarWidth(width: number): number {
   return clampExpandedSidebarWidth(width);
 }
 
-export function Sidebar({ onOpenSettings, compactMode = false }: SidebarProps) {
+export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: SidebarProps) {
   const {
     tree,
     projects,
@@ -773,6 +774,7 @@ export function Sidebar({ onOpenSettings, compactMode = false }: SidebarProps) {
         <SidebarFooter
           collapsed={compactMode ? false : sidebarCollapsed}
           onOpenSettings={onOpenSettings}
+          onOpenStats={onOpenStats}
         />
       </div>
 

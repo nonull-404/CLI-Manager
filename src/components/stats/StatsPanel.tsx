@@ -15,6 +15,7 @@ import { StatsSourceComparisonChart } from "./StatsSourceComparisonChart";
 import { StatsProjectEfficiencyScatter } from "./StatsProjectEfficiencyScatter";
 import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
 import { Skeleton } from "../ui/Skeleton";
+import { Portal } from "../ui/Portal";
 
 interface StatsPanelProps {
   open: boolean;
@@ -24,6 +25,7 @@ interface StatsPanelProps {
 }
 
 const DAY_SESSION_PAGE_SIZE = 120;
+const ALL_PROJECTS_VALUE = "__all_projects__";
 
 function formatCount(value: number): string {
   if (!Number.isFinite(value)) return "0";
@@ -144,13 +146,14 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
   if (!open) return null;
 
   return (
-    <div
-      className="absolute inset-0 flex items-center justify-center p-4"
-      style={{ zIndex: 57, backgroundColor: "rgba(0, 0, 0, 0.45)" }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <Portal>
+      <div
+        className="fixed inset-0 flex items-center justify-center p-4"
+        style={{ zIndex: 57, backgroundColor: "rgba(0, 0, 0, 0.45)" }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
       <Card className="ui-stats-panel h-[min(86vh,860px)] w-full max-w-6xl overflow-hidden rounded-2xl bg-bg-primary flex flex-col">
         <div className="ui-stats-panel-header flex items-center justify-between border-b border-border px-3 py-2">
           <div>
@@ -169,12 +172,15 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
 
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
           <Select
-            value={projectKey}
-            onChange={(e) => setProjectKey(e.target.value)}
+            value={projectKey || ALL_PROJECTS_VALUE}
+            onChange={(e) => {
+              const next = e.target.value;
+              setProjectKey(next === ALL_PROJECTS_VALUE ? "" : next);
+            }}
             className="h-8 w-auto min-w-[124px] shrink-0 text-xs"
             aria-label="项目过滤"
           >
-            <option value="">全部项目</option>
+            <option value={ALL_PROJECTS_VALUE}>全部项目</option>
             {projectOptions.map((project) => (
               <option key={project} value={project}>
                 {project}
@@ -356,5 +362,6 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
         </div>
       </Card>
     </div>
+    </Portal>
   );
 }
