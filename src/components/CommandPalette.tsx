@@ -7,7 +7,8 @@ import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useHistoryStore } from "../stores/historyStore";
-import { Dialog } from "./ui/dialog";
+import { Dialog, DialogOverlay } from "./ui/dialog";
+import { Input } from "./ui/input";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
 import { openWindowsTerminal } from "../lib/externalTerminal";
@@ -243,34 +244,29 @@ export function CommandPalette() {
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay
-          className="fixed inset-0 z-50 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
-          style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
-        />
+        <DialogOverlay />
         <DialogPrimitive.Content
-          className="fixed inset-x-0 top-[15vh] z-50 mx-auto w-full max-w-lg rounded-lg border shadow-2xl overflow-hidden outline-none data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out"
-          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+          className="ui-surface-card fixed inset-x-4 top-[15vh] z-50 mx-auto w-auto max-w-lg overflow-hidden p-0 outline-none data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             requestAnimationFrame(() => inputRef.current?.focus());
           }}
         >
           <DialogPrimitive.Title className="sr-only">命令面板</DialogPrimitive.Title>
-          <div className="p-3 border-b" style={{ borderColor: "var(--border)" }}>
-            <input
+          <div className="border-b border-border p-3">
+            <Input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
               onKeyDown={handleKeyDown}
               placeholder="输入命令或搜索项目..."
-              className="w-full bg-transparent text-sm outline-none"
-              style={{ color: "var(--text-primary)" }}
+              className="h-9 text-sm"
             />
           </div>
-          <div ref={listRef} className="max-h-80 overflow-y-auto p-1">
+          <div ref={listRef} className="max-h-80 overflow-y-auto p-2">
             {filtered.length === 0 && (
-              <div className="px-3 py-6 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+              <div className="px-3 py-8 text-center text-xs text-on-surface-variant">
                 无匹配结果
               </div>
             )}
@@ -279,23 +275,20 @@ export function CommandPalette() {
               return (
                 <Fragment key={item.id}>
                   {showHeader && (
-                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                    <div className="mb-1 mt-2 rounded-md border border-border/60 bg-surface-container-high px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-on-surface first:mt-0">
                       {item.category}
                     </div>
                   )}
                   <div
                     data-idx={i}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer text-xs"
-                    style={{
-                      backgroundColor: i === selectedIndex ? "var(--bg-tertiary)" : "transparent",
-                      color: i === selectedIndex ? "var(--text-primary)" : "var(--text-secondary)",
-                    }}
+                    data-selected={i === selectedIndex}
+                    className="ui-interactive flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-on-surface-variant"
                     onMouseEnter={() => setSelectedIndex(i)}
                     onClick={() => { close(); item.action(); }}
                   >
-                    <span className="truncate font-medium">{item.label}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-on-surface">{item.label}</span>
                     {item.description && (
-                      <span className="truncate ml-auto text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      <span className="ml-auto max-w-[45%] truncate text-[10px] text-on-surface-variant">
                         {item.description}
                       </span>
                     )}
