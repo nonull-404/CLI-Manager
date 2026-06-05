@@ -762,7 +762,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
         </div>
       </div>
 
-      <div className={`relative flex-1 min-h-0 overflow-hidden ${fullscreen ? "px-0 pb-0 pt-0" : "px-3 pb-3 pt-3"}`}>
+      <div className="relative flex-1 min-h-0 overflow-hidden">
         {historyOpen && (
           <div
             className={`absolute min-h-0 overflow-hidden ${fullscreen ? "inset-x-0 bottom-0 top-0" : "inset-x-3 bottom-3 top-3"}`}
@@ -772,7 +772,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           </div>
         )}
         <div
-          className={`ui-terminal-well absolute min-h-0 ${fullscreen ? "inset-x-0 bottom-0 top-0" : "inset-x-3 bottom-3 top-3"}`}
+          className="ui-terminal-well absolute inset-0 min-h-0"
           data-terminal-mode={terminalThemeMode}
           style={{ ...terminalWellStyle, display: historyActive ? "none" : "block" }}
         >

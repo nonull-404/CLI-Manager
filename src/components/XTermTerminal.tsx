@@ -778,13 +778,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     window.requestAnimationFrame(() => terminalRef.current?.focus());
   };
 
-  // When the background image is active, we MUST NOT set `backgroundColor` on
-  // the wrapper: the `::before` pseudo-element paints the image into the same
-  // rect, and an opaque wrapper background would either dim the image (when
-  // user opacity < 100%) or render the whole transparency model meaningless.
-  // Also drop `p-2` in this mode — the padding gap exposes the image around
-  // the xterm container (the user-visible "strip" bug). Without an image we
-  // keep the original opaque background + padding behavior unchanged.
+  // When the background image is active, an opaque wrapper background would
+  // cover the pseudo-element image layer and break the transparency model.
   const wrapperStyle: CSSProperties = showBackgroundImage
     ? ({
         "--terminal-bg-image": `url("${assetUrl}")`,
@@ -796,7 +791,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
   return (
     <div
-      className={`ui-terminal-bg-layer relative h-full w-full overflow-hidden${showBackgroundImage ? "" : " p-2"}`}
+      className="ui-terminal-bg-layer relative h-full w-full overflow-hidden"
       style={wrapperStyle}
       data-bg-enabled={showBackgroundImage ? "true" : undefined}
       data-bg-fit={showBackgroundImage ? background.fit : undefined}

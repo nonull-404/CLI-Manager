@@ -69,9 +69,16 @@ if (text.length >= maxBufferBytes) {
 
 ## Testing Requirements
 
-<!-- What level of testing is expected -->
+### Manual runtime UI verification
 
-(To be filled by the team)
+AI agents must not start CLI-Manager services or the Tauri desktop app to verify runtime UI behavior. For frontend or terminal visual changes, run static/build checks where relevant, then list the exact manual verification items for a human to check.
+
+**Why**: this project cannot be reliably verified by AI at runtime; manual desktop/UI inspection is the source of truth.
+
+**Required manual checks for terminal UI changes**:
+- Normal terminal layout has no unintended one-sided padding or outer gaps.
+- Fullscreen terminal layout still fills the available window.
+- Terminal background image mode still shows transparency, blur, darken, fit, and position correctly.
 
 ---
 
