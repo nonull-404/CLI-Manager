@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -17,8 +18,30 @@ const FONT_SIZE_MAX = 32;
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
 const ACTIVE_WRITE_FRAME_BUDGET = 64 * 1024;
+const SEARCH_HIGHLIGHT_LIMIT = 1000;
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
+
+interface SearchResultState {
+  resultIndex: number;
+  resultCount: number;
+}
+
+const EMPTY_SEARCH_RESULT: SearchResultState = { resultIndex: 0, resultCount: 0 };
+
+const normalizeHexColor = (value: string | undefined, fallback: string) => (
+  value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback
+);
+
+const hexToRgba = (value: string | undefined, alpha: number, fallback: string) => {
+  const normalized = normalizeHexColor(value, "");
+  if (!normalized) return fallback;
+  const hex = normalized.slice(1);
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
 
 interface Props {
   sessionId: string;
@@ -33,8 +56,10 @@ interface Props {
 
 export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
   const inputBuffer = useRef("");
   const fitRafRef = useRef<number | null>(null);
   const isComposingRef = useRef(false);
@@ -62,6 +87,10 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const hiddenForThisSession = useTerminalStore((s) => s.hiddenBackgroundSessionIds.has(sessionId));
 
   const [assetUrl, setAssetUrl] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchMatched, setSearchMatched] = useState<boolean | null>(null);
+  const [searchResult, setSearchResult] = useState<SearchResultState>(EMPTY_SEARCH_RESULT);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +105,15 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       cancelled = true;
     };
   }, [background.imagePath]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const rafId = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [searchOpen]);
 
   const isTransparent = background.enabled && background.imagePath !== null && !hiddenForThisSession;
   const isTransparentRef = useRef(isTransparent);
@@ -282,6 +320,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       fontSize,
       fontFamily,
       scrollback: 5000,
+      allowProposedApi: true,
       // Always true — research confirms WebglAddon stays compatible and the
       // perf cost is acceptable. xterm cannot toggle this after construction,
       // so we pay it unconditionally to avoid having to recreate the terminal
@@ -291,8 +330,13 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     });
 
     const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     terminal.loadAddon(fitAddon);
+    terminal.loadAddon(searchAddon);
     terminal.open(containerRef.current);
+    const searchResultDisposable = searchAddon.onDidChangeResults((event) => {
+      setSearchResult({ resultIndex: event.resultIndex, resultCount: event.resultCount });
+    });
 
     let webglAddon: WebglAddon | null = null;
     try {
@@ -310,6 +354,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    searchAddonRef.current = searchAddon;
     scheduleFit(true);
     if (isActive) {
       terminal.focus();
@@ -397,6 +442,15 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       }
       if (e.type !== "keydown" || !e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return true;
       const key = e.key.toLowerCase();
+      if (key === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+        window.requestAnimationFrame(() => {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        });
+        return false;
+      }
       if (key === "c" && terminal.hasSelection()) {
         e.preventDefault();
         void copySelection();
@@ -634,16 +688,96 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       inactiveBufferRef.current = [];
       inactiveBufferSizeRef.current = 0;
       unlisten?.();
+      searchResultDisposable.dispose();
       webglAddon?.dispose();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
     };
   }, [sessionId]);
 
   const backgroundColor = getTerminalBackground(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
 
   const showBackgroundImage = isTransparent && assetUrl !== null;
+  const terminalTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
+  const searchForeground = normalizeHexColor(terminalTheme.foreground, "#d8dee9");
+  const searchBackground = normalizeHexColor(terminalTheme.background, backgroundColor);
+  const searchAccent = normalizeHexColor(terminalTheme.cursor, searchForeground);
+  const searchMatchBackground = normalizeHexColor(terminalTheme.yellow, "#e0af68");
+  const searchActiveBackground = normalizeHexColor(terminalTheme.blue, "#7aa2f7");
+  const searchResultLabel = !searchTerm
+    ? ""
+    : searchResult.resultCount > 0 && searchResult.resultIndex >= 0
+      ? `${searchResult.resultIndex + 1}/${searchResult.resultCount}`
+      : searchMatched === false
+        ? "0/0"
+        : "";
+
+  const terminalSearchShellStyle: CSSProperties = {
+    position: "absolute",
+    right: 12,
+    top: 12,
+    zIndex: 20,
+    backgroundColor: hexToRgba(searchBackground, showBackgroundImage ? 0.78 : 0.92, "rgba(0, 0, 0, 0.86)"),
+    borderColor: hexToRgba(searchForeground, 0.24, "rgba(255, 255, 255, 0.22)"),
+    boxShadow: `0 12px 30px ${hexToRgba(searchBackground, 0.55, "rgba(0, 0, 0, 0.45)")}`,
+    color: searchForeground,
+    fontFamily,
+    maxWidth: "min(440px, calc(100% - 24px))",
+  };
+  const terminalSearchInputStyle: CSSProperties = {
+    caretColor: searchAccent,
+    color: searchForeground,
+  };
+  const terminalSearchButtonStyle: CSSProperties = {
+    backgroundColor: hexToRgba(searchForeground, 0.08, "rgba(255, 255, 255, 0.08)"),
+    borderColor: hexToRgba(searchForeground, 0.16, "rgba(255, 255, 255, 0.16)"),
+    color: searchForeground,
+  };
+
+  const createSearchOptions = (incremental = false): ISearchOptions => ({
+    incremental,
+    decorations: {
+      matchBackground: searchMatchBackground,
+      matchBorder: searchMatchBackground,
+      matchOverviewRuler: searchMatchBackground,
+      activeMatchBackground: searchActiveBackground,
+      activeMatchBorder: searchAccent,
+      activeMatchColorOverviewRuler: searchAccent,
+    },
+  });
+
+  const clearTerminalSearch = () => {
+    searchAddonRef.current?.clearDecorations();
+    setSearchMatched(null);
+    setSearchResult(EMPTY_SEARCH_RESULT);
+  };
+
+  const runTerminalSearch = (term: string, direction: "next" | "previous", incremental = false) => {
+    const searchAddon = searchAddonRef.current;
+    if (!term || !searchAddon) {
+      clearTerminalSearch();
+      return;
+    }
+    const matched = direction === "previous"
+      ? searchAddon.findPrevious(term, createSearchOptions(false))
+      : searchAddon.findNext(term, createSearchOptions(incremental));
+    setSearchMatched(matched);
+  };
+
+  const handleSearchTermChange = (value: string) => {
+    setSearchTerm(value);
+    runTerminalSearch(value, "next", true);
+  };
+
+  const closeTerminalSearch = () => {
+    setSearchOpen(false);
+    setSearchTerm("");
+    clearTerminalSearch();
+    window.requestAnimationFrame(() => terminalRef.current?.focus());
+  };
+
   // When the background image is active, we MUST NOT set `backgroundColor` on
   // the wrapper: the `::before` pseudo-element paints the image into the same
   // rect, and an opaque wrapper background would either dim the image (when
@@ -662,12 +796,88 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
   return (
     <div
-      className={`ui-terminal-bg-layer h-full w-full overflow-hidden${showBackgroundImage ? "" : " p-2"}`}
+      className={`ui-terminal-bg-layer relative h-full w-full overflow-hidden${showBackgroundImage ? "" : " p-2"}`}
       style={wrapperStyle}
       data-bg-enabled={showBackgroundImage ? "true" : undefined}
       data-bg-fit={showBackgroundImage ? background.fit : undefined}
       data-bg-position={showBackgroundImage ? background.position : undefined}
     >
+      {searchOpen && (
+        <div
+          className="absolute right-3 top-3 z-20 flex h-8 items-center gap-1 rounded-md border px-2 text-[12px] backdrop-blur-md"
+          style={terminalSearchShellStyle}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="select-none font-mono text-[13px] opacity-70" aria-hidden="true">/</span>
+          <input
+            ref={searchInputRef}
+            value={searchTerm}
+            onChange={(e) => handleSearchTermChange(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") {
+                e.preventDefault();
+                runTerminalSearch(searchTerm, e.shiftKey ? "previous" : "next");
+              }
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                runTerminalSearch(searchTerm, "next");
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                runTerminalSearch(searchTerm, "previous");
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                closeTerminalSearch();
+              }
+            }}
+            className="h-6 w-44 min-w-0 bg-transparent px-1 font-mono text-[12px] outline-none placeholder:opacity-55"
+            style={terminalSearchInputStyle}
+            placeholder="search"
+            aria-label="搜索终端输出"
+          />
+          <span className="w-12 select-none text-right font-mono text-[11px] opacity-70" aria-live="polite">
+            {searchResultLabel}
+          </span>
+          <button
+            type="button"
+            disabled={!searchTerm}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => runTerminalSearch(searchTerm, "previous")}
+            className="flex h-5 w-5 items-center justify-center rounded-sm border font-mono text-[11px] outline-none disabled:opacity-35"
+            style={terminalSearchButtonStyle}
+            aria-label="上一个匹配"
+            title="上一个匹配"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            disabled={!searchTerm}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => runTerminalSearch(searchTerm, "next")}
+            className="flex h-5 w-5 items-center justify-center rounded-sm border font-mono text-[11px] outline-none disabled:opacity-35"
+            style={terminalSearchButtonStyle}
+            aria-label="下一个匹配"
+            title="下一个匹配"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={closeTerminalSearch}
+            className="flex h-5 w-5 items-center justify-center rounded-sm border font-mono text-[11px] outline-none"
+            style={terminalSearchButtonStyle}
+            aria-label="关闭搜索"
+            title="关闭搜索"
+          >
+            x
+          </button>
+        </div>
+      )}
       <div ref={containerRef} className="h-full w-full overflow-hidden" />
     </div>
   );

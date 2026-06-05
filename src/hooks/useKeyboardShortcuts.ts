@@ -82,6 +82,10 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
         tag === "SELECT" ||
         !!target?.closest("[contenteditable='true']");
 
+      if (combo === "Ctrl+F" && !isXtermTarget) {
+        e.preventDefault();
+      }
+
       const terminalState = useTerminalStore.getState();
       const { sessions, activeSessionId, setActive, closeSession, createSession } = terminalState;
 
