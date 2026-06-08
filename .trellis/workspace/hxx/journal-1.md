@@ -173,3 +173,36 @@ Fixed uiTextColor only overriding --text-primary by also deriving --text-seconda
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Fix Windows PowerShell paste and scrollback
+
+**Date**: 2026-06-08
+**Task**: Fix Windows PowerShell paste and scrollback
+**Branch**: `fix/windows-terminal-powershell-paste`
+
+### Summary
+
+Fixed Windows PowerShell terminal history disappearing after resize/tab changes and restored native xterm paste semantics to prevent multiline paste corruption.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d15495d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
