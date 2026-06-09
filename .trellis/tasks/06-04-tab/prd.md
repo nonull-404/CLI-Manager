@@ -22,11 +22,11 @@
 
 ## Acceptance Criteria
 
-* [ ] 点击普通终端 Tab 的关闭按钮后，Tab 立即从 UI 消失。
-* [ ] 点击 split 终端 Tab 的关闭按钮后，相关 session 都从 UI 状态清理。
-* [ ] 后端 `pty_close` 即使较慢，也不阻塞前端 Tab 移除。
-* [ ] 关闭后重新启动应用，不恢复已关闭的 Tab。
-* [ ] TypeScript 类型检查通过。
+* [x] 点击普通终端 Tab 的关闭按钮后，Tab 立即从 UI 消失。
+* [x] 点击 split 终端 Tab 的关闭按钮后，相关 session 都从 UI 状态清理。
+* [x] 后端 `pty_close` 即使较慢，也不阻塞前端 Tab 移除。
+* [x] 关闭后重新启动应用，不恢复已关闭的 Tab。
+* [x] TypeScript 类型检查通过。
 
 ## Definition of Done
 

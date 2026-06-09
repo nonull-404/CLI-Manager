@@ -2,9 +2,19 @@ import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Switch } from "@/components/ui/switch";
-import { Select } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+import {
+  Box,
+  Button,
+  Card,
+  Group,
+  Select,
+  SimpleGrid,
+  Slider,
+  Stack,
+  Switch,
+  Text,
+  UnstyledButton,
+} from "@mantine/core";
 import {
   useSettingsStore,
   type TerminalBackgroundFit,
@@ -162,199 +172,205 @@ export function TerminalBackgroundSection() {
   const detailsDisabled = !enabled;
 
   return (
-    <section className="ui-surface-card rounded-2xl border border-border p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-on-surface">终端背景</div>
-          <div className="mt-1 text-xs text-on-surface-variant">
-            使用本地图片作为终端背景。支持 JPEG / PNG / GIF。
-          </div>
-        </div>
-        <Switch
-          checked={enabled}
-          onCheckedChange={(next) => patch({ enabled: next })}
-          aria-label={enabled ? "关闭终端背景图" : "启用终端背景图"}
-        />
-      </div>
+    <Card className="ui-surface-card" p="md">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start" gap="md" wrap="nowrap">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              终端背景
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              使用本地图片作为终端背景。支持 JPEG / PNG / GIF。
+            </Text>
+          </Box>
+          <Switch
+            color="cliPrimary"
+            checked={enabled}
+            onChange={(event) => patch({ enabled: event.currentTarget.checked })}
+            aria-label={enabled ? "关闭终端背景图" : "启用终端背景图"}
+          />
+        </Group>
 
-      {enabled && terminalBackgroundMissing && (
-        <div
-          className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
-          role="alert"
-        >
-          ⚠ 此前选择的背景图已丢失（可能被外部删除或移动）。请重新选择图片或关闭背景。
-        </div>
-      )}
+        {enabled && terminalBackgroundMissing && (
+          <Card className="border border-warning/40 bg-warning/10" p="sm" radius="lg" role="alert">
+            <Text size="xs" c="var(--warning)">
+              此前选择的背景图已丢失（可能被外部删除或移动）。请重新选择图片或关闭背景。
+            </Text>
+          </Card>
+        )}
 
-      {enabled && !imagePath && !terminalBackgroundMissing && (
-        <div className="mt-3 rounded-xl border border-dashed border-border bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
-          尚未选择图片。点击下方「选择图片」上传一张本地图片以启用背景。
-        </div>
-      )}
+        {enabled && !imagePath && !terminalBackgroundMissing && (
+          <Card className="border border-dashed border-border bg-surface-container-low" p="sm" radius="lg">
+            <Text size="xs" c="var(--on-surface-variant)">
+              尚未选择图片。点击下方“选择图片”上传一张本地图片以启用背景。
+            </Text>
+          </Card>
+        )}
 
-      <div
-        className="mt-4 space-y-4"
-        style={detailsDisabled ? { opacity: 0.55, pointerEvents: "none" } : undefined}
-        aria-disabled={detailsDisabled}
-      >
-        {/* 图片 */}
-        <div className="rounded-xl border border-border bg-surface-container-lowest p-3">
-          <div className="mb-2 text-xs font-semibold text-on-surface">图片</div>
-          <div className="flex items-start gap-3">
-            <div
-              className="ui-selection-card flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-surface-container-low text-[10px] text-on-surface-variant"
-              aria-label="背景图预览"
-            >
-              {thumbUrl && !thumbFailed ? (
-                <img
-                  src={thumbUrl}
-                  alt="背景缩略图"
-                  className="h-full w-full object-cover"
-                  onError={() => setThumbFailed(true)}
-                />
-              ) : thumbFailed ? (
-                <span className="px-1 text-center leading-tight text-warning">
-                  加载失败
-                </span>
-              ) : (
-                <span>无图</span>
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void handlePickImage()}
-                  disabled={saving}
+        <Stack gap="md" style={detailsDisabled ? { opacity: 0.55, pointerEvents: "none" } : undefined} aria-disabled={detailsDisabled}>
+          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+            <Stack gap="sm">
+              <Text size="xs" fw={600} c="var(--on-surface)">
+                图片
+              </Text>
+              <Group align="flex-start" gap="md" wrap="nowrap">
+                <Box
+                  className="ui-selection-card flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-surface-container-low text-[10px] text-on-surface-variant"
+                  w={96}
+                  h={64}
+                  aria-label="背景图预览"
                 >
-                  {saving ? "保存中..." : imagePath ? "更换图片" : "选择图片..."}
-                </Button>
-                {imagePath && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleClear}
-                    disabled={saving}
-                  >
-                    清除
-                  </Button>
-                )}
-                {thumbFailed && imagePath && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void handlePickImage()}
-                  >
-                    重选
-                  </Button>
-                )}
-              </div>
-              <div className="mt-2 break-all text-[11px] text-on-surface-variant">
-                {imagePath ? (
-                  <>
-                    当前文件：<span className="font-mono">{imagePath}</span>
-                    {typeof imageSizeBytes === "number" && (
-                      <span className="ml-1 text-text-muted">
-                        （{formatFileSize(imageSizeBytes)}）
-                      </span>
+                  {thumbUrl && !thumbFailed ? (
+                    <img
+                      src={thumbUrl}
+                      alt="背景缩略图"
+                      className="h-full w-full object-cover"
+                      onError={() => setThumbFailed(true)}
+                    />
+                  ) : thumbFailed ? (
+                    <Text size="xs" ta="center" c="var(--warning)">
+                      加载失败
+                    </Text>
+                  ) : (
+                    <Text size="xs" c="var(--on-surface-variant)">
+                      无图
+                    </Text>
+                  )}
+                </Box>
+                <Stack gap="xs" style={{ minWidth: 0, flex: 1 }}>
+                  <Group gap="xs">
+                    <Button
+                      variant="light"
+                      color="cliPrimary"
+                      size="xs"
+                      onClick={() => void handlePickImage()}
+                      disabled={saving}
+                    >
+                      {saving ? "保存中..." : imagePath ? "更换图片" : "选择图片..."}
+                    </Button>
+                    {imagePath && (
+                      <Button variant="subtle" color="red" size="xs" onClick={handleClear} disabled={saving}>
+                        清除
+                      </Button>
                     )}
-                  </>
-                ) : (
-                  "尚未选择图片"
-                )}
-              </div>
-              {thumbFailed && imagePath && (
-                <div className="mt-1 text-[11px] text-warning">
-                  无法加载图片。文件可能已被外部删除，请重新选择。
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+                    {thumbFailed && imagePath && (
+                      <Button variant="subtle" color="cliPrimary" size="xs" onClick={() => void handlePickImage()}>
+                        重选
+                      </Button>
+                    )}
+                  </Group>
+                  <Text size="xs" c="var(--on-surface-variant)" style={{ overflowWrap: "anywhere" }}>
+                    {imagePath ? (
+                      <>
+                        当前文件：<span className="font-mono">{imagePath}</span>
+                        {typeof imageSizeBytes === "number" && (
+                          <span className="ml-1 text-text-muted">（{formatFileSize(imageSizeBytes)}）</span>
+                        )}
+                      </>
+                    ) : (
+                      "尚未选择图片"
+                    )}
+                  </Text>
+                  {thumbFailed && imagePath && (
+                    <Text size="xs" c="var(--warning)">
+                      无法加载图片。文件可能已被外部删除，请重新选择。
+                    </Text>
+                  )}
+                </Stack>
+              </Group>
+            </Stack>
+          </Card>
 
-        {/* 显示设置 */}
-        <div className="rounded-xl border border-border bg-surface-container-lowest p-3">
-          <div className="mb-3 text-xs font-semibold text-on-surface">显示设置</div>
-
-          <div className="space-y-3">
-            <SliderRow
-              label="透明度"
-              min={0}
-              max={100}
-              step={1}
-              value={opacity}
-              suffix="%"
-              ariaLabel="背景图透明度"
-              onChange={(v) => patch({ opacity: v })}
-            />
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">适配模式</label>
-              <Select
+          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+            <Stack gap="sm">
+              <Text size="xs" fw={600} c="var(--on-surface)">
+                显示设置
+              </Text>
+              <SliderRow
+                label="透明度"
+                min={0}
+                max={100}
+                step={1}
+                value={opacity}
+                suffix="%"
+                ariaLabel="背景图透明度"
+                onChange={(v) => patch({ opacity: v })}
+              />
+              <Select<TerminalBackgroundFit>
+                label="适配模式"
                 value={fit}
-                onChange={(e) => patch({ fit: e.target.value as TerminalBackgroundFit })}
+                onChange={(value) => {
+                  if (value) patch({ fit: value });
+                }}
+                data={FIT_OPTIONS}
+                allowDeselect={false}
+                size="xs"
                 aria-label="适配模式"
-              >
-                {FIT_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <SliderRow
-              label="模糊"
-              min={0}
-              max={20}
-              step={1}
-              value={blur}
-              suffix="px"
-              ariaLabel="背景图模糊"
-              onChange={(v) => patch({ blur: v })}
-            />
-            <SliderRow
-              label="暗化覆盖"
-              min={0}
-              max={80}
-              step={1}
-              value={overlayDarken}
-              suffix="%"
-              ariaLabel="暗化覆盖强度"
-              onChange={(v) => patch({ overlayDarken: v })}
-            />
-          </div>
-        </div>
+              />
+              <SliderRow
+                label="模糊"
+                min={0}
+                max={20}
+                step={1}
+                value={blur}
+                suffix="px"
+                ariaLabel="背景图模糊"
+                onChange={(v) => patch({ blur: v })}
+              />
+              <SliderRow
+                label="暗化覆盖"
+                min={0}
+                max={80}
+                step={1}
+                value={overlayDarken}
+                suffix="%"
+                ariaLabel="暗化覆盖强度"
+                onChange={(v) => patch({ overlayDarken: v })}
+              />
+            </Stack>
+          </Card>
 
-        {/* 位置对齐 */}
-        <div className="rounded-xl border border-border bg-surface-container-lowest p-3">
-          <div className="mb-2 text-xs font-semibold text-on-surface">位置对齐</div>
-          <div className="mb-2 text-[11px] text-on-surface-variant">
-            适配为 Center 时尤其有用，其它模式下也保留作为偏好。
-          </div>
-          <div className="grid w-32 grid-cols-3 gap-1">
-            {POSITION_GRID.map((pos) => {
-              const active = position === pos;
-              return (
-                <button
-                  key={pos}
-                  type="button"
-                  onClick={() => patch({ position: pos })}
-                  className="ui-interactive ui-focus-ring flex h-10 w-10 items-center justify-center rounded-lg border text-[10px]"
-                  data-selected={active ? "true" : "false"}
-                  aria-pressed={active}
-                  aria-label={`位置：${POSITION_LABEL[pos]}`}
-                  title={POSITION_LABEL[pos]}
-                >
-                  <span className={active ? "text-primary" : "text-on-surface-variant"}>
-                    {active ? "●" : "○"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </section>
+          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+            <Stack gap="xs">
+              <Text size="xs" fw={600} c="var(--on-surface)">
+                位置对齐
+              </Text>
+              <Text size="xs" c="var(--on-surface-variant)">
+                适配为 Center 时尤其有用，其它模式下也保留作为偏好。
+              </Text>
+              <SimpleGrid cols={3} spacing={6} w={128}>
+                {POSITION_GRID.map((pos) => {
+                  const active = position === pos;
+                  return (
+                    <UnstyledButton
+                      key={pos}
+                      type="button"
+                      onClick={() => patch({ position: pos })}
+                      className="ui-interactive ui-focus-ring ui-selection-card flex h-10 w-10 items-center justify-center rounded-lg border text-[10px]"
+                      data-selected={active ? "true" : "false"}
+                      aria-pressed={active}
+                      aria-label={`位置：${POSITION_LABEL[pos]}`}
+                      title={POSITION_LABEL[pos]}
+                    >
+                      <Box
+                        component="span"
+                        w={8}
+                        h={8}
+                        style={{
+                          borderRadius: 999,
+                          backgroundColor: active ? "var(--primary)" : "var(--on-surface-variant)",
+                          opacity: active ? 1 : 0.45,
+                        }}
+                      />
+                    </UnstyledButton>
+                  );
+                })}
+              </SimpleGrid>
+            </Stack>
+          </Card>
+        </Stack>
+      </Stack>
+    </Card>
   );
 }
 
@@ -371,24 +387,25 @@ interface SliderRowProps {
 
 function SliderRow({ label, min, max, step, value, suffix, ariaLabel, onChange }: SliderRowProps) {
   return (
-    <div>
-      <div className="mb-1 flex items-center justify-between text-xs text-on-surface-variant">
-        <span>{label}</span>
-        <span className="font-mono tabular-nums text-on-surface">
+    <Stack gap={6}>
+      <Group justify="space-between" align="center">
+        <Text size="xs" c="var(--on-surface-variant)">
+          {label}
+        </Text>
+        <Text size="xs" ff="var(--font-ui-mono)" c="var(--on-surface)" className="tabular-nums">
           {value}
           {suffix ?? ""}
-        </span>
-      </div>
-      <input
-        type="range"
+        </Text>
+      </Group>
+      <Slider
         min={min}
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-accent"
+        onChange={onChange}
+        color="cliPrimary"
         aria-label={ariaLabel}
       />
-    </div>
+    </Stack>
   );
 }

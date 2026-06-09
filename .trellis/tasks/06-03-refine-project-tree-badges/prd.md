@@ -29,10 +29,10 @@
 
 ## Acceptance Criteria
 
-* [ ] 项目树 CLI 工具徽章不再使用大面积彩色背景作为主要识别方式。
-* [ ] Claude / Codex / Gemini 徽章仍能通过色点/细边框区分。
-* [ ] TypeScript 组件逻辑无需改动，或只做必要的样式 class 调整。
-* [ ] 运行静态检查或直接验证改动范围。
+* [x] 项目树 CLI 工具徽章不再使用大面积彩色背景作为主要识别方式。
+* [x] Claude / Codex / Gemini 徽章仍能通过色点/细边框区分。
+* [x] TypeScript 组件逻辑无需改动，或只做必要的样式 class 调整。
+* [x] 运行静态检查或直接验证改动范围。
 
 ## Definition of Done
 

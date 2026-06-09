@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { Badge, Box, Button, Card, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
@@ -36,11 +33,11 @@ const STATUS_LABELS: Record<HookInstallStatus, string> = {
   installed: "已安装",
 };
 
-const STATUS_CLASS_NAMES: Record<HookInstallStatus, string> = {
-  directoryMissing: "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
-  notInstalled: "border-border bg-surface-container-high text-on-surface-variant",
-  partialInstalled: "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
-  installed: "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400",
+const STATUS_COLORS: Record<HookInstallStatus, string> = {
+  directoryMissing: "yellow",
+  notInstalled: "gray",
+  partialInstalled: "yellow",
+  installed: "green",
 };
 
 function formatPath(value: string | null): string {
@@ -52,32 +49,53 @@ function getErrorMessage(error: unknown): string {
 }
 
 function PathRow({ label, value }: { label: string; value: string | null }) {
+  const formatted = formatPath(value);
+  const hasValue = Boolean(value && value.trim());
+
   return (
-    <div>
-      <div className="mb-1 text-xs text-on-surface-variant">{label}</div>
-      <div className="rounded-lg border border-border bg-surface-container-low px-3 py-2 font-mono text-xs text-on-surface break-all">
-        {formatPath(value)}
-      </div>
-    </div>
+    <Group gap="md" wrap="nowrap" className="min-w-0 rounded-md bg-surface-container-lowest/70 px-3 py-2">
+      <Text size="xs" c="var(--text-muted)" w={96} className="shrink-0">
+        {label}
+      </Text>
+      <Text
+        component="code"
+        size="xs"
+        ff="var(--font-ui-mono)"
+        c={hasValue ? "var(--on-surface)" : "var(--text-muted)"}
+        className="min-w-0 flex-1 break-all leading-5"
+        title={formatted}
+      >
+        {formatted}
+      </Text>
+    </Group>
   );
 }
 
 function CheckRow({ label, checked }: { label: string; checked: boolean }) {
   return (
-    <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-border bg-surface-container-low px-3 py-2 text-sm">
-      <span className="min-w-0 truncate text-on-surface-variant">{label}</span>
-      <span className={`shrink-0 ${checked ? "text-green-600 dark:text-green-400" : "text-text-muted"}`}>
+    <Group gap="xs" wrap="nowrap" className="min-w-0 rounded-md bg-surface-container-lowest/70 px-2.5 py-1.5">
+      <Box
+        component="span"
+        w={6}
+        h={6}
+        className="shrink-0"
+        style={{ borderRadius: 999, backgroundColor: checked ? "var(--success)" : "var(--text-muted)" }}
+      />
+      <Text size="xs" c="var(--on-surface-variant)" truncate className="min-w-0 flex-1" title={label}>
+        {label}
+      </Text>
+      <Text size="xs" fw={600} c={checked ? "var(--success)" : "var(--text-muted)"} className="shrink-0">
         {checked ? "已安装" : "未完整"}
-      </span>
-    </div>
+      </Text>
+    </Group>
   );
 }
 
 function StatusPill({ status }: { status: HookInstallStatus }) {
   return (
-    <span className={`rounded-full border px-3 py-1 text-xs font-medium ${STATUS_CLASS_NAMES[status]}`}>
+    <Badge variant="light" color={STATUS_COLORS[status]} radius="xl">
       {STATUS_LABELS[status]}
-    </span>
+    </Badge>
   );
 }
 
@@ -93,13 +111,25 @@ function SettingsSwitchRow({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-container-low px-3 py-2">
-      <div>
-        <div className="text-sm font-medium text-on-surface">{title}</div>
-        <div className="mt-1 text-xs text-text-muted">{description}</div>
-      </div>
-      <Switch className="shrink-0" checked={checked} onCheckedChange={onCheckedChange} aria-label={title} />
-    </div>
+    <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
+      <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+        <Box>
+          <Text size="sm" fw={500} c="var(--on-surface)">
+            {title}
+          </Text>
+          <Text mt={4} size="xs" c="var(--text-muted)">
+            {description}
+          </Text>
+        </Box>
+        <Switch
+          color="cliPrimary"
+          className="shrink-0"
+          checked={checked}
+          onChange={(event) => onCheckedChange(event.currentTarget.checked)}
+          aria-label={title}
+        />
+      </Group>
+    </Card>
   );
 }
 
@@ -268,15 +298,17 @@ export function HookSettingsPage() {
   const codexFinishedInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Hook 通知弹框</CardTitle>
-          <CardDescription className="mt-1">
-            控制 Claude Code 和 Codex CLI Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+    <Stack gap="md">
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="md">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              Hook 通知弹框
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              控制 Claude Code 和 Codex CLI Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。
+            </Text>
+          </Box>
           <SettingsSwitchRow
             title="通知弹框"
             description="关闭后不再弹出 Hook 通知卡片，只更新标签栏小圆点颜色。"
@@ -289,13 +321,18 @@ export function HookSettingsPage() {
             checked={hookPopupAutoCloseEnabled}
             onCheckedChange={(checked) => void updateSetting("hookPopupAutoCloseEnabled", checked)}
           />
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-container-low px-3 py-2">
-            <div>
-              <div className="text-sm font-medium text-on-surface">默认关闭时间</div>
-              <div className="mt-1 text-xs text-text-muted">单位：秒，默认 60 秒；仅在自动关闭开启时可编辑。</div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Input
+          <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
+            <Group justify="space-between" align="center" gap="md">
+              <Box>
+                <Text size="sm" fw={500} c="var(--on-surface)">
+                  默认关闭时间
+                </Text>
+                <Text mt={4} size="xs" c="var(--text-muted)">
+                  单位：秒，默认 60 秒；仅在自动关闭开启时可编辑。
+                </Text>
+              </Box>
+              <Group gap="xs">
+              <TextInput
                 type="number"
                 min={5}
                 max={3600}
@@ -309,116 +346,132 @@ export function HookSettingsPage() {
                     handleCommitAutoCloseSeconds();
                   }
                 }}
-                className="w-24 text-xs"
+                w={96}
+                size="xs"
                 aria-label="Hook 弹框默认关闭时间"
               />
-              <span className="text-xs text-on-surface-variant">秒</span>
-            </div>
-          </div>
-        </CardContent>
+                <Text size="xs" c="var(--on-surface-variant)">
+                  秒
+                </Text>
+              </Group>
+            </Group>
+          </Card>
+        </Stack>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>Claude Code Hook 桥接</CardTitle>
-              <CardDescription className="mt-1">
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="md">
+          <Group justify="space-between" align="flex-start" gap="md">
+            <Box>
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                Claude Code Hook 桥接
+              </Text>
+              <Text mt={4} size="xs" c="var(--on-surface-variant)">
                 Claude Code 的运行中、待审批、完成和异常退出状态通过 Hook 脚本上报；普通 shell 命令由通用 Shell 运行监控补充。
-              </CardDescription>
-            </div>
+              </Text>
+            </Box>
             <StatusPill status={claudeStatus} />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <PathRow label="Claude 配置目录" value={claude?.configDir ?? selectedDir} />
-            <PathRow label="hooks 目录" value={claude?.hooksDir ?? null} />
-            <PathRow label="settings.json" value={claude?.configPath ?? null} />
-          </div>
+          </Group>
+          <Card className="bg-surface-container-low" p="xs" radius="lg">
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
+              <PathRow label="Claude 配置目录" value={claude?.configDir ?? selectedDir} />
+              <PathRow label="hooks 目录" value={claude?.hooksDir ?? null} />
+              <PathRow label="settings.json" value={claude?.configPath ?? null} />
+            </SimpleGrid>
+          </Card>
 
-          <div className="grid gap-2 md:grid-cols-3">
-            <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={claudeRunningInstalled} />
-            <CheckRow label="待审批 Hook（Notification）" checked={claudeAttentionInstalled} />
-            <CheckRow label="完成/异常 Hook（Stop / StopFailure）" checked={claudeFinishedInstalled} />
-          </div>
+          <Card className="bg-surface-container-low" p="xs" radius="lg">
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
+              <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={claudeRunningInstalled} />
+              <CheckRow label="待审批 Hook（Notification）" checked={claudeAttentionInstalled} />
+              <CheckRow label="完成/异常 Hook（Stop / StopFailure）" checked={claudeFinishedInstalled} />
+            </SimpleGrid>
+          </Card>
 
-          <div className="rounded-lg border border-border bg-surface-container-low px-3 py-2 text-xs leading-5 text-on-surface-variant">
+          <Card className="bg-surface-container-low" p="sm" radius="lg">
+            <Text size="xs" lh={1.6} c="var(--on-surface-variant)">
             安装只会写入 <span className="font-mono">notify-cli-manager-approval.ps1</span> 和{" "}
             <span className="font-mono">notify-cli-manager-finished.ps1</span>，并合并修改 Claude 的{" "}
             <span className="font-mono">settings.json</span>。删除时不会移除用户自己的 hooks，也不会删除旧的{" "}
             <span className="font-mono">notify.ps1</span> 或 <span className="font-mono">notify-cli-manager.ps1</span>。
-          </div>
+            </Text>
+          </Card>
 
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking}>
+          <Group gap="xs">
+            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking}>
               选择 Claude 目录
             </Button>
-            <Button variant="default" onClick={handleClaudeInstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
+            <Button color="cliPrimary" size="xs" onClick={handleClaudeInstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
               {claudeWorking ? "处理中..." : "安装 Claude Hook"}
             </Button>
-            <Button variant="destructive" onClick={handleClaudeUninstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
+            <Button variant="light" color="red" size="xs" onClick={handleClaudeUninstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
               删除 Claude Hook
             </Button>
-            <Button variant="outline" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking}>
+            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking}>
               {loading ? "刷新中..." : "刷新状态"}
             </Button>
-          </div>
-        </CardContent>
+          </Group>
+        </Stack>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>Codex CLI Hook 桥接</CardTitle>
-              <CardDescription className="mt-1">
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="md">
+          <Group justify="space-between" align="flex-start" gap="md">
+            <Box>
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                Codex CLI Hook 桥接
+              </Text>
+              <Text mt={4} size="xs" c="var(--on-surface-variant)">
                 Codex 的运行中、待审批和完成状态通过 Hook 脚本上报；普通 shell 命令由通用 Shell 运行监控补充。
-              </CardDescription>
-            </div>
+              </Text>
+            </Box>
             <StatusPill status={codexStatus} />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
-            <PathRow label="Codex 配置目录" value={codex?.configDir ?? codexSelectedDir} />
-            <PathRow label="hooks 目录" value={codex?.hooksDir ?? null} />
-            <PathRow label="hooks.json" value={codex?.configPath ?? null} />
-            <PathRow label="config.toml" value={codex?.featureConfigPath ?? null} />
-          </div>
+          </Group>
+          <Card className="bg-surface-container-low" p="xs" radius="lg">
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
+              <PathRow label="Codex 配置目录" value={codex?.configDir ?? codexSelectedDir} />
+              <PathRow label="hooks 目录" value={codex?.hooksDir ?? null} />
+              <PathRow label="hooks.json" value={codex?.configPath ?? null} />
+              <PathRow label="config.toml" value={codex?.featureConfigPath ?? null} />
+            </SimpleGrid>
+          </Card>
 
-          <div className="grid gap-2 md:grid-cols-4">
-            <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={codexRunningInstalled} />
-            <CheckRow label="待审批 Hook（PermissionRequest）" checked={codexAttentionInstalled} />
-            <CheckRow label="完成 Hook（Stop）" checked={codexFinishedInstalled} />
-            <CheckRow label="Hooks 功能（[features].hooks）" checked={Boolean(codex?.hooksFeatureInstalled)} />
-          </div>
+          <Card className="bg-surface-container-low" p="xs" radius="lg">
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
+              <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={codexRunningInstalled} />
+              <CheckRow label="待审批 Hook（PermissionRequest）" checked={codexAttentionInstalled} />
+              <CheckRow label="完成 Hook（Stop）" checked={codexFinishedInstalled} />
+              <CheckRow label="Hooks 功能（[features].hooks）" checked={Boolean(codex?.hooksFeatureInstalled)} />
+            </SimpleGrid>
+          </Card>
 
-          <div className="rounded-lg border border-border bg-surface-container-low px-3 py-2 text-xs leading-5 text-on-surface-variant">
+          <Card className="bg-surface-container-low" p="sm" radius="lg">
+            <Text size="xs" lh={1.6} c="var(--on-surface-variant)">
             安装会写入用户级 <span className="font-mono">~/.codex/hooks.json</span> 和{" "}
             <span className="font-mono">~/.codex/hooks/</span> 下的 CLI-Manager 脚本，不修改项目{" "}
             <span className="font-mono">.codex/hooks.json</span>。安装会自动写入{" "}
             <span className="font-mono">~/.codex/config.toml</span> 并开启{" "}
             <span className="font-mono">[features].hooks = true</span>，Codex 0.129+ 仍需要在 TUI 里执行{" "}
             <span className="font-mono">/hooks</span> 批准脚本。
-          </div>
+            </Text>
+          </Card>
 
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking}>
+          <Group gap="xs">
+            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking}>
               选择 Codex 目录
             </Button>
-            <Button variant="default" onClick={handleCodexInstall} disabled={loading || codexWorking}>
+            <Button color="cliPrimary" size="xs" onClick={handleCodexInstall} disabled={loading || codexWorking}>
               {codexWorking ? "处理中..." : "安装 Codex Hook"}
             </Button>
-            <Button variant="destructive" onClick={handleCodexUninstall} disabled={loading || codexWorking || codexStatus === "directoryMissing"}>
+            <Button variant="light" color="red" size="xs" onClick={handleCodexUninstall} disabled={loading || codexWorking || codexStatus === "directoryMissing"}>
               删除 Codex Hook
             </Button>
-            <Button variant="outline" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking}>
+            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking}>
               {loading ? "刷新中..." : "刷新状态"}
             </Button>
-          </div>
-        </CardContent>
+          </Group>
+        </Stack>
       </Card>
-    </div>
+    </Stack>
   );
 }

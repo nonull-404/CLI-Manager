@@ -32,14 +32,14 @@ Improve CLI-Manager terminal smoothness and responsiveness by optimizing both CP
 
 ## Acceptance Criteria
 
-- [ ] Terminal opens normally with the default renderer path.
-- [ ] WebGL renderer remains the preferred path when available.
-- [ ] WebGL creation failure or context loss falls back gracefully without freezing the terminal.
-- [ ] High-throughput PTY output remains responsive and does not introduce unbounded memory growth.
-- [ ] Background image, opacity, blur, and darken behavior still work.
-- [ ] TypeScript check passes with `npx tsc --noEmit`.
-- [ ] If backend/Tauri code is touched, `cd src-tauri && cargo check` passes.
-- [ ] Manual UI verification covers multiple tabs, split terminal, large output, background image, and renderer fallback where feasible.
+- [x] Terminal opens normally with the default renderer path.
+- [x] WebGL renderer remains the preferred path when available.
+- [x] WebGL creation failure or context loss falls back gracefully without freezing the terminal.
+- [x] High-throughput PTY output remains responsive and does not introduce unbounded memory growth.
+- [x] Background image, opacity, blur, and darken behavior still work.
+- [x] TypeScript check passes with `npx tsc --noEmit`.
+- [x] If backend/Tauri code is touched, `cd src-tauri && cargo check` passes.
+- [x] Manual UI verification covers multiple tabs, split terminal, large output, background image, and renderer fallback where feasible.
 
 ## Definition of Done
 

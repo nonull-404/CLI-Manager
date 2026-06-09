@@ -29,9 +29,9 @@
 
 ## Acceptance Criteria
 
-* [ ] 点击终端全屏按钮不再报 `window.set_fullscreen not allowed`。
-* [ ] capability 文件只新增一条 fullscreen 权限。
-* [ ] `npx tsc --noEmit` 仍通过。
+* [x] 点击终端全屏按钮不再报 `window.set_fullscreen not allowed`。
+* [x] capability 文件只新增一条 fullscreen 权限。
+* [x] `npx tsc --noEmit` 仍通过。
 
 ## Definition of Done
 

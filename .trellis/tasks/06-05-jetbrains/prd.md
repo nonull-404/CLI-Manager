@@ -39,21 +39,21 @@
 
 ## Acceptance Criteria
 
-* [ ] 在任意活动终端上执行 Split Right 后，当前区域变成左右两个 pane，两个 pane 都能显示可交互终端。
-* [ ] 在任意活动终端上执行 Split Down 后，当前区域变成上下两个 pane，两个 pane 都能显示可交互终端。
-* [ ] 已分出的 pane 还能继续 Split Right / Split Down，形成嵌套布局。
-* [ ] 拖动 pane 分隔线可以调整相邻 pane 比例，并限制最小尺寸，避免终端被压到不可用。
-* [ ] Unsplit 默认把当前 pane 内 terminal tab 合并到相邻 pane，不关闭终端。
-* [ ] 终端设置页提供取消分屏行为设置：合并到相邻 pane / 关闭当前 pane 内终端。
-* [ ] 当设置为关闭当前 pane 内终端时，Unsplit 只关闭该 pane 的终端，不影响其它 pane。
-* [ ] Move to Other Split 能把一个 terminal tab 移到其它 pane，tab 状态展示保持一致。
-* [ ] 拖拽 terminal tab 到其它 pane 的 tab bar 或 pane 中心区域能完成跨 pane 移动；拖到同 pane tab bar 仍能排序。
-* [ ] 拖拽 terminal tab 到任一 pane 的 left / right / top / bottom 边缘时显示灰色半透明落点预览，松手后分屏目标 pane 并移动现有 session。
-* [ ] 同 pane 边缘分屏仅在原 pane 还有其它 tab 时生效；拖唯一 tab 到自己边缘不会制造空布局。
-* [ ] 拖拽移动后，空 pane 会按 Unsplit 默认策略归并或规范化，不能留下不可交互空区域。
-* [ ] tab 上的运行状态颜色、脉冲、tooltip 语义保持现有表现。
-* [ ] 命令面板中的分屏动作仍可用，语义更新为 Split Right / Split Down / Unsplit。
-* [ ] 不要求重启后恢复分屏布局。
+* [x] 在任意活动终端上执行 Split Right 后，当前区域变成左右两个 pane，两个 pane 都能显示可交互终端。
+* [x] 在任意活动终端上执行 Split Down 后，当前区域变成上下两个 pane，两个 pane 都能显示可交互终端。
+* [x] 已分出的 pane 还能继续 Split Right / Split Down，形成嵌套布局。
+* [x] 拖动 pane 分隔线可以调整相邻 pane 比例，并限制最小尺寸，避免终端被压到不可用。
+* [x] Unsplit 默认把当前 pane 内 terminal tab 合并到相邻 pane，不关闭终端。
+* [x] 终端设置页提供取消分屏行为设置：合并到相邻 pane / 关闭当前 pane 内终端。
+* [x] 当设置为关闭当前 pane 内终端时，Unsplit 只关闭该 pane 的终端，不影响其它 pane。
+* [x] Move to Other Split 能把一个 terminal tab 移到其它 pane，tab 状态展示保持一致。
+* [x] 拖拽 terminal tab 到其它 pane 的 tab bar 或 pane 中心区域能完成跨 pane 移动；拖到同 pane tab bar 仍能排序。
+* [x] 拖拽 terminal tab 到任一 pane 的 left / right / top / bottom 边缘时显示灰色半透明落点预览，松手后分屏目标 pane 并移动现有 session。
+* [x] 同 pane 边缘分屏仅在原 pane 还有其它 tab 时生效；拖唯一 tab 到自己边缘不会制造空布局。
+* [x] 拖拽移动后，空 pane 会按 Unsplit 默认策略归并或规范化，不能留下不可交互空区域。
+* [x] tab 上的运行状态颜色、脉冲、tooltip 语义保持现有表现。
+* [x] 命令面板中的分屏动作仍可用，语义更新为 Split Right / Split Down / Unsplit。
+* [x] 不要求重启后恢复分屏布局。
 
 ## Definition of Done
 

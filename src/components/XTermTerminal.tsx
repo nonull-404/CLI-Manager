@@ -573,14 +573,18 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       }
     });
 
-    const textarea = containerRef.current.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
-    const viewport = containerRef.current.querySelector(".xterm-viewport") as HTMLElement | null;
+    const terminalContainer = containerRef.current;
+    const textarea = terminalContainer.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
+    const viewport = terminalContainer.querySelector(".xterm-viewport") as HTMLElement | null;
     let compositionScrollRafId: number | null = null;
+    let containerScrollResetRafId: number | null = null;
+    let helperTextareaAnchorRafId: number | null = null;
+    let compositionAnchorRafId: number | null = null;
+    let compositionAnchorTimeoutId: number | null = null;
     let compositionScrollLock: { element: HTMLElement; scrollTop: number; scrollLeft: number }[] = [];
 
     const captureCompositionScroll = () => {
-      const container = containerRef.current;
-      compositionScrollLock = [container, viewport]
+      compositionScrollLock = [terminalContainer, viewport]
         .filter((element): element is HTMLElement => Boolean(element))
         .map((element) => ({
           element,
@@ -591,8 +595,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
     const restoreCompositionScroll = () => {
       for (const { element, scrollTop, scrollLeft } of compositionScrollLock) {
-        element.scrollTop = scrollTop;
-        element.scrollLeft = scrollLeft;
+        if (element.scrollTop !== scrollTop) element.scrollTop = scrollTop;
+        if (element.scrollLeft !== scrollLeft) element.scrollLeft = scrollLeft;
       }
     };
 
@@ -607,17 +611,155 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       });
     };
 
+    const resetTerminalContainerScroll = () => {
+      if (terminalContainer.scrollTop !== 0) terminalContainer.scrollTop = 0;
+      if (terminalContainer.scrollLeft !== 0) terminalContainer.scrollLeft = 0;
+    };
+
+    const scheduleTerminalContainerScrollReset = () => {
+      resetTerminalContainerScroll();
+      if (containerScrollResetRafId !== null) {
+        cancelAnimationFrame(containerScrollResetRafId);
+      }
+      containerScrollResetRafId = requestAnimationFrame(() => {
+        containerScrollResetRafId = null;
+        resetTerminalContainerScroll();
+      });
+    };
+
+    const estimateCellSize = () => {
+      const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
+      const rect = (screen ?? terminalContainer).getBoundingClientRect();
+      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
+      return {
+        width: rect.width > 0 ? rect.width / Math.max(1, terminal.cols) : Math.max(1, fallbackFontSize * 0.6),
+        height: rect.height > 0 ? rect.height / Math.max(1, terminal.rows) : Math.max(1, fallbackFontSize * 1.2),
+      };
+    };
+
+    const resolveCompositionAnchorCell = () => {
+      const buffer = terminal.buffer.active;
+      const promptPattern = /^(?:[>$#]|PS(?:\s|>))/;
+      const bottomRow = Math.max(0, terminal.rows - 2);
+      const scanStart = Math.max(0, terminal.rows - 8);
+      for (let row = terminal.rows - 1; row >= scanStart; row -= 1) {
+        const text = buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? "";
+        const trimmed = text.trimStart();
+        if (!trimmed || !promptPattern.test(trimmed)) continue;
+        const leadingSpaces = text.length - trimmed.length;
+        return {
+          x: Math.min(Math.max(1, terminal.cols - 1), Math.max(leadingSpaces + 1, text.length + 1)),
+          y: row,
+        };
+      }
+      return { x: 1, y: bottomRow };
+    };
+
+    const applyCompositionAnchorFix = () => {
+      if (!isComposingRef.current) return;
+      const compositionView = terminalContainer.querySelector(".composition-view") as HTMLElement | null;
+      if (!textarea && !compositionView) return;
+      const anchor = resolveCompositionAnchorCell();
+      const cell = estimateCellSize();
+      const left = `${Math.max(0, anchor.x * cell.width)}px`;
+      const top = `${Math.max(0, anchor.y * cell.height)}px`;
+      const height = `${Math.max(1, cell.height)}px`;
+
+      if (compositionView) {
+        compositionView.style.left = left;
+        compositionView.style.top = top;
+        compositionView.style.height = height;
+        compositionView.style.lineHeight = height;
+      }
+      if (textarea) {
+        textarea.style.left = left;
+        textarea.style.top = top;
+        textarea.style.width = `${Math.max(1, cell.width)}px`;
+        textarea.style.height = height;
+        textarea.style.lineHeight = height;
+      }
+    };
+
+    const scheduleCompositionAnchorFix = () => {
+      applyCompositionAnchorFix();
+      if (compositionAnchorRafId !== null) {
+        cancelAnimationFrame(compositionAnchorRafId);
+      }
+      compositionAnchorRafId = requestAnimationFrame(() => {
+        compositionAnchorRafId = null;
+        applyCompositionAnchorFix();
+      });
+      if (compositionAnchorTimeoutId !== null) {
+        window.clearTimeout(compositionAnchorTimeoutId);
+      }
+      compositionAnchorTimeoutId = window.setTimeout(() => {
+        compositionAnchorTimeoutId = null;
+        applyCompositionAnchorFix();
+      }, 0);
+    };
+
+    const pinHelperTextareaAnchor = () => {
+      if (!textarea || isComposingRef.current) return;
+      textarea.style.left = "-9999em";
+      textarea.style.top = "0px";
+      textarea.style.width = "0px";
+      textarea.style.height = "0px";
+      textarea.style.lineHeight = "";
+    };
+
+    const scheduleHelperTextareaAnchorPin = () => {
+      pinHelperTextareaAnchor();
+      if (helperTextareaAnchorRafId !== null) {
+        cancelAnimationFrame(helperTextareaAnchorRafId);
+      }
+      helperTextareaAnchorRafId = requestAnimationFrame(() => {
+        helperTextareaAnchorRafId = null;
+        pinHelperTextareaAnchor();
+      });
+    };
+
+    const releaseHelperTextareaAnchorPin = () => {
+      if (helperTextareaAnchorRafId !== null) {
+        cancelAnimationFrame(helperTextareaAnchorRafId);
+        helperTextareaAnchorRafId = null;
+      }
+      if (!textarea) return;
+      textarea.style.left = "";
+      textarea.style.top = "";
+      textarea.style.width = "";
+      textarea.style.height = "";
+      textarea.style.lineHeight = "";
+    };
+
+    scheduleHelperTextareaAnchorPin();
+    terminalContainer.addEventListener("scroll", scheduleTerminalContainerScrollReset, { passive: true });
+    const cursorMoveDisposable = terminal.onCursorMove(() => {
+      if (!isActiveRef.current) return;
+      if (isComposingRef.current) {
+        scheduleCompositionScrollRestore();
+        scheduleCompositionAnchorFix();
+        return;
+      }
+      if (!textarea || document.activeElement !== textarea) return;
+      scheduleTerminalContainerScrollReset();
+      scheduleHelperTextareaAnchorPin();
+    });
+
     const onCompositionStart = () => {
       isComposingRef.current = true;
+      releaseHelperTextareaAnchorPin();
       captureCompositionScroll();
       scheduleCompositionScrollRestore();
+      scheduleCompositionAnchorFix();
     };
     const onCompositionUpdate = () => {
       scheduleCompositionScrollRestore();
+      scheduleCompositionAnchorFix();
     };
     const onCompositionEnd = () => {
       isComposingRef.current = false;
       scheduleCompositionScrollRestore();
+      scheduleHelperTextareaAnchorPin();
       scheduleFit(true);
     };
 
@@ -662,6 +804,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       textarea?.removeEventListener("compositionstart", onCompositionStart);
       textarea?.removeEventListener("compositionupdate", onCompositionUpdate);
       textarea?.removeEventListener("compositionend", onCompositionEnd);
+      terminalContainer.removeEventListener("scroll", scheduleTerminalContainerScrollReset);
+      cursorMoveDisposable.dispose();
       wheelTarget.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
       resizeObserver.disconnect();
       if (fitRafRef.current !== null) {
@@ -671,6 +815,22 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (compositionScrollRafId !== null) {
         cancelAnimationFrame(compositionScrollRafId);
         compositionScrollRafId = null;
+      }
+      if (containerScrollResetRafId !== null) {
+        cancelAnimationFrame(containerScrollResetRafId);
+        containerScrollResetRafId = null;
+      }
+      if (helperTextareaAnchorRafId !== null) {
+        cancelAnimationFrame(helperTextareaAnchorRafId);
+        helperTextareaAnchorRafId = null;
+      }
+      if (compositionAnchorRafId !== null) {
+        cancelAnimationFrame(compositionAnchorRafId);
+        compositionAnchorRafId = null;
+      }
+      if (compositionAnchorTimeoutId !== null) {
+        window.clearTimeout(compositionAnchorTimeoutId);
+        compositionAnchorTimeoutId = null;
       }
       if (writeRafId !== null) {
         cancelAnimationFrame(writeRafId);

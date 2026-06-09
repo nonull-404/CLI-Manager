@@ -23,12 +23,12 @@ Remove oversized padding/margins around the embedded terminal while keeping a sm
 
 ## Acceptance Criteria
 
-* [ ] `XTermTerminal` no longer applies all-around `p-2` to `.ui-terminal-bg-layer`, and instead applies left-only `pl-1.5`.
-* [ ] `TerminalTabs` no longer offsets the terminal well in non-fullscreen mode.
-* [ ] `.ui-terminal-chrome` uses 6px outer margin and 8px radius.
-* [ ] `.ui-terminal-well` uses 6px outer margin and 8px radius.
-* [ ] Terminal avoids large all-around gaps in normal and split terminal views.
-* [ ] Type checking passes or any verification limitation is reported.
+* [x] `XTermTerminal` no longer applies all-around `p-2` to `.ui-terminal-bg-layer`, and instead applies left-only `pl-1.5`.
+* [x] `TerminalTabs` no longer offsets the terminal well in non-fullscreen mode.
+* [x] `.ui-terminal-chrome` uses 6px outer margin and 8px radius.
+* [x] `.ui-terminal-well` uses 6px outer margin and 8px radius.
+* [x] Terminal avoids large all-around gaps in normal and split terminal views.
+* [x] Type checking passes or any verification limitation is reported.
 
 ## Definition of Done
 

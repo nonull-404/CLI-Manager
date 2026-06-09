@@ -1,9 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
+  Badge,
+  Box,
+  Card,
+  Group,
+  NumberInput,
+  SegmentedControl,
+  Select,
+  SimpleGrid,
+  Slider,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from "@mantine/core";
+import {
+  TERMINAL_THEME_GROUPS,
   TERMINAL_THEME_PRESETS,
   getTerminalTheme,
   resolveAutoTerminalThemeId,
@@ -23,6 +36,11 @@ const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
   { value: "\"Fira Code\", \"Cascadia Code\", Consolas, monospace", label: "Fira Code" },
   { value: "Consolas, monospace", label: "Consolas" },
   { value: "\"Courier New\", monospace", label: "Courier New" },
+];
+
+const UNSPLIT_OPTIONS: { value: UnsplitBehavior; label: string }[] = [
+  { value: "merge", label: "合并到相邻 Pane" },
+  { value: "close", label: "关闭当前 Pane 内终端" },
 ];
 
 function clampFontSize(value: number) {
@@ -63,6 +81,15 @@ export function ThemeSettingsPage() {
     return TERMINAL_THEME_PRESETS.filter((preset) => preset.name.toLowerCase().includes(keyword));
   }, [query]);
 
+  const groupedThemes = useMemo(
+    () =>
+      TERMINAL_THEME_GROUPS.map((group) => ({
+        ...group,
+        presets: filtered.filter((preset) => preset.group === group.id),
+      })).filter((group) => group.presets.length > 0),
+    [filtered]
+  );
+
   const selectedTheme = useMemo(() => {
     const effective = getTerminalTheme(effectiveThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
     const selectedPreset =
@@ -81,9 +108,23 @@ export function ThemeSettingsPage() {
     () => !FONT_FAMILY_OPTIONS.some((opt) => opt.value === fontFamily),
     [fontFamily]
   );
+  const fontFamilyOptions = useMemo(
+    () => [
+      ...(isCustomFontFamily ? [{ value: fontFamily, label: "当前自定义（保留）" }] : []),
+      ...FONT_FAMILY_OPTIONS,
+    ],
+    [fontFamily, isCustomFontFamily]
+  );
   const normalizedDefaultShell = normalizeShellKey(defaultShell);
   const shellSelectValue = normalizedDefaultShell ?? defaultShell;
   const isCustomShellValue = !normalizedDefaultShell;
+  const shellOptions = useMemo(
+    () => [
+      ...(isCustomShellValue ? [{ value: defaultShell, label: "当前自定义（保留）" }] : []),
+      ...SHELL_OPTIONS,
+    ],
+    [defaultShell, isCustomShellValue]
+  );
   const commitFontSize = (value = fontSizeDraft) => {
     const next = clampFontSize(value);
     setFontSizeDraft(next);
@@ -93,251 +134,342 @@ export function ThemeSettingsPage() {
   };
 
   const terminalPreview = (
-    <Card className="p-4 xl:col-start-2 xl:row-span-2 xl:row-start-1">
-      <div className="text-sm font-semibold text-on-surface">终端预览</div>
-      <div className="mt-2 text-xs text-on-surface-variant">{selectedTheme.label}</div>
-      <div
-        className="mt-3 rounded-xl border p-3 font-mono text-xs"
-        style={{
-          borderColor: "var(--border)",
-          backgroundColor: selectedTheme.theme.background ?? "var(--surface-container-lowest)",
-          color: selectedTheme.theme.foreground ?? "var(--on-surface)",
-        }}
-      >
-        <div>$ echo "hello cli-manager"</div>
-        <div className="mt-1 opacity-80">hello cli-manager</div>
-        <div className="mt-3 flex gap-1">
-          {SWATCH_KEYS.map((key) => (
-            <span
-              key={key}
-              className="h-4 w-4 rounded-[4px] border border-white/15"
-              style={{
-                backgroundColor:
-                  (selectedTheme.theme as Record<string, string | undefined>)[key] ?? "var(--surface-container-lowest)",
-              }}
-              title={key}
-            />
-          ))}
-        </div>
-      </div>
+    <Card className="ui-surface-card sticky top-5 z-10 self-start xl:col-start-2 xl:row-span-2 xl:row-start-1" p="md">
+      <Stack gap="sm">
+        <Box>
+          <Text size="sm" fw={600} c="var(--on-surface)">
+            终端预览
+          </Text>
+          <Text mt={4} size="xs" c="var(--on-surface-variant)">
+            {selectedTheme.label}
+          </Text>
+        </Box>
+        <Box
+          className="rounded-xl border p-3 font-mono text-xs"
+          style={{
+            borderColor: "var(--border)",
+            backgroundColor: selectedTheme.theme.background ?? "var(--surface-container-lowest)",
+            color: selectedTheme.theme.foreground ?? "var(--on-surface)",
+          }}
+        >
+          <div>$ echo "hello cli-manager"</div>
+          <div className="mt-1 opacity-80">hello cli-manager</div>
+          <Group mt="md" gap={6}>
+            {SWATCH_KEYS.map((key) => (
+              <Box
+                key={key}
+                component="span"
+                w={16}
+                h={16}
+                style={{
+                  backgroundColor:
+                    (selectedTheme.theme as Record<string, string | undefined>)[key] ?? "var(--surface-container-lowest)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 4,
+                }}
+                title={key}
+              />
+            ))}
+          </Group>
+        </Box>
 
-      <div className="mt-4 text-xs font-semibold text-on-surface-variant">实时字体预览</div>
-      <div
-        className="mt-2 rounded-xl border border-border p-4 font-mono"
-        style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
-      >
-        <div style={{ fontFamily, fontSize: `${fontSize}px` }}>
-          <div>$ cli-manager --doctor</div>
-          <div className="opacity-80">Environment ready. Launching workspace...</div>
-          <div className="mt-1 text-success">✓ Terminal initialized</div>
-        </div>
-      </div>
+        <Text size="xs" fw={600} c="var(--on-surface-variant)">
+          实时字体预览
+        </Text>
+        <Box
+          className="rounded-xl border border-border p-4 font-mono"
+          style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
+        >
+          <Box style={{ fontFamily, fontSize: `${fontSize}px` }}>
+            <div>$ cli-manager --doctor</div>
+            <div className="opacity-80">Environment ready. Launching workspace...</div>
+            <div className="mt-1 text-success">Terminal initialized</div>
+          </Box>
+        </Box>
+      </Stack>
     </Card>
   );
 
   return (
-    <div className="space-y-4">
+    <Stack gap="md">
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Card className="p-4 xl:col-start-1 xl:row-start-1">
-          <div className="text-sm font-semibold text-on-surface">终端行为</div>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">终端字体大小</label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={FONT_SIZE_MIN}
-                  max={FONT_SIZE_MAX}
-                  step={1}
-                  value={fontSizeDraft}
-                  onChange={(e) => setFontSizeDraft(Number(e.target.value))}
-                  onPointerUp={() => commitFontSize()}
-                  onKeyUp={() => commitFontSize()}
-                  onBlur={() => commitFontSize()}
-                  className="w-full accent-accent"
-                  aria-label="终端字体大小滑杆"
-                />
-                <Input
-                  type="number"
+        <Card className="ui-surface-card xl:col-start-1 xl:row-start-1" p="md">
+          <Stack gap="md">
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              终端行为
+            </Text>
+
+            <Stack gap={6}>
+              <Group justify="space-between" align="center">
+                <Text size="xs" c="var(--on-surface-variant)">
+                  终端字体大小
+                </Text>
+                <NumberInput
                   min={FONT_SIZE_MIN}
                   max={FONT_SIZE_MAX}
                   value={fontSizeDraft}
-                  onChange={(e) => setFontSizeDraft(Number(e.target.value))}
+                  onChange={(value) => setFontSizeDraft(typeof value === "number" ? value : Number(value))}
                   onBlur={() => commitFontSize()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      commitFontSize();
-                    }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitFontSize();
                   }}
-                  className="w-16 text-xs"
+                  size="xs"
+                  w={84}
+                  aria-label="终端字体大小数值"
                 />
-              </div>
-              <div className="mt-1 text-[11px] text-text-muted">仅影响内置终端，不改变应用界面字体。</div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">终端字体族</label>
-              <Select value={fontFamily} onChange={(e) => update("fontFamily", e.target.value)} aria-label="终端字体族">
-                {isCustomFontFamily && <option value={fontFamily}>当前自定义（保留）</option>}
-                {FONT_FAMILY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">默认 Shell</label>
-              <Select value={shellSelectValue} onChange={(e) => update("defaultShell", e.target.value)} aria-label="默认 Shell">
-                {isCustomShellValue && <option value={defaultShell}>当前自定义（保留）</option>}
-                {SHELL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">取消分屏行为</label>
-              <Select
-                value={unsplitBehavior}
-                onChange={(e) => {
-                  const next: UnsplitBehavior = e.target.value === "close" ? "close" : "merge";
-                  void update("unsplitBehavior", next);
-                }}
-                aria-label="取消分屏行为"
-              >
-                <option value="merge">合并到相邻 Pane</option>
-                <option value="close">关闭当前 Pane 内终端</option>
-              </Select>
-              <div className="mt-1 text-[11px] text-text-muted">影响 Unsplit 时当前 Pane 内终端的处理方式。</div>
-            </div>
-
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-container-lowest px-3 py-2">
-              <div>
-                <div className="text-xs text-on-surface-variant">外部 PowerShell</div>
-                <div className="mt-1 text-[11px] text-text-muted">启动项目时使用外部 PowerShell 窗口。</div>
-              </div>
-              <Switch
-                className="shrink-0"
-                checked={useExternalTerminal}
-                onCheckedChange={() => update("useExternalTerminal", !useExternalTerminal)}
-                aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
+              </Group>
+              <Slider
+                min={FONT_SIZE_MIN}
+                max={FONT_SIZE_MAX}
+                step={1}
+                value={fontSizeDraft}
+                onChange={setFontSizeDraft}
+                onChangeEnd={(value) => commitFontSize(value)}
+                color="cliPrimary"
+                aria-label="终端字体大小滑杆"
               />
-            </div>
+              <Text size="xs" c="var(--text-muted)">
+                仅影响内置终端，不改变应用界面字体。
+              </Text>
+            </Stack>
 
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-container-lowest px-3 py-2">
-              <div>
-                <div className="text-xs text-on-surface-variant">通用 Shell 运行监控</div>
-                <div className="mt-1 text-[11px] text-text-muted">
-                  开启后新建 PowerShell / pwsh 终端会注入会话级监控逻辑，用于更新标签运行状态。
-                </div>
-              </div>
-              <Switch
-                className="shrink-0"
-                checked={shellRuntimeMonitoringEnabled}
-                onCheckedChange={(checked) => update("shellRuntimeMonitoringEnabled", checked)}
-                aria-label={shellRuntimeMonitoringEnabled ? "关闭通用 Shell 运行监控" : "开启通用 Shell 运行监控"}
-              />
-            </div>
-          </div>
+            <Select<string>
+              label="终端字体族"
+              value={fontFamily}
+              onChange={(value) => {
+                if (value) void update("fontFamily", value);
+              }}
+              data={fontFamilyOptions}
+              allowDeselect={false}
+              size="xs"
+              aria-label="终端字体族"
+            />
+
+            <Select<string>
+              label="默认 Shell"
+              value={shellSelectValue}
+              onChange={(value) => {
+                if (value) void update("defaultShell", value);
+              }}
+              data={shellOptions}
+              allowDeselect={false}
+              size="xs"
+              aria-label="默认 Shell"
+            />
+
+            <Select<UnsplitBehavior>
+              label="取消分屏行为"
+              value={unsplitBehavior}
+              onChange={(value) => {
+                if (value) void update("unsplitBehavior", value);
+              }}
+              data={UNSPLIT_OPTIONS}
+              allowDeselect={false}
+              size="xs"
+              aria-label="取消分屏行为"
+              description="影响 Unsplit 时当前 Pane 内终端的处理方式。"
+            />
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    外部 PowerShell
+                  </Text>
+                  <Text mt={4} size="xs" c="var(--text-muted)">
+                    启动项目时使用外部 PowerShell 窗口。
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={useExternalTerminal}
+                  onChange={(event) => void update("useExternalTerminal", event.currentTarget.checked)}
+                  aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
+                />
+              </Group>
+            </Card>
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    通用 Shell 运行监控
+                  </Text>
+                  <Text mt={4} size="xs" c="var(--text-muted)">
+                    开启后新建 PowerShell / pwsh 终端会注入会话级监控逻辑，用于更新标签运行状态。
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={shellRuntimeMonitoringEnabled}
+                  onChange={(event) => void update("shellRuntimeMonitoringEnabled", event.currentTarget.checked)}
+                  aria-label={shellRuntimeMonitoringEnabled ? "关闭通用 Shell 运行监控" : "开启通用 Shell 运行监控"}
+                />
+              </Group>
+            </Card>
+          </Stack>
         </Card>
 
         {terminalPreview}
 
-        <Card className="p-4 xl:col-start-1 xl:row-start-2">
-          <div className="mb-4">
-            <div className="mb-2 text-sm font-semibold text-on-surface">终端主题模式</div>
-            <div className="ui-segmented" role="group" aria-label="终端主题模式切换">
-              <button
-                onClick={() => {
-                  void setTerminalThemeMode("follow-app");
-                }}
-                className="ui-focus-ring ui-segmented-btn"
-                data-active={terminalThemeMode === "follow-app" ? "true" : "false"}
-                aria-pressed={terminalThemeMode === "follow-app"}
-              >
-                跟随应用
-              </button>
-              <button
-                onClick={() => {
-                  void setTerminalThemeMode("independent");
-                }}
-                className="ui-focus-ring ui-segmented-btn"
-                data-active={terminalThemeMode === "independent" ? "true" : "false"}
-                aria-pressed={terminalThemeMode === "independent"}
-              >
-                独立设置
-              </button>
-            </div>
-            <div className="mt-2 text-xs text-on-surface-variant">
-              {terminalThemeMode === "follow-app"
-                ? "终端会自动跟随应用浅/深主题与配色方案。"
-                : "终端主题独立于应用主题，切换应用主题时保持不变。"}
-            </div>
-          </div>
+        <Card className="ui-surface-card xl:col-start-1 xl:row-start-2" p="md">
+          <Stack gap="md">
+            <Stack gap={6}>
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                终端主题模式
+              </Text>
+              <SegmentedControl<"follow-app" | "independent">
+                value={terminalThemeMode}
+                onChange={(value) => void setTerminalThemeMode(value)}
+                data={[
+                  { value: "follow-app", label: "跟随应用" },
+                  { value: "independent", label: "独立设置" },
+                ]}
+                color="cliPrimary"
+                aria-label="终端主题模式切换"
+              />
+              <Text size="xs" c="var(--on-surface-variant)">
+                {terminalThemeMode === "follow-app"
+                  ? "终端会自动跟随应用浅/深主题与配色方案。"
+                  : "终端主题独立于应用主题，切换应用主题时保持不变。"}
+              </Text>
+            </Stack>
 
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold text-on-surface">独立主题库</div>
-            <Input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索主题..."
-              className="w-52 text-xs"
-              aria-label="终端主题搜索"
-              disabled={terminalThemeMode !== "independent"}
-            />
-          </div>
+            <Group align="flex-end" justify="space-between" gap="md">
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                独立主题库
+              </Text>
+              <TextInput
+                value={query}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                placeholder="搜索主题..."
+                size="xs"
+                w={220}
+                aria-label="终端主题搜索"
+                disabled={terminalThemeMode !== "independent"}
+              />
+            </Group>
 
-          <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
-            {filtered.map((preset) => {
-              const active = terminalThemeMode === "independent" && terminalThemeName === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  onClick={() => {
-                    void update("terminalThemeName", preset.id);
-                  }}
-                  className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border p-2 text-left"
-                  data-selected={active ? "true" : "false"}
-                  disabled={terminalThemeMode !== "independent"}
-                  aria-pressed={active}
-                >
-                  <div className="truncate text-xs font-semibold text-on-surface">{preset.name}</div>
-                  <div className="mt-2 flex gap-1">
-                    {SWATCH_KEYS.map((key) => (
-                      <span
-                        key={key}
-                        className="h-3.5 w-3.5 rounded-[4px] border"
-                        style={{
-                          backgroundColor:
-                            (preset.theme as Record<string, string | undefined>)[key] ?? "var(--surface-container-lowest)",
-                          borderColor: "var(--border)",
+            <Stack gap="md">
+            {groupedThemes.map((group) => (
+              <section key={group.id}>
+                <Group mb="xs" gap="xs" align="baseline">
+                  <Text size="xs" fw={600} c="var(--on-surface)">
+                    {group.name}
+                  </Text>
+                  <Text size="xs" c="var(--text-muted)">
+                    {group.description}
+                  </Text>
+                </Group>
+                <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="xs">
+                  {group.presets.map((preset) => {
+                    const active = terminalThemeMode === "independent" && terminalThemeName === preset.id;
+                    return (
+                      <UnstyledButton
+                        key={preset.id}
+                        onClick={() => {
+                          void update("terminalThemeName", preset.id);
                         }}
-                      />
-                    ))}
-                  </div>
-                </button>
-              );
-            })}
+                        className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-4 text-left transition-[transform,box-shadow,border-color,background-color]"
+                        data-selected={active ? "true" : "false"}
+                        disabled={terminalThemeMode !== "independent"}
+                        aria-pressed={active}
+                        w="100%"
+                        style={{
+                          display: "block",
+                          minHeight: 108,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          whiteSpace: "normal",
+                          backgroundColor: active
+                            ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
+                            : "var(--surface-container-lowest)",
+                          borderColor: active
+                            ? "color-mix(in srgb, var(--primary) 56%, var(--border))"
+                            : "color-mix(in srgb, var(--border) 88%, transparent)",
+                          boxShadow: active
+                            ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent)"
+                            : "0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent)",
+                        }}
+                      >
+                        {active && (
+                          <Badge
+                            className="absolute right-3 top-3"
+                            size="xs"
+                            variant="light"
+                            style={{
+                              backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
+                              border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
+                              color: "var(--primary)",
+                            }}
+                          >
+                            当前
+                          </Badge>
+                        )}
+                        <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
+                          <Stack gap={2}>
+                            <Text
+                              size="sm"
+                              fw={600}
+                              c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}
+                              style={{ whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.25 }}
+                            >
+                              {preset.name}
+                            </Text>
+                            <Text
+                              size="xs"
+                              lh={1.55}
+                              c={active ? "var(--on-surface-variant)" : "var(--text-muted)"}
+                              style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
+                            >
+                              {preset.tone === "light" ? "浅色" : "深色"}{preset.family ? ` · ${preset.family}` : ""}
+                            </Text>
+                          </Stack>
+                          <Group gap={6}>
+                            {SWATCH_KEYS.map((key) => (
+                              <Box
+                                key={key}
+                                component="span"
+                                w={16}
+                                h={16}
+                                className="h-4 w-4 rounded-[4px] border"
+                                style={{
+                                  backgroundColor:
+                                    (preset.theme as Record<string, string | undefined>)[key] ??
+                                    "var(--surface-container-lowest)",
+                                  borderColor: active ? "color-mix(in srgb, var(--primary) 48%, var(--border))" : "var(--border)",
+                                  boxShadow: "none",
+                                }}
+                              />
+                            ))}
+                          </Group>
+                        </Stack>
+                      </UnstyledButton>
+                    );
+                  })}
+                </SimpleGrid>
+              </section>
+            ))}
             {filtered.length === 0 && (
-              <div className="col-span-full rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-on-surface-variant">
+              <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
+                <Text size="xs" c="var(--on-surface-variant)">
                 未找到匹配主题
-              </div>
+                </Text>
+              </Card>
             )}
-          </div>
+            </Stack>
           {terminalThemeMode !== "independent" && (
-            <div className="mt-3 rounded-xl border border-border bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
+            <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
+              <Text size="xs" c="var(--on-surface-variant)">
               当前为“跟随应用”模式，切换到“独立设置”后可选择固定终端主题。
-            </div>
+              </Text>
+            </Card>
           )}
+          </Stack>
         </Card>
       </section>
 
       <TerminalBackgroundSection />
-    </div>
+    </Stack>
   );
 }

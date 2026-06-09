@@ -22,10 +22,10 @@
 
 ## Acceptance Criteria
 
-* [ ] `1420` 空闲时，`npm run dev` 能正常启动 Vite。
-* [ ] `1420` 已有可访问 dev server 时，`npm run tauri dev` 不因 Vite strictPort 失败。
-* [ ] `1420` 被无关服务占用时，命令输出明确提示端口被占用且不是可复用 dev server。
-* [ ] `npx tsc --noEmit` 通过。
+* [x] `1420` 空闲时，`npm run dev` 能正常启动 Vite。
+* [x] `1420` 已有可访问 dev server 时，`npm run tauri dev` 不因 Vite strictPort 失败。
+* [x] `1420` 被无关服务占用时，命令输出明确提示端口被占用且不是可复用 dev server。
+* [x] `npx tsc --noEmit` 通过。
 
 ## Definition of Done
 

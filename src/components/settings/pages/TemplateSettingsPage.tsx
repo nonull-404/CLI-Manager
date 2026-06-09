@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { Badge, Box, Button, Card, Group, Select, Stack, Text, TextInput, UnstyledButton } from "@mantine/core";
 import { useTemplateStore } from "../../../stores/templateStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
@@ -19,6 +18,12 @@ interface TemplateEditorForm {
   scope: Scope;
   projectId: string | null;
 }
+
+const SCOPE_OPTIONS: { value: Scope; label: string }[] = [
+  { value: "global", label: "全局" },
+  { value: "project", label: "项目" },
+  { value: "session", label: "会话" },
+];
 
 function resolveScope(template: CommandTemplate): Scope {
   if (template.session_id) return "session";
@@ -93,6 +98,20 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
   const selectedTemplate = useMemo(
     () => allTemplates.find((item) => item.id === selectedId) ?? null,
     [allTemplates, selectedId]
+  );
+  const projectOptions = useMemo(
+    () => [
+      { value: "", label: "请选择项目" },
+      ...projects.map((project) => ({ value: project.id, label: project.name })),
+    ],
+    [projects]
+  );
+  const scopeOptions = useMemo(
+    () => SCOPE_OPTIONS.map((option) => ({
+      ...option,
+      disabled: option.value === "session" && !activeSessionId,
+    })),
+    [activeSessionId]
   );
 
   const resetToCreate = () => {
@@ -191,184 +210,200 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
 
   return (
     <div className="grid grid-cols-[280px_minmax(0,1fr)] gap-4">
-      <section className="ui-surface-card min-w-0 rounded-2xl border border-border p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold text-on-surface">模板列表</div>
-          <button
-            onClick={resetToCreate}
-            className="ui-interactive rounded-md border border-border px-2 py-1 text-[11px] text-primary"
-          >
-            新建模板
-          </button>
-        </div>
+      <Card className="ui-surface-card min-w-0" p="sm">
+        <Stack gap="sm">
+          <Group justify="space-between" align="center" gap="sm">
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              模板列表
+            </Text>
+            <Button type="button" size="xs" variant="subtle" color="cliPrimary" onClick={resetToCreate}>
+              新建模板
+            </Button>
+          </Group>
 
-        <div className="space-y-1">
+          <Stack gap={6}>
           {visibleTemplates.map((template) => {
             const active = selectedId === template.id && mode === "edit";
             return (
-              <button
+              <UnstyledButton
                 key={template.id}
                 onClick={() => openEditor(template)}
                 className={`ui-interactive w-full rounded-xl border px-3 py-2 text-left ${
                   active ? "border-primary bg-surface-container-highest" : "border-border bg-surface-container-high"
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-xs font-medium text-on-surface">{template.name}</span>
-                  <span className="shrink-0 rounded-full border border-border px-1 py-0.5 text-[9px] text-on-surface-variant">
+                <Group gap="xs" wrap="nowrap">
+                  <Text size="xs" fw={600} c="var(--on-surface)" truncate>
+                    {template.name}
+                  </Text>
+                  <Badge size="xs" variant="light" color={active ? "cliPrimary" : "gray"} className="shrink-0">
                     {scopeLabel(template)}
-                  </span>
-                </div>
-                <div className="mt-1 truncate text-[10px] text-on-surface-variant">{template.command}</div>
-              </button>
+                  </Badge>
+                </Group>
+                <Text mt={4} size="xs" c="var(--on-surface-variant)" truncate>
+                  {template.command}
+                </Text>
+              </UnstyledButton>
             );
           })}
           {visibleTemplates.length === 0 && (
-            <div className="rounded-xl border border-dashed border-border px-3 py-8 text-center text-xs text-on-surface-variant">
+            <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
+              <Text size="xs" c="var(--on-surface-variant)">
               暂无匹配模板，可从右侧新建。
-            </div>
+              </Text>
+            </Card>
           )}
-        </div>
-      </section>
+          </Stack>
+        </Stack>
+      </Card>
 
-      <section className="ui-surface-card min-w-0 rounded-2xl border border-border p-4">
-        <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-container px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold text-on-surface">
+      <Card className="ui-surface-card min-w-0" p={0}>
+        <Box className="sticky top-0 z-10 border-b border-border bg-surface-container px-4 py-3">
+          <Group justify="space-between" align="flex-start" gap="md">
+            <Box>
+              <Text size="sm" fw={600} c="var(--on-surface)">
               {mode === "create" ? "新建模板" : "编辑模板"}
-            </div>
-            <div className="mt-0.5 text-xs text-on-surface-variant">
+              </Text>
+              <Text mt={2} size="xs" c="var(--on-surface-variant)">
               新建与编辑共用同一表单，避免行为分叉。
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+              </Text>
+            </Box>
+            <Group gap="xs" justify="flex-end">
             {mode === "edit" && (
-              <button
+              <Button
+                type="button"
+                size="xs"
+                variant="default"
+                color="gray"
                 onClick={resetToCreate}
-                className="ui-interactive rounded-md border border-border px-3 py-1.5 text-xs text-on-surface-variant"
               >
                 取消编辑
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+              type="button"
+              size="xs"
+              color="cliPrimary"
               onClick={() => void handleSave()}
               disabled={saveDisabled}
-              className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {saving ? "保存中..." : "确认保存"}
-            </button>
+            </Button>
             {mode === "edit" && (
               confirmingDelete ? (
                 <>
-                  <button
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="default"
+                    color="gray"
                     onClick={() => setConfirmingDelete(false)}
-                    className="ui-interactive rounded-md border border-border px-3 py-1.5 text-xs text-on-surface-variant"
                   >
                     取消删除
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    color="red"
                     onClick={() => void handleDelete()}
-                    className="rounded-md border border-danger/50 bg-danger px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
                   >
                     确认删除
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="light"
+                  color="red"
                   onClick={() => setConfirmingDelete(true)}
-                  className="ui-interactive rounded-md border border-danger/50 px-3 py-1.5 text-xs text-danger"
                 >
                   删除
-                </button>
+                </Button>
               )
             )}
-          </div>
-        </div>
+            </Group>
+          </Group>
+        </Box>
 
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-on-surface-variant">名称</label>
-            <Input
+        <Stack gap="sm" p="md">
+          <TextInput
+              label="名称"
               value={form.name}
-              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, name: event.currentTarget.value }))}
               placeholder="例如：启动后端服务"
-              className="text-xs"
-            />
-          </div>
+              size="xs"
+              aria-label="模板名称"
+          />
 
-          <div>
-            <label className="mb-1 block text-xs text-on-surface-variant">命令</label>
-            <Input
+          <TextInput
+              label="命令"
               value={form.command}
-              onChange={(e) => setForm((prev) => ({ ...prev, command: e.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, command: event.currentTarget.value }))}
               placeholder="支持 ${projectPath}, ${projectName}"
-              className="text-xs"
-            />
-          </div>
+              size="xs"
+              aria-label="模板命令"
+          />
 
-          <div>
-            <label className="mb-1 block text-xs text-on-surface-variant">描述</label>
-            <Input
+          <TextInput
+              label="描述"
               value={form.description}
-              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, description: event.currentTarget.value }))}
               placeholder="可选"
-              className="text-xs"
-            />
-          </div>
+              size="xs"
+              aria-label="模板描述"
+          />
 
-          <div>
-            <label className="mb-1 block text-xs text-on-surface-variant">作用域</label>
-            <Select
+          <Box>
+            <Select<Scope>
+              label="作用域"
               value={form.scope}
-              onChange={(e) => setForm((prev) => ({ ...prev, scope: e.target.value as Scope }))}
+              onChange={(value) => {
+                if (value) setForm((prev) => ({ ...prev, scope: value }));
+              }}
+              data={scopeOptions}
+              allowDeselect={false}
               disabled={mode === "edit"}
-              className="text-xs disabled:opacity-70"
-            >
-              <option value="global">全局</option>
-              <option value="project">项目</option>
-              <option value="session" disabled={!activeSessionId}>
-                会话
-              </option>
-            </Select>
+              size="xs"
+              aria-label="模板作用域"
+            />
             {!activeSessionId && form.scope === "session" && (
-              <div className="mt-1 text-[11px] text-warning">当前无活跃会话，不能创建会话模板。</div>
+              <Text mt={4} size="xs" c="var(--warning)">
+                当前无活跃会话，不能创建会话模板。
+              </Text>
             )}
             {mode === "edit" && (
-              <div className="mt-1 text-[11px] text-on-surface-variant">
+              <Text mt={4} size="xs" c="var(--on-surface-variant)">
                 编辑模式锁定作用域，避免跨作用域迁移造成误操作。
-              </div>
+              </Text>
             )}
-          </div>
+          </Box>
 
           {form.scope === "project" && (
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">目标项目</label>
-              <Select
+            <Select<string>
+                label="目标项目"
                 value={form.projectId ?? ""}
-                onChange={(e) => setForm((prev) => ({ ...prev, projectId: e.target.value || null }))}
+                onChange={(value) => setForm((prev) => ({ ...prev, projectId: value || null }))}
+                data={projectOptions}
+                allowDeselect={false}
                 disabled={mode === "edit"}
-                className="text-xs disabled:opacity-70"
-              >
-                <option value="">请选择项目</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
+                size="xs"
+                aria-label="目标项目"
+            />
           )}
 
           {form.scope === "session" && (
-            <div className="rounded-lg border border-border bg-surface-container-lowest px-3 py-2 text-[11px] text-on-surface-variant">
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Text size="xs" c="var(--on-surface-variant)">
               {activeSessionId
                 ? `将绑定到当前会话：${activeSessionId}`
                 : "请先激活一个会话后再创建会话模板。"}
-            </div>
+              </Text>
+            </Card>
           )}
 
-        </div>
-      </section>
+        </Stack>
+      </Card>
     </div>
   );
 }

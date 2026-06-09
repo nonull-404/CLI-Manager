@@ -20,11 +20,11 @@
 
 ## Acceptance Criteria
 
-* [ ] `.github/workflows/release.yml` 不再包含 `x86_64-apple-darwin`。
-* [ ] `.github/workflows/release.yml` 不再包含 `macos-13` Intel 构建项。
-* [ ] release body 不再声明 macOS Intel 安装包。
-* [ ] git diff 仅包含预期 workflow 文案/矩阵变更。
-* [ ] 变更已提交到当前分支。
+* [x] `.github/workflows/release.yml` 不再包含 `x86_64-apple-darwin`。
+* [x] `.github/workflows/release.yml` 不再包含 `macos-13` Intel 构建项。
+* [x] release body 不再声明 macOS Intel 安装包。
+* [x] git diff 仅包含预期 workflow 文案/矩阵变更。
+* [x] 变更已提交到当前分支。
 
 ## Definition of Done
 

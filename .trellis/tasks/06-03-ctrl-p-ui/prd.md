@@ -24,13 +24,13 @@
 
 ## Acceptance Criteria
 
-- [ ] Ctrl+P 打开的面板背景、边框、圆角、动画与现有 Dialog/Card 体系一致。
-- [ ] 搜索输入使用项目统一输入/focus 样式，不再是纯透明裸 input。
-- [ ] 命令列表选中项使用统一 `ui-interactive`/选中态 token，而不是单独内联背景色。
-- [ ] 空结果、分类标题、描述文本使用项目文本 token 类名。
-- [ ] Ctrl+P、Esc、ArrowUp/ArrowDown、Enter 行为保持不变。
-- [ ] `npx tsc --noEmit` 通过。
-- [ ] 如能启动应用，手动验证 Ctrl+P 面板视觉与交互。
+- [x] Ctrl+P 打开的面板背景、边框、圆角、动画与现有 Dialog/Card 体系一致。
+- [x] 搜索输入使用项目统一输入/focus 样式，不再是纯透明裸 input。
+- [x] 命令列表选中项使用统一 `ui-interactive`/选中态 token，而不是单独内联背景色。
+- [x] 空结果、分类标题、描述文本使用项目文本 token 类名。
+- [x] Ctrl+P、Esc、ArrowUp/ArrowDown、Enter 行为保持不变。
+- [x] `npx tsc --noEmit` 通过。
+- [x] 如能启动应用，手动验证 Ctrl+P 面板视觉与交互。
 
 ## Definition of Done
 

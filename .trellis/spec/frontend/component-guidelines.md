@@ -35,6 +35,30 @@ type SettingsTab = "general" | "terminal-settings" | "shortcuts";
 
 **Tests**: After changing settings page labels or layout, assert that existing callers can still open the page through the old `SettingsTab` literal and run `npx tsc --noEmit`.
 
+### Convention: Settings top search appears only for tabs with real filtering
+
+**What**: In `SettingsModal`, set `searchPlaceholder` only for tabs whose page consumes `searchValue` to filter visible content. For tabs without filtering, omit `searchPlaceholder` and let `SettingsTopBar` render only the close button.
+
+**Why**: A placeholder like "搜索通用设置（预留）" makes an unfinished feature look interactive. Optional `searchPlaceholder` keeps real search working for pages such as shortcuts/templates without showing dead controls on static settings pages.
+
+**Example**:
+
+```tsx
+// Good: only pages with real filtering expose search
+const SETTINGS_TAB_CONFIG = {
+  shortcuts: { label: "快捷键", searchPlaceholder: "搜索快捷键" },
+  hooks: { label: "Hook 设置" },
+};
+
+// Good: top bar treats search as optional
+{searchPlaceholder && <Input value={searchValue} placeholder={searchPlaceholder} />}
+
+// Bad: reserved search that does not filter anything
+const hooks = { label: "Hook 设置", searchPlaceholder: "搜索 Hook 设置（预留）" };
+```
+
+**Tests**: After changing settings search behavior, run `npx tsc --noEmit` and manually verify searchable tabs still filter while static tabs do not show a search input.
+
 ### Convention: Terminal tab drag uses overlay plus explicit pane drop zones
 
 **What**: Terminal tab drag interactions use dnd-kit `DragOverlay` for the cursor-following tab, while pane movement/splitting is driven by explicit drop ids:
@@ -76,7 +100,43 @@ const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
 
 ## Styling Patterns
 
-(To be filled by the team)
+### Convention: Settings pages use Mantine controls for the new visual shell
+
+**What**: Inside the current settings shell, prefer Mantine `Card`, `Stack`, `Group`, `TextInput`, `Select`, `Switch`, `SegmentedControl`, `Button`, `Modal`, and `Badge` for standard settings controls. Keep custom Tailwind/CSS compositions only for specialized visual content such as terminal theme swatches, previews, path rows, and compact status summaries.
+
+**Why**: Mixed custom shadcn-style controls and Mantine controls create inconsistent spacing, selected states, focus states, and modal behavior across settings pages. Using Mantine for the standard controls keeps the settings experience visually consistent without changing application state contracts.
+
+**Example**:
+
+```tsx
+<Card className="ui-surface-card" p="md">
+  <Stack gap="md">
+    <Select
+      label="默认 Shell"
+      value={shellSelectValue}
+      data={shellOptions}
+      allowDeselect={false}
+      onChange={(value) => {
+        if (value) void update("defaultShell", value);
+      }}
+    />
+    <Switch
+      color="cliPrimary"
+      checked={enabled}
+      onChange={(event) => void update("someSetting", event.currentTarget.checked)}
+    />
+  </Stack>
+</Card>
+```
+
+**Contracts**:
+
+- Do not rename `SettingsTab` ids for a visual-only migration.
+- Do not rename persisted settings store fields or alter storage schema.
+- Do not change Tauri command names or payloads while only updating settings visuals.
+- Keep page-level search behavior only on tabs that actually consume `searchValue`.
+
+**Tests**: For settings visual migrations, run `npx tsc --noEmit` and `npm run build`; desktop runtime UI verification remains manual.
 
 ---
 
@@ -165,6 +225,39 @@ if (sequence === "\x1b[?25l") {
 ```
 
 **Prevention**: For high-frequency TUI redraw issues, inspect application-emitted ANSI cursor visibility sequences before changing xterm appearance options. Pass hide through immediately, debounce show, and keep output processing in the PTY write path instead of adding CLI-specific UI state.
+
+### Common Mistake: Letting xterm helper textarea follow non-IME redraw cursors
+
+**Symptom**: During high-frequency TUI progress redraws, such as Claude Code `/compact`, the hidden input proxy appears to make the terminal input anchor jump with the progress cursor.
+
+**Cause**: xterm syncs `.xterm-helper-textarea` to the terminal cursor on cursor moves. This is required for IME composition, but outside composition it can create browser scroll/anchor churn during progress-bar redraws.
+
+**Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing. During IME composition, do not blindly trust xterm's progress-cursor position: after xterm updates `.composition-view` and `.xterm-helper-textarea`, re-anchor both elements near the stable bottom input row, including a post-timeout pass to cover xterm's delayed composition update. After `compositionend`, pin the helper textarea offscreen again.
+
+**Correct**:
+
+```tsx
+if (!isComposingRef.current) {
+  textarea.style.left = "-9999em";
+  textarea.style.top = "0px";
+  textarea.style.width = "0px";
+  textarea.style.height = "0px";
+}
+```
+
+**Wrong**:
+
+```tsx
+// Do not hide, remove, or disable the helper textarea.
+textarea.style.display = "none";
+```
+
+**Tests / manual checks**:
+
+- [ ] Claude Code `/compact` progress redraw does not make the input anchor jump.
+- [ ] During `/compact`, Chinese/IME composition text and the candidate window stay near the bottom input row, not the progress output.
+- [ ] Normal keyboard input, Enter, and paste still reach the PTY.
+- [ ] Chinese/IME composition still positions the candidate window correctly.
 
 ### Convention: xterm Windows PTY and paste handling
 
