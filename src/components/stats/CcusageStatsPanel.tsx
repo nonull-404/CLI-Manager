@@ -287,14 +287,22 @@ function filterDailyByTimeWindow(items: CcusageDailyItem[], window: CcusageTimeW
   });
 }
 
+function cacheCreationTokenTotal(record: Record<string, unknown> | null): number {
+  return firstNumberField(record, ["cacheCreationTokens", "cacheCreationInputTokens"]) ?? 0;
+}
+
+function cacheReadTokenTotal(record: Record<string, unknown> | null): number {
+  return firstNumberField(record, ["cacheReadTokens", "cacheReadInputTokens"]) ?? 0;
+}
+
 function tokenTotal(record: Record<string, unknown> | null): number {
   const total = firstNumberField(record, ["totalTokens"]);
   if (total !== null) return total;
   return (
     numberField(record, "inputTokens") +
     numberField(record, "outputTokens") +
-    (firstNumberField(record, ["cacheCreationTokens", "cacheCreationInputTokens"]) ?? 0) +
-    (firstNumberField(record, ["cacheReadTokens", "cacheReadInputTokens"]) ?? 0)
+    cacheCreationTokenTotal(record) +
+    cacheReadTokenTotal(record)
   );
 }
 
@@ -304,8 +312,8 @@ function normalizeModelItem(value: unknown, fallbackModel = "未知模型"): Ccu
   const model = stringField(record, "model") || stringField(record, "modelName") || fallbackModel;
   const inputTokens = numberField(record, "inputTokens");
   const outputTokens = numberField(record, "outputTokens");
-  const cacheCreationTokens = numberField(record, "cacheCreationTokens");
-  const cacheReadTokens = numberField(record, "cacheReadTokens");
+  const cacheCreationTokens = cacheCreationTokenTotal(record);
+  const cacheReadTokens = cacheReadTokenTotal(record);
   return {
     model,
     inputTokens,
@@ -370,8 +378,8 @@ function normalizeDailyItem(value: unknown): CcusageDailyItem | null {
     dayStart: parseDayStart(date),
     inputTokens: numberField(record, "inputTokens"),
     outputTokens: numberField(record, "outputTokens"),
-    cacheCreationTokens: numberField(record, "cacheCreationTokens"),
-    cacheReadTokens: numberField(record, "cacheReadTokens"),
+    cacheCreationTokens: cacheCreationTokenTotal(record),
+    cacheReadTokens: cacheReadTokenTotal(record),
     totalTokens: tokenTotal(record),
     totalCost: firstNumberField(record, ["totalCost", "costUSD", "totalCostUSD", "cost"]) ?? 0,
     models,
@@ -391,9 +399,71 @@ function hourStartsBetween(start: Date, end: Date): Date[] {
   return hours.length > 0 ? hours : [start];
 }
 
+function normalizeBlockEntryItem(value: unknown): CcusageHourlyItem | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const startedAt =
+    stringField(record, "timestamp") ||
+    stringField(record, "time") ||
+    stringField(record, "startTime") ||
+    stringField(record, "createdAt");
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(startedAt)) return null;
+  const timestamp = new Date(startedAt);
+  if (!Number.isFinite(timestamp.getTime())) return null;
+  const usageRecord = asRecord(record.tokenCounts) ?? asRecord(record.usage) ?? record;
+  const hasUsageValue =
+    firstNumberField(usageRecord, [
+      "inputTokens",
+      "outputTokens",
+      "cacheCreationTokens",
+      "cacheCreationInputTokens",
+      "cacheReadTokens",
+      "cacheReadInputTokens",
+      "totalTokens",
+    ]) !== null ||
+    firstNumberField(record, ["totalCost", "costUSD", "totalCostUSD", "cost"]) !== null ||
+    firstNumberField(usageRecord, ["totalCost", "costUSD", "totalCostUSD", "cost"]) !== null;
+  if (!hasUsageValue) return null;
+  const breakdowns = [
+    ...normalizeModelBreakdowns(record.modelBreakdowns),
+    ...normalizeModelBreakdowns(record.breakdown),
+  ];
+  const models = Array.from(
+    new Set([
+      stringField(record, "model") || stringField(record, "modelName"),
+      ...stringArrayField(record, ["modelsUsed", "models"]),
+      ...breakdowns.map((item) => item.model),
+    ].filter((model): model is string => Boolean(model)))
+  );
+  const inputTokens = numberField(usageRecord, "inputTokens");
+  const outputTokens = numberField(usageRecord, "outputTokens");
+  const cacheCreationTokens = cacheCreationTokenTotal(usageRecord);
+  const cacheReadTokens = cacheReadTokenTotal(usageRecord);
+  return {
+    day: localDateKey(timestamp),
+    hour: timestamp.getHours(),
+    inputTokens,
+    outputTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    totalTokens: firstNumberField(record, ["totalTokens"]) ?? tokenTotal(usageRecord),
+    totalCost:
+      firstNumberField(record, ["totalCost", "costUSD", "totalCostUSD", "cost"]) ??
+      firstNumberField(usageRecord, ["totalCost", "costUSD", "totalCostUSD", "cost"]) ??
+      0,
+    models,
+    breakdowns,
+  };
+}
+
 function normalizeBlockItem(value: unknown): CcusageHourlyItem[] {
   const record = asRecord(value);
   if (!record) return [];
+  const entries = asArray(record.entries)
+    .map(normalizeBlockEntryItem)
+    .filter((item): item is CcusageHourlyItem => item !== null);
+  if (entries.length > 0) return entries;
+
   const blockStart = stringField(record, "blockStart") || stringField(record, "startTime") || stringField(record, "id");
   if (!/^\d{4}-\d{2}-\d{2}T/.test(blockStart)) return [];
   const timestamp = new Date(blockStart);
@@ -598,8 +668,19 @@ function summarizeCcusagePayload(payload: unknown): CcusageSummary {
     inputTokens: firstNumberField(totals, ["inputTokens", "totalInputTokens"]) ?? fallbackTotals.inputTokens,
     outputTokens: firstNumberField(totals, ["outputTokens", "totalOutputTokens"]) ?? fallbackTotals.outputTokens,
     cacheCreationTokens:
-      firstNumberField(totals, ["cacheCreationTokens", "totalCacheCreationTokens"]) ?? fallbackTotals.cacheCreationTokens,
-    cacheReadTokens: firstNumberField(totals, ["cacheReadTokens", "totalCacheReadTokens"]) ?? fallbackTotals.cacheReadTokens,
+      firstNumberField(totals, [
+        "cacheCreationTokens",
+        "cacheCreationInputTokens",
+        "totalCacheCreationTokens",
+        "totalCacheCreationInputTokens",
+      ]) ?? fallbackTotals.cacheCreationTokens,
+    cacheReadTokens:
+      firstNumberField(totals, [
+        "cacheReadTokens",
+        "cacheReadInputTokens",
+        "totalCacheReadTokens",
+        "totalCacheReadInputTokens",
+      ]) ?? fallbackTotals.cacheReadTokens,
     totalTokens: firstNumberField(totals, ["totalTokens"]) ?? fallbackTotals.totalTokens,
     totalCost: firstNumberField(totals, ["totalCost", "totalCostUSD", "costUSD"]) ?? fallbackTotals.totalCost,
     modelCount: models.length,
@@ -748,6 +829,13 @@ function formatCompactCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return formatCount(value);
+}
+
+function formatCompactCostAxis(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "$0";
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value < 10 ? value.toFixed(1) : Math.round(value).toString()}`;
 }
 
 function tooltipParamRows(value: unknown): Record<string, unknown>[] {
@@ -1055,7 +1143,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
           max: costAxisMax,
           nameTextStyle: { color: "var(--text-muted)", fontSize: 10 },
           splitLine: { show: false },
-          axisLabel: { color: "var(--text-muted)", formatter: (value: number) => `$${formatCompactCount(value)}` },
+          axisLabel: { color: "var(--text-muted)", formatter: (value: number) => formatCompactCostAxis(value) },
         },
       ],
       series: [

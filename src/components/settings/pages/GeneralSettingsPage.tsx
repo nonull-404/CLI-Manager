@@ -271,50 +271,78 @@ function PaletteCard({
     <UnstyledButton
       type="button"
       onClick={onClick}
-      className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-3 text-left transition-[transform,box-shadow,border-color,background-color]"
+      className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-4 text-left transition-[transform,box-shadow,border-color,background-color]"
       data-selected={active ? "true" : "false"}
       aria-pressed={active}
       w="100%"
       style={{
-        background: active
-          ? "linear-gradient(180deg, color-mix(in srgb, var(--surface-container-lowest) 88%, var(--primary) 12%), var(--surface-container-low))"
-          : "linear-gradient(180deg, var(--surface-container-lowest), var(--surface-container-low))",
+        display: "block",
+        minHeight: 108,
+        minWidth: 0,
+        overflow: "hidden",
+        whiteSpace: "normal",
+        backgroundColor: active
+          ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
+          : "var(--surface-container-lowest)",
+        borderColor: active
+          ? "color-mix(in srgb, var(--primary) 56%, var(--border))"
+          : "color-mix(in srgb, var(--border) 88%, transparent)",
         boxShadow: active
-          ? "0 10px 24px color-mix(in srgb, var(--primary) 14%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 36%, transparent)"
-          : "0 8px 18px color-mix(in srgb, var(--on-surface) 7%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent)",
+          ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent)"
+          : "0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent)",
       }}
     >
       {active && (
-        <Badge className="ui-primary-gradient absolute right-2 top-2" size="xs" variant="filled">
+        <Badge
+          className="absolute right-3 top-3"
+          size="xs"
+          variant="light"
+          style={{
+            backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
+            color: "var(--primary)",
+          }}
+        >
           当前
         </Badge>
       )}
-      <Group gap={7} ml={8} mt={4} pr={40}>
-        {swatches.map((color, index) => (
-          <Box
-            key={`${color}-${index}`}
-            component="span"
-            w={16}
-            h={16}
-            style={{
-              backgroundColor: color,
-              border: "1px solid var(--border)",
-              borderColor: active ? "color-mix(in srgb, var(--primary) 65%, var(--border))" : "var(--border)",
-              borderRadius: 4,
-              boxShadow:
-                active && index === swatches.length - 1
-                  ? "0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent)"
-                  : "none",
-            }}
-          />
-        ))}
-      </Group>
-      <Text mt="xs" pr={40} size="sm" fw={600} c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}>
-        {label}
-      </Text>
-      <Text mt={4} size="xs" lh={1.55} c={active ? "var(--on-surface-variant)" : "var(--text-muted)"}>
-        {description}
-      </Text>
+      <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
+        <Group gap={8}>
+          {swatches.map((color, index) => (
+            <Box
+              key={`${color}-${index}`}
+              component="span"
+              w={16}
+              h={16}
+              style={{
+                backgroundColor: color,
+                border: "1px solid var(--border)",
+                borderColor: active ? "color-mix(in srgb, var(--primary) 48%, var(--border))" : "var(--border)",
+                borderRadius: 4,
+                boxShadow: "none",
+              }}
+            />
+          ))}
+        </Group>
+        <Stack gap={2}>
+          <Text
+            size="sm"
+            fw={600}
+            c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}
+            style={{ whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.25 }}
+          >
+            {label}
+          </Text>
+          <Text
+            size="xs"
+            lh={1.55}
+            c={active ? "var(--on-surface-variant)" : "var(--text-muted)"}
+            style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
+          >
+            {description}
+          </Text>
+        </Stack>
+      </Stack>
     </UnstyledButton>
   );
 }
@@ -552,16 +580,38 @@ export function GeneralSettingsPage() {
                       key={opt.value}
                       type="button"
                       onClick={() => void update("sidebarDensity", opt.value)}
-                      className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border px-3 py-2 text-left"
+                      className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border px-4 py-3 text-left"
                       data-selected={active ? "true" : "false"}
                       aria-pressed={active}
+                      w="100%"
+                      style={{
+                        display: "block",
+                        minHeight: 76,
+                        minWidth: 0,
+                        backgroundColor: active
+                          ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
+                          : "var(--surface-container-lowest)",
+                        borderColor: active
+                          ? "color-mix(in srgb, var(--primary) 54%, var(--border))"
+                          : "color-mix(in srgb, var(--border) 92%, transparent)",
+                        boxShadow: active
+                          ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent)"
+                          : "0 1px 4px color-mix(in srgb, var(--on-surface) 5%, transparent)",
+                      }}
                     >
-                      <Text size="sm" fw={600} c="var(--on-surface)">
-                        {opt.label}
-                      </Text>
-                      <Text mt={2} size="xs" lh={1.45} c="var(--on-surface-variant)">
-                        {opt.description}
-                      </Text>
+                      <Stack gap={4} style={{ minWidth: 0, padding: "6px 10px 4px" }}>
+                        <Text size="sm" fw={600} c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}>
+                          {opt.label}
+                        </Text>
+                        <Text
+                          size="xs"
+                          lh={1.45}
+                          c="var(--text-muted)"
+                          style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
+                        >
+                          {opt.description}
+                        </Text>
+                      </Stack>
                     </UnstyledButton>
                   );
                 })}
