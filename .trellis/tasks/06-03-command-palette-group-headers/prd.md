@@ -21,11 +21,11 @@
 
 ## Acceptance Criteria
 
-- [ ] “操作 / 项目 / 命令模板”分组标题有明确视觉层级。
-- [ ] 分组标题与命令项之间有清晰间距或分隔感。
-- [ ] 选中项样式仍使用统一 `ui-interactive` token。
-- [ ] Ctrl+P 搜索、上下键、Enter、点击行为保持不变。
-- [ ] `npx tsc --noEmit` 通过。
+- [x] “操作 / 项目 / 命令模板”分组标题有明确视觉层级。
+- [x] 分组标题与命令项之间有清晰间距或分隔感。
+- [x] 选中项样式仍使用统一 `ui-interactive` token。
+- [x] Ctrl+P 搜索、上下键、Enter、点击行为保持不变。
+- [x] `npx tsc --noEmit` 通过。
 
 ## Definition of Done
 

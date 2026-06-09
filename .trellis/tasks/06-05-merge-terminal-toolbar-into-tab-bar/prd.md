@@ -14,11 +14,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 终端内容区顶部不再出现独立按钮栏/空白栏。
-- [ ] toolbar 按钮与 terminal tab 位于同一水平行。
-- [ ] terminal tab 边框呈绿色，选中态清晰。
-- [ ] tab 横向溢出滚动、tab 列表按钮、关闭按钮仍可用。
-- [ ] 多分屏下不会重复出现多套全局 toolbar 按钮。
+- [x] 终端内容区顶部不再出现独立按钮栏/空白栏。
+- [x] toolbar 按钮与 terminal tab 位于同一水平行。
+- [x] terminal tab 边框呈绿色，选中态清晰。
+- [x] tab 横向溢出滚动、tab 列表按钮、关闭按钮仍可用。
+- [x] 多分屏下不会重复出现多套全局 toolbar 按钮。
 
 ## Definition of Done
 

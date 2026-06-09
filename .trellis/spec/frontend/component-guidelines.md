@@ -100,7 +100,43 @@ const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
 
 ## Styling Patterns
 
-(To be filled by the team)
+### Convention: Settings pages use Mantine controls for the new visual shell
+
+**What**: Inside the current settings shell, prefer Mantine `Card`, `Stack`, `Group`, `TextInput`, `Select`, `Switch`, `SegmentedControl`, `Button`, `Modal`, and `Badge` for standard settings controls. Keep custom Tailwind/CSS compositions only for specialized visual content such as terminal theme swatches, previews, path rows, and compact status summaries.
+
+**Why**: Mixed custom shadcn-style controls and Mantine controls create inconsistent spacing, selected states, focus states, and modal behavior across settings pages. Using Mantine for the standard controls keeps the settings experience visually consistent without changing application state contracts.
+
+**Example**:
+
+```tsx
+<Card className="ui-surface-card" p="md">
+  <Stack gap="md">
+    <Select
+      label="默认 Shell"
+      value={shellSelectValue}
+      data={shellOptions}
+      allowDeselect={false}
+      onChange={(value) => {
+        if (value) void update("defaultShell", value);
+      }}
+    />
+    <Switch
+      color="cliPrimary"
+      checked={enabled}
+      onChange={(event) => void update("someSetting", event.currentTarget.checked)}
+    />
+  </Stack>
+</Card>
+```
+
+**Contracts**:
+
+- Do not rename `SettingsTab` ids for a visual-only migration.
+- Do not rename persisted settings store fields or alter storage schema.
+- Do not change Tauri command names or payloads while only updating settings visuals.
+- Keep page-level search behavior only on tabs that actually consume `searchValue`.
+
+**Tests**: For settings visual migrations, run `npx tsc --noEmit` and `npm run build`; desktop runtime UI verification remains manual.
 
 ---
 
@@ -196,7 +232,7 @@ if (sequence === "\x1b[?25l") {
 
 **Cause**: xterm syncs `.xterm-helper-textarea` to the terminal cursor on cursor moves. This is required for IME composition, but outside composition it can create browser scroll/anchor churn during progress-bar redraws.
 
-**Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing; on `compositionstart`, cancel that pin so xterm can place the textarea at the real cursor for IME candidate positioning; after `compositionend`, pin it again.
+**Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing. During IME composition, do not blindly trust xterm's progress-cursor position: after xterm updates `.composition-view` and `.xterm-helper-textarea`, re-anchor both elements near the stable bottom input row, including a post-timeout pass to cover xterm's delayed composition update. After `compositionend`, pin the helper textarea offscreen again.
 
 **Correct**:
 
@@ -219,6 +255,7 @@ textarea.style.display = "none";
 **Tests / manual checks**:
 
 - [ ] Claude Code `/compact` progress redraw does not make the input anchor jump.
+- [ ] During `/compact`, Chinese/IME composition text and the candidate window stay near the bottom input row, not the progress output.
 - [ ] Normal keyboard input, Enter, and paste still reach the PTY.
 - [ ] Chinese/IME composition still positions the candidate window correctly.
 

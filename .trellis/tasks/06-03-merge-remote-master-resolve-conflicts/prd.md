@@ -12,9 +12,9 @@ Merge the latest `origin/master` into the current `feat/compact-mode-launcher` b
 
 ## Acceptance Criteria
 
-- [ ] Current branch includes the latest `origin/master`.
-- [ ] `git status` has no merge conflict markers or unmerged paths.
-- [ ] Any conflict resolution preserves existing behavior.
+- [x] Current branch includes the latest `origin/master`.
+- [x] `git status` has no merge conflict markers or unmerged paths.
+- [x] Any conflict resolution preserves existing behavior.
 
 ## Definition of Done
 

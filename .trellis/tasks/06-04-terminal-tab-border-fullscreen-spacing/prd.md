@@ -21,11 +21,11 @@ Improve the terminal workspace visual fit with the smallest UI change: make term
 
 ## Acceptance Criteria
 
-* [ ] Terminal tabs have a visible boundary in the tab bar.
-* [ ] Active terminal tab remains distinguishable from inactive tabs.
-* [ ] Fullscreen terminal content starts at the top of the content area without the current 12px top gap.
-* [ ] Non-fullscreen spacing stays unchanged.
-* [ ] Typecheck or targeted verification is run before completion.
+* [x] Terminal tabs have a visible boundary in the tab bar.
+* [x] Active terminal tab remains distinguishable from inactive tabs.
+* [x] Fullscreen terminal content starts at the top of the content area without the current 12px top gap.
+* [x] Non-fullscreen spacing stays unchanged.
+* [x] Typecheck or targeted verification is run before completion.
 
 ## Definition of Done
 

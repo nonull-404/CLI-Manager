@@ -31,12 +31,12 @@ Enable terminal tabs to open the existing edit-title flow by double-clicking the
 
 ## Acceptance Criteria
 
-* [ ] Double-clicking a terminal tab enters inline edit mode for that tab.
-* [ ] Enter or blur saves a non-empty trimmed title and persists it in session storage.
-* [ ] Escape cancels without changing the title.
-* [ ] Empty or whitespace-only input cancels instead of saving an empty title.
-* [ ] Single-click activation, close button, right-click menu, and drag behavior are not affected.
-* [ ] TypeScript check passes.
+* [x] Double-clicking a terminal tab enters inline edit mode for that tab.
+* [x] Enter or blur saves a non-empty trimmed title and persists it in session storage.
+* [x] Escape cancels without changing the title.
+* [x] Empty or whitespace-only input cancels instead of saving an empty title.
+* [x] Single-click activation, close button, right-click menu, and drag behavior are not affected.
+* [x] TypeScript check passes.
 
 ## Definition of Done (team quality bar)
 

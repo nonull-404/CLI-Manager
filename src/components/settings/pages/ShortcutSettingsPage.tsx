@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Badge, Box, Button, Card, Group, Kbd, SegmentedControl, Stack, Text } from "@mantine/core";
 import {
   DEFAULT_KEYBOARD_SHORTCUTS,
   useSettingsStore,
@@ -123,157 +124,162 @@ export function ShortcutSettingsPage({ searchValue }: ShortcutSettingsPageProps)
   }, [shortcuts]);
 
   return (
-    <div className="space-y-4">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-1 text-sm font-semibold text-on-surface">终端键位</div>
-        <div className="mb-3 text-[11px] text-on-surface-variant">
-          在终端中按下该组合键时，向 PTY 发送换行符 <code>\n</code>（适配 Claude Code、Codex 等 AI CLI 的「换行不提交」）。单按 Enter 行为不变。
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {TERMINAL_NEWLINE_OPTIONS.map((opt) => {
-            const active = terminalNewlineShortcut === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  if (!active) void update("terminalNewlineShortcut", opt.value);
-                }}
-                className="ui-interactive rounded-lg border px-3 py-1.5 text-xs"
-                style={{
-                  borderColor: active ? "var(--primary)" : "var(--border)",
-                  backgroundColor: active
-                    ? "color-mix(in srgb, var(--primary) 12%, var(--surface-container-high) 88%)"
-                    : "var(--surface-container-high)",
-                  color: active ? "var(--primary)" : "var(--on-surface)",
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+    <Stack gap="md">
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="sm">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              终端键位
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              在终端中按下该组合键时，向 PTY 发送换行符 <code>\n</code>（适配 Claude Code、Codex 等 AI CLI 的“换行不提交”）。单按 Enter 行为不变。
+            </Text>
+          </Box>
+          <SegmentedControl<TerminalNewlineShortcut>
+            value={terminalNewlineShortcut}
+            onChange={(value) => void update("terminalNewlineShortcut", value)}
+            data={TERMINAL_NEWLINE_OPTIONS}
+            color="cliPrimary"
+            aria-label="终端换行快捷键"
+          />
+        </Stack>
+      </Card>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-1 text-sm font-semibold text-on-surface">终端标签切换</div>
-        <div className="mb-3 text-[11px] text-on-surface-variant">
-          左方向键切到上一个标签，右方向键切到下一个标签。
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {TAB_SWITCH_OPTIONS.map((opt) => {
-            const active = currentTabSwitchModifier === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  if (!active) updateTabSwitchModifier(opt.value);
-                }}
-                className="ui-interactive rounded-lg border px-3 py-1.5 text-xs"
-                style={{
-                  borderColor: active ? "var(--primary)" : "var(--border)",
-                  backgroundColor: active
-                    ? "color-mix(in srgb, var(--primary) 12%, var(--surface-container-high) 88%)"
-                    : "var(--surface-container-high)",
-                  color: active ? "var(--primary)" : "var(--on-surface)",
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-        {currentTabSwitchModifier === null && (
-          <div className="mt-2 text-[11px] text-on-surface-variant">
-            当前为自定义标签切换快捷键，可在下方单独修改。
-          </div>
-        )}
-      </section>
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="sm">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              终端标签切换
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              左方向键切到上一个标签，右方向键切到下一个标签。
+            </Text>
+          </Box>
+          <Group gap="xs">
+            {TAB_SWITCH_OPTIONS.map((opt) => {
+              const active = currentTabSwitchModifier === opt.value;
+              return (
+                <Button
+                  key={opt.value}
+                  type="button"
+                  size="xs"
+                  variant={active ? "light" : "default"}
+                  color={active ? "cliPrimary" : "gray"}
+                  onClick={() => {
+                    if (!active) updateTabSwitchModifier(opt.value);
+                  }}
+                  aria-pressed={active}
+                >
+                  {opt.label}
+                </Button>
+              );
+            })}
+          </Group>
+          {currentTabSwitchModifier === null && (
+            <Text size="xs" c="var(--on-surface-variant)">
+              当前为自定义标签切换快捷键，可在下方单独修改。
+            </Text>
+          )}
+        </Stack>
+      </Card>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-on-surface">快捷键绑定</div>
-          <button
-            onClick={resetDefaults}
-            className="ui-interactive rounded-lg border border-border px-3 py-1.5 text-xs text-on-surface-variant"
-          >
-            恢复默认
-          </button>
-        </div>
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="sm">
+          <Group justify="space-between" align="center" gap="md">
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              快捷键绑定
+            </Text>
+            <Button type="button" size="xs" variant="default" color="gray" onClick={resetDefaults}>
+              恢复默认
+            </Button>
+          </Group>
 
-        <div className="space-y-2">
+          <Stack gap="xs">
           {visibleActions.map((action) => {
             const conflict = conflictMap.get(action);
             const isRecording = recording === action;
             return (
-              <div
+              <Card
                 key={action}
-                className={`rounded-xl border px-3 py-2 ${conflict ? "border-warning/60" : "border-border"}`}
+                className={`border ${conflict ? "border-warning/60" : "border-border"}`}
+                p="sm"
+                radius="lg"
                 style={{
                   backgroundColor: conflict
                     ? "color-mix(in srgb, var(--warning) 10%, var(--surface-container-high) 90%)"
                     : "var(--surface-container-high)",
                 }}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-on-surface">{SHORTCUT_LABELS[action]}</div>
-                    {conflict && <div className="mt-0.5 text-[11px] text-warning">{conflict}</div>}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                  <Box className="min-w-0">
+                    <Text size="sm" fw={500} c="var(--on-surface)">
+                      {SHORTCUT_LABELS[action]}
+                    </Text>
+                    {conflict && (
+                      <Text mt={2} size="xs" c="var(--warning)">
+                        {conflict}
+                      </Text>
+                    )}
+                  </Box>
+                  <Group gap="xs" className="shrink-0">
                     {isRecording ? (
                       <>
-                        <span
-                          className="animate-pulse rounded-md px-2 py-1 text-xs"
-                          style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
-                        >
+                        <Badge color="cliPrimary" variant="filled" className="animate-pulse">
                           请按下快捷键...
-                        </span>
-                        <button
+                        </Badge>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="default"
+                          color="gray"
                           onClick={() => clearShortcut(action)}
-                          className="ui-interactive rounded-md border border-border px-2 py-1 text-[11px] text-on-surface-variant"
                         >
                           清空
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="subtle"
+                          color="cliPrimary"
                           onClick={() => setRecording(null)}
-                          className="ui-interactive rounded-md border border-border px-2 py-1 text-[11px] text-primary"
                         >
                           取消
-                        </button>
+                        </Button>
                       </>
                     ) : (
                       <>
-                        <kbd
-                          className="min-w-[108px] rounded-md border px-2 py-1 text-center text-[11px] font-medium"
-                          style={{
-                            backgroundColor: "var(--surface-container-lowest)",
-                            borderColor: "var(--border)",
-                            color: shortcuts[action].trim() ? "var(--on-surface)" : "var(--on-surface-variant)",
-                            boxShadow: "0 1px 0 color-mix(in srgb, var(--surface-container-lowest) 78%, var(--border) 22%)",
-                          }}
+                        <Kbd
+                          className="min-w-[108px] text-center"
+                          style={{ color: shortcuts[action].trim() ? "var(--on-surface)" : "var(--on-surface-variant)" }}
                         >
                           {shortcuts[action].trim() || "未设置"}
-                        </kbd>
-                        <button
+                        </Kbd>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="subtle"
+                          color="cliPrimary"
                           onClick={() => setRecording(action)}
-                          className="ui-interactive rounded-md border border-border px-2 py-1 text-[11px] text-primary"
                         >
                           修改
-                        </button>
+                        </Button>
                       </>
                     )}
-                  </div>
-                </div>
-              </div>
+                  </Group>
+                </Group>
+              </Card>
             );
           })}
           {visibleActions.length === 0 && (
-            <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-on-surface-variant">
+            <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
+              <Text size="xs" c="var(--on-surface-variant)">
               未找到匹配的快捷键动作
-            </div>
+              </Text>
+            </Card>
           )}
-        </div>
-      </section>
-    </div>
+          </Stack>
+        </Stack>
+      </Card>
+    </Stack>
   );
 }

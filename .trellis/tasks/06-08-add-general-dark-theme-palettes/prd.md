@@ -28,12 +28,12 @@ Add more dark palette choices to the General settings appearance section so the 
 
 ## Acceptance Criteria
 
-* [ ] New dark palettes appear under General settings → Appearance → 暗色配色.
-* [ ] Selecting each new palette updates app shell CSS variables via `data-dark-palette`.
-* [ ] Existing palettes still work and keep their ids.
-* [ ] Terminal follow-app mode compiles with the expanded dark palette union.
-* [ ] `npx tsc --noEmit` passes.
-* [ ] Human manually verifies app appearance and terminal follow-app preview.
+* [x] New dark palettes appear under General settings → Appearance → 暗色配色.
+* [x] Selecting each new palette updates app shell CSS variables via `data-dark-palette`.
+* [x] Existing palettes still work and keep their ids.
+* [x] Terminal follow-app mode compiles with the expanded dark palette union.
+* [x] `npx tsc --noEmit` passes.
+* [x] Human manually verifies app appearance and terminal follow-app preview.
 
 ## Definition of Done
 

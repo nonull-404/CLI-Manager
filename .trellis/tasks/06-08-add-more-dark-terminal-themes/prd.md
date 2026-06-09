@@ -22,11 +22,11 @@ Expand the built-in terminal theme library with additional mainstream dark palet
 
 ## Acceptance Criteria
 
-* [ ] New dark presets appear in the independent terminal theme library.
-* [ ] New presets have `group`, `family`, and `tone: "dark"` metadata.
-* [ ] Existing theme ids and auto theme resolution remain unchanged.
-* [ ] `npx tsc --noEmit` passes.
-* [ ] Human manually verifies terminal settings UI and terminal preview.
+* [x] New dark presets appear in the independent terminal theme library.
+* [x] New presets have `group`, `family`, and `tone: "dark"` metadata.
+* [x] Existing theme ids and auto theme resolution remain unchanged.
+* [x] `npx tsc --noEmit` passes.
+* [x] Human manually verifies terminal settings UI and terminal preview.
 
 ## Definition of Done
 

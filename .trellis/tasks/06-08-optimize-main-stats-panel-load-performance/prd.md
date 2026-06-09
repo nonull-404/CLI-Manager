@@ -40,16 +40,16 @@ Optimize the main Analytics/Stats panel so it opens quickly on repeated use inst
 
 ## Acceptance Criteria
 
-* [ ] Reopening the stats panel with the same filters uses already loaded stats immediately.
-* [ ] Manual refresh still bypasses frontend and backend cache.
-* [ ] Changing project/source/manual date range loads matching stats.
-* [ ] Opening the panel defaults to the natural current-week date range.
-* [ ] Time range control lets the user manually select inclusive start and end dates instead of choosing fixed day counts.
-* [ ] Opening the panel defaults to the first selectable project when project options exist; falls back to all projects when no project option exists.
-* [ ] Backend avoids rebuilding or re-aggregating stats unnecessarily when history files have not changed.
-* [ ] Stats panel no longer starts unnecessary work beyond what is required to resolve default project options and stats.
-* [ ] No new dependency is added.
-* [ ] TypeScript check and relevant Rust check scope are reported if run.
+* [x] Reopening the stats panel with the same filters uses already loaded stats immediately.
+* [x] Manual refresh still bypasses frontend and backend cache.
+* [x] Changing project/source/manual date range loads matching stats.
+* [x] Opening the panel defaults to the natural current-week date range.
+* [x] Time range control lets the user manually select inclusive start and end dates instead of choosing fixed day counts.
+* [x] Opening the panel defaults to the first selectable project when project options exist; falls back to all projects when no project option exists.
+* [x] Backend avoids rebuilding or re-aggregating stats unnecessarily when history files have not changed.
+* [x] Stats panel no longer starts unnecessary work beyond what is required to resolve default project options and stats.
+* [x] No new dependency is added.
+* [x] TypeScript check and relevant Rust check scope are reported if run.
 
 ## Technical Approach
 

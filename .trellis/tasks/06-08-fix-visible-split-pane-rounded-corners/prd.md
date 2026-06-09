@@ -23,10 +23,10 @@
 
 ## Acceptance Criteria
 
-- [ ] 横向分屏时，左右 pane 各自靠近 divider 的顶部/底部角能看出圆角。
-- [ ] 纵向分屏时，上下 pane 各自靠近 divider 的左右角能看出圆角。
-- [ ] 多级分屏时，每个 leaf pane 都有可见圆角。
-- [ ] 单 pane 和 fullscreen 不出现明显视觉回退。
+- [x] 横向分屏时，左右 pane 各自靠近 divider 的顶部/底部角能看出圆角。
+- [x] 纵向分屏时，上下 pane 各自靠近 divider 的左右角能看出圆角。
+- [x] 多级分屏时，每个 leaf pane 都有可见圆角。
+- [x] 单 pane 和 fullscreen 不出现明显视觉回退。
 
 ## Definition of Done
 

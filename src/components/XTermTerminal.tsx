@@ -579,6 +579,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     let compositionScrollRafId: number | null = null;
     let containerScrollResetRafId: number | null = null;
     let helperTextareaAnchorRafId: number | null = null;
+    let compositionAnchorRafId: number | null = null;
+    let compositionAnchorTimeoutId: number | null = null;
     let compositionScrollLock: { element: HTMLElement; scrollTop: number; scrollLeft: number }[] = [];
 
     const captureCompositionScroll = () => {
@@ -625,6 +627,77 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       });
     };
 
+    const estimateCellSize = () => {
+      const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
+      const rect = (screen ?? terminalContainer).getBoundingClientRect();
+      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
+      return {
+        width: rect.width > 0 ? rect.width / Math.max(1, terminal.cols) : Math.max(1, fallbackFontSize * 0.6),
+        height: rect.height > 0 ? rect.height / Math.max(1, terminal.rows) : Math.max(1, fallbackFontSize * 1.2),
+      };
+    };
+
+    const resolveCompositionAnchorCell = () => {
+      const buffer = terminal.buffer.active;
+      const promptPattern = /^(?:[>$#]|PS(?:\s|>))/;
+      const bottomRow = Math.max(0, terminal.rows - 2);
+      const scanStart = Math.max(0, terminal.rows - 8);
+      for (let row = terminal.rows - 1; row >= scanStart; row -= 1) {
+        const text = buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? "";
+        const trimmed = text.trimStart();
+        if (!trimmed || !promptPattern.test(trimmed)) continue;
+        const leadingSpaces = text.length - trimmed.length;
+        return {
+          x: Math.min(Math.max(1, terminal.cols - 1), Math.max(leadingSpaces + 1, text.length + 1)),
+          y: row,
+        };
+      }
+      return { x: 1, y: bottomRow };
+    };
+
+    const applyCompositionAnchorFix = () => {
+      if (!isComposingRef.current) return;
+      const compositionView = terminalContainer.querySelector(".composition-view") as HTMLElement | null;
+      if (!textarea && !compositionView) return;
+      const anchor = resolveCompositionAnchorCell();
+      const cell = estimateCellSize();
+      const left = `${Math.max(0, anchor.x * cell.width)}px`;
+      const top = `${Math.max(0, anchor.y * cell.height)}px`;
+      const height = `${Math.max(1, cell.height)}px`;
+
+      if (compositionView) {
+        compositionView.style.left = left;
+        compositionView.style.top = top;
+        compositionView.style.height = height;
+        compositionView.style.lineHeight = height;
+      }
+      if (textarea) {
+        textarea.style.left = left;
+        textarea.style.top = top;
+        textarea.style.width = `${Math.max(1, cell.width)}px`;
+        textarea.style.height = height;
+        textarea.style.lineHeight = height;
+      }
+    };
+
+    const scheduleCompositionAnchorFix = () => {
+      applyCompositionAnchorFix();
+      if (compositionAnchorRafId !== null) {
+        cancelAnimationFrame(compositionAnchorRafId);
+      }
+      compositionAnchorRafId = requestAnimationFrame(() => {
+        compositionAnchorRafId = null;
+        applyCompositionAnchorFix();
+      });
+      if (compositionAnchorTimeoutId !== null) {
+        window.clearTimeout(compositionAnchorTimeoutId);
+      }
+      compositionAnchorTimeoutId = window.setTimeout(() => {
+        compositionAnchorTimeoutId = null;
+        applyCompositionAnchorFix();
+      }, 0);
+    };
+
     const pinHelperTextareaAnchor = () => {
       if (!textarea || isComposingRef.current) return;
       textarea.style.left = "-9999em";
@@ -661,7 +734,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     scheduleHelperTextareaAnchorPin();
     terminalContainer.addEventListener("scroll", scheduleTerminalContainerScrollReset, { passive: true });
     const cursorMoveDisposable = terminal.onCursorMove(() => {
-      if (!isActiveRef.current || isComposingRef.current) return;
+      if (!isActiveRef.current) return;
+      if (isComposingRef.current) {
+        scheduleCompositionScrollRestore();
+        scheduleCompositionAnchorFix();
+        return;
+      }
       if (!textarea || document.activeElement !== textarea) return;
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
@@ -672,9 +750,11 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       releaseHelperTextareaAnchorPin();
       captureCompositionScroll();
       scheduleCompositionScrollRestore();
+      scheduleCompositionAnchorFix();
     };
     const onCompositionUpdate = () => {
       scheduleCompositionScrollRestore();
+      scheduleCompositionAnchorFix();
     };
     const onCompositionEnd = () => {
       isComposingRef.current = false;
@@ -743,6 +823,14 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (helperTextareaAnchorRafId !== null) {
         cancelAnimationFrame(helperTextareaAnchorRafId);
         helperTextareaAnchorRafId = null;
+      }
+      if (compositionAnchorRafId !== null) {
+        cancelAnimationFrame(compositionAnchorRafId);
+        compositionAnchorRafId = null;
+      }
+      if (compositionAnchorTimeoutId !== null) {
+        window.clearTimeout(compositionAnchorTimeoutId);
+        compositionAnchorTimeoutId = null;
       }
       if (writeRafId !== null) {
         cancelAnimationFrame(writeRafId);

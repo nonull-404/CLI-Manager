@@ -2150,6 +2150,12 @@ samp,
   color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 92%, white 8%);
 }
 
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-primary-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 58%, var(--terminal-tab-accent) 42%);
+  color: var(--terminal-theme-foreground, #f8fafc);
+  box-shadow: none;
+}
+
 .ui-terminal-global-chrome {
   background-color: var(--surface-container-low);
   color: var(--on-surface);

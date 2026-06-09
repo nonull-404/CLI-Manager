@@ -20,10 +20,10 @@
 
 ## Acceptance Criteria
 
-- [ ] terminal tab 普通态边框更柔和。
-- [ ] terminal tab 选中态仍能清楚辨认。
-- [ ] 新建按钮不再使用抢眼绿色底色。
-- [ ] toolbar 其他按钮与新建按钮视觉统一。
+- [x] terminal tab 普通态边框更柔和。
+- [x] terminal tab 选中态仍能清楚辨认。
+- [x] 新建按钮不再使用抢眼绿色底色。
+- [x] toolbar 其他按钮与新建按钮视觉统一。
 
 ## Definition of Done
 

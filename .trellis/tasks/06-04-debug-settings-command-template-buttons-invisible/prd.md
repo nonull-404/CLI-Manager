@@ -29,10 +29,10 @@ Find the real root cause for why the settings command template UI does not show 
 
 ## Acceptance Criteria
 
-* [ ] Command template create flow shows a visible save/confirm button.
-* [ ] Existing template edit flow shows a visible delete button.
-* [ ] Delete requires a second explicit confirmation.
-* [ ] TypeScript check passes or unrelated blockers are documented.
+* [x] Command template create flow shows a visible save/confirm button.
+* [x] Existing template edit flow shows a visible delete button.
+* [x] Delete requires a second explicit confirmation.
+* [x] TypeScript check passes or unrelated blockers are documented.
 
 ## Definition of Done
 

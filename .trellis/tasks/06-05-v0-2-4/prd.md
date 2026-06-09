@@ -34,8 +34,8 @@
 ## Acceptance Criteria
 
 * [x] v0.2.4 范围明确。
-* [ ] 人工确认：终端普通模式与全屏模式布局紧凑，且无明显单侧 padding。
-* [ ] 人工确认：背景图片启用时仍可透出，不被 wrapper opaque background 覆盖。
+* [x] 人工确认：终端普通模式与全屏模式布局紧凑，且无明显单侧 padding。
+* [x] 人工确认：背景图片启用时仍可透出，不被 wrapper opaque background 覆盖。
 * [x] `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 版本号一致为 `0.2.4`。
 * [x] `CHANGELOG.md` 包含 v0.2.4 的核心变更说明。
 * [x] 通过最小相关静态检查；运行态 UI 验证按项目约定交由人工完成。

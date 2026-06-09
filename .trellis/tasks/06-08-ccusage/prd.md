@@ -69,19 +69,19 @@
 
 ## Acceptance Criteria (evolving)
 
-* [ ] 新安装/首次启动时，ccusage 开关默认关闭。
-* [ ] 开关关闭时，分析入口不显示 ccusage 看板。
-* [ ] 开关开启且工具可用时，分析入口打开新版 ccusage 看板。
-* [ ] 新版 ccusage 看板不修改旧 `StatsPanel` 的统计口径和布局。
-* [ ] 新版 ccusage 看板支持 Claude / Codex / 全部 三种来源切换。
-* [ ] 选择 Claude 时只展示 ccusage Claude 聚焦报告；选择 Codex 时只展示 ccusage Codex 聚焦报告；选择全部时展示 ccusage 统一报告。
-* [ ] 没有 bunx 时，UI 先显示二次确认；用户确认后才进入正在安装/安装失败/安装完成状态。
-* [ ] ccusage JSON 解析失败时，UI 显示明确错误，不崩溃。
-* [ ] 有 SQLite 缓存时优先展示缓存，并提供刷新入口。
-* [ ] 重启应用后，在未刷新前仍能展示上次成功的 ccusage 缓存数据。
-* [ ] 刷新后缓存更新时间可见。
-* [ ] `npx tsc --noEmit` 通过。
-* [ ] `cd src-tauri && cargo check` 通过。
+* [x] 新安装/首次启动时，ccusage 开关默认关闭。
+* [x] 开关关闭时，分析入口不显示 ccusage 看板。
+* [x] 开关开启且工具可用时，分析入口打开新版 ccusage 看板。
+* [x] 新版 ccusage 看板不修改旧 `StatsPanel` 的统计口径和布局。
+* [x] 新版 ccusage 看板支持 Claude / Codex / 全部 三种来源切换。
+* [x] 选择 Claude 时只展示 ccusage Claude 聚焦报告；选择 Codex 时只展示 ccusage Codex 聚焦报告；选择全部时展示 ccusage 统一报告。
+* [x] 没有 bunx 时，UI 先显示二次确认；用户确认后才进入正在安装/安装失败/安装完成状态。
+* [x] ccusage JSON 解析失败时，UI 显示明确错误，不崩溃。
+* [x] 有 SQLite 缓存时优先展示缓存，并提供刷新入口。
+* [x] 重启应用后，在未刷新前仍能展示上次成功的 ccusage 缓存数据。
+* [x] 刷新后缓存更新时间可见。
+* [x] `npx tsc --noEmit` 通过。
+* [x] `cd src-tauri && cargo check` 通过。
 
 ## Definition of Done
 

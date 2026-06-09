@@ -21,10 +21,10 @@
 
 ## Acceptance Criteria
 
-- [ ] 分屏后每个 pane 的可视区域有圆角。
-- [ ] 单 pane 模式整体外观不出现额外异常缝隙。
-- [ ] fullscreen 终端仍能填满窗口，不出现不必要外层空白。
-- [ ] 每个分屏 pane 的 toolbar 仍可见。
+- [x] 分屏后每个 pane 的可视区域有圆角。
+- [x] 单 pane 模式整体外观不出现额外异常缝隙。
+- [x] fullscreen 终端仍能填满窗口，不出现不必要外层空白。
+- [x] 每个分屏 pane 的 toolbar 仍可见。
 
 ## Definition of Done
 

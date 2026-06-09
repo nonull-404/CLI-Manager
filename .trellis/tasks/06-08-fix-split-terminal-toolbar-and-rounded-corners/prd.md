@@ -20,10 +20,10 @@
 
 ## Acceptance Criteria
 
-- [ ] 分屏为两个或多个 pane 后，每个 pane 的 tab 栏右侧都有新建、模板、历史、全屏等可见 toolbar 按钮。
-- [ ] 分屏内部相邻 pane 边界不再呈现每个 pane 独立圆角。
-- [ ] terminal 区域整体外框仍保留外层四角圆角。
-- [ ] tab 普通态、选中态、新建按钮配色沿用主题蓝灰方案且无重复规则互相覆盖。
+- [x] 分屏为两个或多个 pane 后，每个 pane 的 tab 栏右侧都有新建、模板、历史、全屏等可见 toolbar 按钮。
+- [x] 分屏内部相邻 pane 边界不再呈现每个 pane 独立圆角。
+- [x] terminal 区域整体外框仍保留外层四角圆角。
+- [x] tab 普通态、选中态、新建按钮配色沿用主题蓝灰方案且无重复规则互相覆盖。
 
 ## Definition of Done
 

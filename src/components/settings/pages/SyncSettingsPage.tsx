@@ -1,5 +1,20 @@
 import { useState, useEffect } from "react";
-import { Input } from "@/components/ui/input";
+import {
+  Box,
+  Button,
+  Card,
+  Checkbox,
+  Group,
+  Modal,
+  PasswordInput,
+  Select,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  ThemeIcon,
+  UnstyledButton,
+} from "@mantine/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   useSyncStore,
@@ -14,8 +29,6 @@ import {
   Upload,
   AlertTriangle,
   Check,
-  Eye,
-  EyeOff,
   Folder,
 } from "../../icons";
 import { toast } from "sonner";
@@ -256,483 +269,493 @@ export function SyncSettingsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Conflict Banner */}
+    <Stack gap="md">
       {conflictInfo && (
-        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="mt-0.5 shrink-0 text-yellow-500" />
-            <div className="flex-1">
-              <h3 className="font-medium text-yellow-500">检测到同步冲突</h3>
-              <p className="mt-1 text-sm text-on-surface-variant">
+        <Card className="border border-yellow-500/30 bg-yellow-500/10" p="md" radius="lg">
+          <Group align="flex-start" gap="sm" wrap="nowrap">
+            <ThemeIcon variant="light" color="yellow" size="sm">
+              <AlertTriangle size={16} />
+            </ThemeIcon>
+            <Stack gap="sm" className="flex-1">
+              <Box>
+                <Text fw={600} c="yellow">
+                  检测到同步冲突
+                </Text>
+                <Text mt={4} size="sm" c="var(--on-surface-variant)">
                 本地和远程都有更新，请选择保留哪个版本。
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-                <div className="rounded-lg bg-surface-container-high p-3">
-                  <div className="font-medium">本地版本</div>
-                  <div className="mt-1 text-on-surface-variant">
+                </Text>
+              </Box>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                <Card className="bg-surface-container-high" p="sm" radius="lg">
+                  <Text fw={600}>本地版本</Text>
+                  <Text mt={4} size="sm" c="var(--on-surface-variant)">
                     {new Date(conflictInfo.local_modified).toLocaleString("zh-CN")}
-                  </div>
-                  <div className="mt-2 text-xs">
+                  </Text>
+                  <Text mt={8} size="xs">
                     {conflictInfo.local_projects} 个项目 · {conflictInfo.local_groups} 个分组 ·{" "}
                     {conflictInfo.local_templates} 个模板
-                  </div>
-                </div>
-                <div className="rounded-lg bg-surface-container-high p-3">
-                  <div className="font-medium">远程版本</div>
-                  <div className="mt-1 text-on-surface-variant">
+                  </Text>
+                </Card>
+                <Card className="bg-surface-container-high" p="sm" radius="lg">
+                  <Text fw={600}>远程版本</Text>
+                  <Text mt={4} size="sm" c="var(--on-surface-variant)">
                     {new Date(conflictInfo.remote_modified).toLocaleString("zh-CN")}
-                  </div>
-                  <div className="mt-2 text-xs">
+                  </Text>
+                  <Text mt={8} size="xs">
                     {conflictInfo.remote_projects} 个项目 · {conflictInfo.remote_groups} 个分组 ·{" "}
                     {conflictInfo.remote_templates} 个模板
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={() => resolveConflict(true)}
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-                >
+                  </Text>
+                </Card>
+              </SimpleGrid>
+              <Group gap="xs">
+                <Button size="xs" color="cliPrimary" onClick={() => resolveConflict(true)}>
                   保留本地
-                </button>
-                <button
-                  onClick={() => resolveConflict(false)}
-                  className="rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80"
-                >
+                </Button>
+                <Button size="xs" variant="default" color="gray" onClick={() => resolveConflict(false)}>
                   使用远程
-                </button>
-                <button
-                  onClick={clearConflict}
-                  className="rounded-lg px-4 py-2 text-sm text-on-surface-variant transition-opacity hover:opacity-80"
-                >
+                </Button>
+                <Button size="xs" variant="subtle" color="gray" onClick={clearConflict}>
                   取消
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+                </Button>
+              </Group>
+            </Stack>
+          </Group>
+        </Card>
       )}
 
-      {/* Sync Mode Switch */}
-      <section>
-        <h3 className="mb-3 text-base font-medium text-on-surface">同步方式</h3>
-        <div className="grid grid-cols-2 gap-3">
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="sm">
+          <Text size="sm" fw={600} c="var(--on-surface)">
+            同步方式
+          </Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
           {SYNC_MODE_OPTIONS.map((opt) => {
             const active = syncMode === opt.value;
             return (
-              <button
+              <UnstyledButton
                 key={opt.value}
                 onClick={() => void setSyncMode(opt.value)}
                 className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border p-3 text-left"
                 data-selected={active ? "true" : "false"}
                 aria-pressed={active}
               >
-                <div className="text-sm font-semibold">{opt.label}</div>
-                <div className="mt-0.5 text-[11px] leading-4 text-on-surface-variant">
+                <Text size="sm" fw={600} c="var(--on-surface)">
+                  {opt.label}
+                </Text>
+                <Text mt={4} size="xs" lh={1.45} c="var(--on-surface-variant)">
                   {opt.description}
-                </div>
-              </button>
+                </Text>
+              </UnstyledButton>
             );
           })}
-        </div>
-      </section>
+          </SimpleGrid>
+        </Stack>
+      </Card>
 
       {syncMode === "cloud" && (
         <>
-          {/* WebDAV Configuration */}
-          <section>
-            <h3 className="mb-4 text-base font-medium text-on-surface">WebDAV 配置</h3>
+          <Card className="ui-surface-card" p="md">
+            <Stack gap="md">
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                WebDAV 配置
+              </Text>
 
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm text-on-surface-variant">服务器地址</label>
-                <Input
+              <TextInput
+                  label="服务器地址"
                   type="url"
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(event) => setUrl(event.currentTarget.value)}
                   placeholder="https://dav.example.com/webdav"
-                  className="h-9 text-sm"
-                />
-              </div>
+                  size="sm"
+                  aria-label="WebDAV 服务器地址"
+              />
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1.5 block text-sm text-on-surface-variant">用户名</label>
-                  <Input
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                <TextInput
+                    label="用户名"
                     type="text"
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    onChange={(event) => setUsername(event.currentTarget.value)}
                     placeholder="username"
-                    className="h-9 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm text-on-surface-variant">密码</label>
-                  <div className="relative">
-                    <Input
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="h-9 pr-10 text-sm"
-                      aria-label="WebDAV 密码"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
-                      aria-label={showPassword ? "隐藏密码" : "显示密码"}
-                    >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
-              </div>
+                    size="sm"
+                    aria-label="WebDAV 用户名"
+                />
+                <PasswordInput
+                    label="密码"
+                    value={password}
+                    onChange={(event) => setPassword(event.currentTarget.value)}
+                    placeholder="••••••••"
+                    visible={showPassword}
+                    onVisibilityChange={setShowPassword}
+                    size="sm"
+                    aria-label="WebDAV 密码"
+                />
+              </SimpleGrid>
 
-              <div>
-                <label className="mb-1.5 block text-sm text-on-surface-variant">当前设备名称</label>
-                <div className="flex gap-2">
-                  <Input
+              <Box>
+                <Group align="flex-end" gap="xs" wrap="nowrap">
+                  <TextInput
+                    label="当前设备名称"
                     type="text"
                     value={deviceNameInput}
-                    onChange={(e) => setDeviceNameInput(e.target.value)}
+                    onChange={(event) => setDeviceNameInput(event.currentTarget.value)}
                     placeholder="当前设备"
-                    className="h-9 text-sm"
+                    size="sm"
+                    className="flex-1"
+                    aria-label="当前设备名称"
                   />
-                  <button
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    color="gray"
                     onClick={handleSaveDeviceName}
-                    className="whitespace-nowrap rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80"
                   >
                     保存设备名
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-on-surface-variant">云端快照会按设备名称隔离，避免不同设备路径互相覆盖。</p>
-              </div>
+                  </Button>
+                </Group>
+                <Text mt={4} size="xs" c="var(--on-surface-variant)">
+                  云端快照会按设备名称隔离，避免不同设备路径互相覆盖。
+                </Text>
+              </Box>
 
-              <div className="flex gap-2">
-                <button
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  color="cliPrimary"
                   onClick={handleTest}
                   disabled={testing || !url.trim() || !username.trim() || !password.trim()}
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
                   {testing ? "测试中..." : "测试连接"}
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="xs"
+                  variant="default"
+                  color="gray"
                   onClick={handleSave}
-                  className="rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80"
                 >
                   保存配置
-                </button>
+                </Button>
                 {hasPassword && (
-                  <button
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
                     onClick={clearPassword}
-                    className="rounded-lg px-4 py-2 text-sm text-error transition-opacity hover:opacity-80"
                   >
                     清除密码
-                  </button>
+                  </Button>
                 )}
-              </div>
+              </Group>
 
               {hasPassword && (
-                <div className="flex items-center gap-2 text-sm text-success">
+                <Group gap="xs" c="var(--success)">
                   <Check size={16} />
-                  <span>已配置 WebDAV 连接</span>
-                </div>
+                  <Text size="sm">已配置 WebDAV 连接</Text>
+                </Group>
               )}
-            </div>
-          </section>
+            </Stack>
+          </Card>
 
-          {/* Cloud Sync Actions */}
-          <section>
-            <h3 className="mb-4 text-base font-medium text-on-surface">云端同步操作</h3>
-
+          <Card className="ui-surface-card" p="md">
+            <Stack gap="md">
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                云端同步操作
+              </Text>
             {!hasPassword && (
-              <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-600 dark:text-yellow-400">
+              <Card className="border border-yellow-500/30 bg-yellow-500/10" p="sm" radius="lg">
+                <Text size="sm" c="yellow">
                 请先完成 WebDAV 配置并点击"测试连接"验证成功后再进行同步操作。
-              </div>
+                </Text>
+              </Card>
             )}
 
-            <div className="mb-4 grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1.5 block text-sm text-on-surface-variant">应用打开时</label>
-                <select
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+              <Select<AutoSyncAction>
+                  label="应用打开时"
                   value={autoSyncOnStartup}
-                  onChange={(e) => void setAutoSyncOnStartup(e.target.value as AutoSyncAction)}
-                  className="h-9 w-full rounded-lg border border-border bg-surface-container-low px-3 text-sm text-on-surface"
-                >
-                  {AUTO_SYNC_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm text-on-surface-variant">应用关闭时</label>
-                <select
+                  onChange={(value) => {
+                    if (value) void setAutoSyncOnStartup(value);
+                  }}
+                  data={AUTO_SYNC_OPTIONS}
+                  allowDeselect={false}
+                  size="sm"
+              />
+              <Select<AutoSyncAction>
+                  label="应用关闭时"
                   value={autoSyncOnClose}
-                  onChange={(e) => void setAutoSyncOnClose(e.target.value as AutoSyncAction)}
-                  className="h-9 w-full rounded-lg border border-border bg-surface-container-low px-3 text-sm text-on-surface"
-                >
-                  {AUTO_SYNC_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
+                  onChange={(value) => {
+                    if (value) void setAutoSyncOnClose(value);
+                  }}
+                  data={AUTO_SYNC_OPTIONS}
+                  allowDeselect={false}
+                  size="sm"
+              />
+            </SimpleGrid>
 
-            <div className="mb-4">
-              <label className="mb-1.5 block text-sm text-on-surface-variant">恢复设备快照</label>
-              <select
+            <Select<string>
+                label="恢复设备快照"
                 value={previewDeviceName}
-                onChange={(e) => setPreviewDeviceName(e.target.value)}
-                className="h-9 w-full rounded-lg border border-border bg-surface-container-low px-3 text-sm text-on-surface"
-              >
-                {knownDeviceNames.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </div>
+                onChange={(value) => setPreviewDeviceName(value ?? "")}
+                data={knownDeviceNames.map((name) => ({ value: name, label: name }))}
+                allowDeselect={false}
+                size="sm"
+            />
 
-            <div className="flex items-center gap-4">
-              <button
+            <Group gap="sm">
+              <Button
+                size="sm"
+                color="cliPrimary"
+                leftSection={status === "syncing" ? undefined : <Upload size={16} />}
                 onClick={() => void openPreview("upload")}
                 disabled={!hasPassword || status === "syncing"}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {status === "syncing" ? (
-                  <span className="animate-spin">同步中</span>
-                ) : (
-                  <Upload size={16} />
-                )}
-                上传到云端
-              </button>
-              <button
+                {status === "syncing" ? "同步中" : "上传到云端"}
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                color="gray"
+                leftSection={status === "syncing" ? undefined : <Download size={16} />}
                 onClick={() => void openPreview("download")}
                 disabled={!hasPassword || status === "syncing"}
-                className="flex items-center gap-2 rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80 disabled:opacity-50"
               >
-                {status === "syncing" ? (
-                  <span className="animate-spin">同步中</span>
-                ) : (
-                  <Download size={16} />
-                )}
-                从云端下载
-              </button>
-            </div>
+                {status === "syncing" ? "同步中" : "从云端下载"}
+              </Button>
+            </Group>
 
-            <div className="mt-4 flex items-center gap-2 text-sm text-on-surface-variant">
+            <Group gap="xs" c="var(--on-surface-variant)">
               <Cloud size={16} />
-              <span>上次同步：{formatLastSync()}</span>
-            </div>
-          </section>
+              <Text size="sm">上次同步：{formatLastSync()}</Text>
+            </Group>
+            </Stack>
+          </Card>
 
-          <section className="rounded-lg bg-surface-container-high p-4">
-            <h4 className="font-medium text-on-surface">使用说明</h4>
-            <ul className="mt-2 space-y-1 text-sm text-on-surface-variant">
-              <li>• 支持 WebDAV 协议，可使用坚果云、InfiniCLOUD、群晖 NAS 等服务</li>
-              <li>• 上传将覆盖远程配置，下载将覆盖本地配置</li>
-              <li>• 建议在切换设备前先上传，在新设备上下载</li>
-              <li>• 密码使用系统安全存储，不会被明文保存</li>
-            </ul>
-          </section>
+          <Card className="border border-border bg-surface-container-high" p="md" radius="lg">
+            <Text fw={600} c="var(--on-surface)">使用说明</Text>
+            <Stack mt="xs" gap={4}>
+              <Text size="sm" c="var(--on-surface-variant)">支持 WebDAV 协议，可使用坚果云、InfiniCLOUD、群晖 NAS 等服务。</Text>
+              <Text size="sm" c="var(--on-surface-variant)">上传将覆盖远程配置，下载将覆盖本地配置。</Text>
+              <Text size="sm" c="var(--on-surface-variant)">建议在切换设备前先上传，在新设备上下载。</Text>
+              <Text size="sm" c="var(--on-surface-variant)">密码使用系统安全存储，不会被明文保存。</Text>
+            </Stack>
+          </Card>
         </>
       )}
 
       {syncMode === "local" && (
         <>
-          <section>
-            <h3 className="mb-4 text-base font-medium text-on-surface">本地同步目录</h3>
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Input
+          <Card className="ui-surface-card" p="md">
+            <Stack gap="md">
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                本地同步目录
+              </Text>
+              <Group align="flex-end" gap="xs" wrap="nowrap">
+                <TextInput
+                  label="目录"
                   type="text"
                   value={localSyncDir}
                   readOnly
                   placeholder="尚未选择目录"
-                  className="h-9 flex-1 text-sm"
+                  className="flex-1"
+                  size="sm"
                   aria-label="本地同步目录"
                 />
-                <button
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  color="gray"
+                  leftSection={<Folder size={16} />}
                   onClick={handlePickLocalDir}
-                  className="flex items-center gap-2 rounded-lg bg-surface-container-highest px-3 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80"
                 >
-                  <Folder size={16} />
                   选择目录
-                </button>
-              </div>
+                </Button>
+              </Group>
               {localSyncDir && (
-                <div className="flex items-center gap-2 text-sm text-success">
+                <Group gap="xs" c="var(--success)">
                   <Check size={16} />
-                  <span>已配置本地同步目录</span>
-                </div>
+                  <Text size="sm">已配置本地同步目录</Text>
+                </Group>
               )}
-            </div>
-          </section>
+            </Stack>
+          </Card>
 
-          <section>
-            <h3 className="mb-4 text-base font-medium text-on-surface">本地同步操作</h3>
+          <Card className="ui-surface-card" p="md">
+            <Stack gap="md">
+              <Text size="sm" fw={600} c="var(--on-surface)">
+                本地同步操作
+              </Text>
 
             {!localSyncDir && (
-              <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-600 dark:text-yellow-400">
+              <Card className="border border-yellow-500/30 bg-yellow-500/10" p="sm" radius="lg">
+                <Text size="sm" c="yellow">
                 请先选择本地同步目录，再执行导出操作。
-              </div>
+                </Text>
+              </Card>
             )}
 
-            <div className="flex items-center gap-4">
-              <button
+            <Group gap="sm">
+              <Button
+                size="sm"
+                color="cliPrimary"
+                leftSection={status === "syncing" ? undefined : <Upload size={16} />}
                 onClick={handleLocalExport}
                 disabled={!localSyncDir || status === "syncing"}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {status === "syncing" ? (
-                  <span className="animate-spin">⏳</span>
-                ) : (
-                  <Upload size={16} />
-                )}
-                导出到本地（zip）
-              </button>
-              <button
+                {status === "syncing" ? "同步中" : "导出到本地（zip）"}
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                color="gray"
+                leftSection={status === "syncing" ? undefined : <Download size={16} />}
                 onClick={handleLocalImportPick}
                 disabled={status === "syncing"}
-                className="flex items-center gap-2 rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80 disabled:opacity-50"
               >
-                {status === "syncing" ? (
-                  <span className="animate-spin">⏳</span>
-                ) : (
-                  <Download size={16} />
-                )}
-                从 zip 导入
-              </button>
-            </div>
+                {status === "syncing" ? "同步中" : "从 zip 导入"}
+              </Button>
+            </Group>
 
-            <div className="mt-4 flex items-center gap-2 text-sm text-on-surface-variant">
+            <Group gap="xs" c="var(--on-surface-variant)">
               <Folder size={16} />
-              <span>上次同步：{formatLastSync()}</span>
-            </div>
-          </section>
+              <Text size="sm">上次同步：{formatLastSync()}</Text>
+            </Group>
+            </Stack>
+          </Card>
 
-          <section className="rounded-lg bg-surface-container-high p-4">
-            <h4 className="font-medium text-on-surface">使用说明</h4>
-            <ul className="mt-2 space-y-1 text-sm text-on-surface-variant">
-              <li>• 导出文件名格式：cli-manager-sync-YYYYMMDD-HHmmss.zip（保留历史）</li>
-              <li>• 导入时将覆盖本地所有项目、分组和模板配置，操作不可撤销</li>
-              <li>• 可将目录指向云盘同步盘（OneDrive / 坚果云 / Dropbox 等）以实现跨设备同步</li>
-              <li>• 同步内容仅包括项目、分组、命令模板，不包括 WebDAV 密码与终端会话</li>
-            </ul>
-          </section>
+          <Card className="border border-border bg-surface-container-high" p="md" radius="lg">
+            <Text fw={600} c="var(--on-surface)">使用说明</Text>
+            <Stack mt="xs" gap={4}>
+              <Text size="sm" c="var(--on-surface-variant)">导出文件名格式：cli-manager-sync-YYYYMMDD-HHmmss.zip（保留历史）。</Text>
+              <Text size="sm" c="var(--on-surface-variant)">导入时将覆盖本地所有项目、分组和模板配置，操作不可撤销。</Text>
+              <Text size="sm" c="var(--on-surface-variant)">可将目录指向云盘同步盘（OneDrive / 坚果云 / Dropbox 等）以实现跨设备同步。</Text>
+              <Text size="sm" c="var(--on-surface-variant)">同步内容仅包括项目、分组、命令模板，不包括 WebDAV 密码与终端会话。</Text>
+            </Stack>
+          </Card>
         </>
       )}
 
-      {preview && previewMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-surface-container-high p-4 shadow-lg">
-            <div className="flex items-start gap-3">
-              <AlertTriangle size={20} className="mt-0.5 shrink-0 text-yellow-500" />
-              <div>
-                <h3 className="font-medium text-on-surface">
-                  {previewMode === "upload" ? "确认上传到云端" : "确认从云端下载"}
-                </h3>
-                <p className="mt-1 text-sm text-on-surface-variant">
+      <Modal
+        opened={Boolean(preview && previewMode)}
+        onClose={() => {
+          setPreview(null);
+          setPreviewMode(null);
+        }}
+        title={previewMode === "upload" ? "确认上传到云端" : "确认从云端下载"}
+        size="xl"
+        centered
+      >
+        {preview && previewMode && (
+          <Stack gap="md">
+            <Group align="flex-start" gap="sm" wrap="nowrap">
+              <ThemeIcon variant="light" color="yellow" size="sm">
+                <AlertTriangle size={16} />
+              </ThemeIcon>
+              <Text size="sm" c="var(--on-surface-variant)">
                   执行前请核对本地与云端摘要。{previewMode === "upload" ? "云端快照缺失时将创建当前设备快照。" : "下载可按数据域选择覆盖范围。"}
-                </p>
-              </div>
-            </div>
+              </Text>
+            </Group>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
               {[preview.local, preview.remote].map((item, index) => (
-                <div key={index === 0 ? "local" : "remote"} className="rounded-lg bg-surface-container-low p-3 text-sm">
-                  <div className="font-medium text-on-surface">{index === 0 ? "本地内容" : "云端内容"}</div>
-                  <div className="mt-1 text-on-surface-variant">设备：{item.deviceName}</div>
-                  <div className="text-on-surface-variant">
+                <Card key={index === 0 ? "local" : "remote"} className="bg-surface-container-low" p="sm" radius="lg">
+                  <Text fw={600} c="var(--on-surface)">{index === 0 ? "本地内容" : "云端内容"}</Text>
+                  <Text mt={4} size="sm" c="var(--on-surface-variant)">设备：{item.deviceName}</Text>
+                  <Text size="sm" c="var(--on-surface-variant)">
                     时间：{item.missing ? "云端暂无快照" : new Date(item.lastModified).toLocaleString("zh-CN")}
-                  </div>
+                  </Text>
                   {item.missing && (
-                    <div className="mt-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1 text-xs text-yellow-600 dark:text-yellow-400">
+                    <Card mt="xs" className="border border-yellow-500/30 bg-yellow-500/10" p="xs" radius="md">
+                      <Text size="xs" c="yellow">
                       当前设备云端快照为空，确认上传后会新建快照。
-                    </div>
+                      </Text>
+                    </Card>
                   )}
-                  <div className="mt-2 text-xs text-on-surface-variant">
+                  <Text mt="xs" size="xs" c="var(--on-surface-variant)">
                     {item.projects} 个项目 · {item.groups} 个分组 · {item.commandTemplates} 个模板
-                  </div>
-                  <div className="mt-2 space-y-1 text-xs text-on-surface-variant">
-                    <div>项目：{item.projectNames.join("、") || "无"}</div>
-                    <div>分组：{item.groupNames.join("、") || "无"}</div>
-                    <div>模板：{item.templateNames.join("、") || "无"}</div>
-                  </div>
-                </div>
+                  </Text>
+                  <Stack mt="xs" gap={4}>
+                    <Text size="xs" c="var(--on-surface-variant)">项目：{item.projectNames.join("、") || "无"}</Text>
+                    <Text size="xs" c="var(--on-surface-variant)">分组：{item.groupNames.join("、") || "无"}</Text>
+                    <Text size="xs" c="var(--on-surface-variant)">模板：{item.templateNames.join("、") || "无"}</Text>
+                  </Stack>
+                </Card>
               ))}
-            </div>
+            </SimpleGrid>
 
             {previewMode === "download" && (
-              <div className="mt-4 rounded-lg bg-surface-container-low p-3">
-                <div className="mb-2 text-sm font-medium text-on-surface">选择覆盖范围</div>
-                <div className="flex flex-wrap gap-2">
+              <Card className="bg-surface-container-low" p="sm" radius="lg">
+                <Stack gap="xs">
+                  <Text size="sm" fw={600} c="var(--on-surface)">选择覆盖范围</Text>
+                  <Group gap="sm">
                   {DOMAIN_OPTIONS.map((option) => (
-                    <button
+                    <Checkbox
                       key={option.value}
-                      type="button"
-                      onClick={() => toggleDomain(option.value)}
-                      data-selected={selectedDomains.includes(option.value) ? "true" : "false"}
-                      className="ui-interactive ui-focus-ring ui-selection-card rounded-lg border px-3 py-2 text-sm"
-                    >
-                      {option.label}
-                    </button>
+                      checked={selectedDomains.includes(option.value)}
+                      onChange={() => toggleDomain(option.value)}
+                      label={option.label}
+                      color="cliPrimary"
+                    />
                   ))}
-                </div>
-              </div>
+                  </Group>
+                </Stack>
+              </Card>
             )}
 
-            <div className="mt-4 flex justify-end gap-2">
-              <button
+            <Group justify="flex-end" gap="xs">
+              <Button
+                size="xs"
+                variant="default"
+                color="gray"
                 onClick={() => {
                   setPreview(null);
                   setPreviewMode(null);
                 }}
-                className="rounded-lg px-4 py-2 text-sm text-on-surface-variant transition-opacity hover:opacity-80"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button
+                size="xs"
+                color="cliPrimary"
                 onClick={() => void confirmPreviewAction()}
                 disabled={previewMode === "download" && selectedDomains.length === 0}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 确认执行
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
 
-      {showImportConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 max-w-sm rounded-lg bg-surface-container-high p-4 shadow-lg">
-            <div className="flex items-start gap-3">
-              <AlertTriangle size={20} className="mt-0.5 shrink-0 text-yellow-500" />
-              <div>
-                <h3 className="font-medium text-on-surface">确认导入</h3>
-                <p className="mt-1 text-sm text-on-surface-variant break-all">
+      <Modal
+        opened={Boolean(showImportConfirm)}
+        onClose={() => setShowImportConfirm(null)}
+        title="确认导入"
+        size="sm"
+        centered
+      >
+        {showImportConfirm && (
+          <Stack gap="md">
+            <Group align="flex-start" gap="sm" wrap="nowrap">
+              <ThemeIcon variant="light" color="yellow" size="sm">
+                <AlertTriangle size={16} />
+              </ThemeIcon>
+              <Text size="sm" c="var(--on-surface-variant)" style={{ overflowWrap: "anywhere" }}>
                   从 <span className="font-mono">{showImportConfirm}</span> 导入将覆盖本地所有项目、分组和模板配置，此操作不可撤销。
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setShowImportConfirm(null)}
-                className="rounded-lg px-4 py-2 text-sm text-on-surface-variant transition-opacity hover:opacity-80"
-              >
+              </Text>
+            </Group>
+            <Group justify="flex-end" gap="xs">
+              <Button size="xs" variant="default" color="gray" onClick={() => setShowImportConfirm(null)}>
                 取消
-              </button>
-              <button
-                onClick={confirmLocalImport}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-              >
+              </Button>
+              <Button size="xs" color="red" onClick={confirmLocalImport}>
                 确认导入
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+    </Stack>
   );
 }

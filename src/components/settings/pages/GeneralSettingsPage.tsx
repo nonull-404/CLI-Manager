@@ -372,6 +372,7 @@ export function GeneralSettingsPage() {
   const defaultUiTextColor = getDefaultUiTextColor(resolvedTheme, lightThemePalette, darkThemePalette);
   const normalizedUiTextColorDraft = uiTextColorDraft.trim();
   const uiTextColorDraftInvalid = normalizedUiTextColorDraft !== "" && !HEX_COLOR_PATTERN.test(normalizedUiTextColorDraft);
+  const uiTextColorResetDisabled = !uiTextColor && uiTextColorDraft === "";
   const colorPickerValue = HEX_COLOR_PATTERN.test(normalizedUiTextColorDraft) ? normalizedUiTextColorDraft : defaultUiTextColor;
   const commitUiTextColor = (value = uiTextColorDraft) => {
     const next = value.trim();
@@ -511,8 +512,17 @@ export function GeneralSettingsPage() {
                     setUiTextColorDraft("");
                     void update("uiTextColor", "");
                   }}
-                  disabled={!uiTextColor && uiTextColorDraft === ""}
+                  disabled={uiTextColorResetDisabled}
                   className="shrink-0"
+                  style={
+                    uiTextColorResetDisabled
+                      ? undefined
+                      : {
+                          backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
+                          border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
+                          color: "var(--primary)",
+                        }
+                  }
                 >
                   跟随主题
                 </Button>

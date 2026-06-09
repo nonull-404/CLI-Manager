@@ -21,10 +21,10 @@
 
 ## Acceptance Criteria
 
-- [ ] 当 `uiTextColor = "#000000"` 且 `resolvedTheme = "dark"` 时，全局主文字色不再变成黑色。
-- [ ] 当自定义文字色与当前主题背景有足够对比度时，仍可生效。
-- [ ] 留空 `uiTextColor` 时继续完全跟随主题配色。
-- [ ] TypeScript 检查通过。
+- [x] 当 `uiTextColor = "#000000"` 且 `resolvedTheme = "dark"` 时，全局主文字色不再变成黑色。
+- [x] 当自定义文字色与当前主题背景有足够对比度时，仍可生效。
+- [x] 留空 `uiTextColor` 时继续完全跟随主题配色。
+- [x] TypeScript 检查通过。
 
 ## Definition of Done
 

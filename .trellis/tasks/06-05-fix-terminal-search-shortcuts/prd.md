@@ -22,11 +22,11 @@
 
 ## 验收标准
 
-- [ ] 在终端外部按 `Ctrl+F` 不出现 Tauri/WebView 默认搜索框。
-- [ ] 在终端内按 `Ctrl+F` 仍打开终端搜索框。
-- [ ] 终端搜索框输入已有文本后，`ArrowDown` 能跳转下一个匹配。
-- [ ] 终端搜索框输入已有文本后，`ArrowUp` 能跳转上一个匹配。
-- [ ] TypeScript 与构建检查通过。
+- [x] 在终端外部按 `Ctrl+F` 不出现 Tauri/WebView 默认搜索框。
+- [x] 在终端内按 `Ctrl+F` 仍打开终端搜索框。
+- [x] 终端搜索框输入已有文本后，`ArrowDown` 能跳转下一个匹配。
+- [x] 终端搜索框输入已有文本后，`ArrowUp` 能跳转上一个匹配。
+- [x] TypeScript 与构建检查通过。
 
 ## Out of Scope
 
