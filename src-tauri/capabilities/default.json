@@ -28,7 +28,6 @@
     "sql:allow-select",
     "store:default",
     "log:default",
-    "shell:default",
     "dialog:default",
     "fs:default"
   ]
