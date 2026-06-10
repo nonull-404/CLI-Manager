@@ -1,5 +1,27 @@
 # Changelog
 
+## [V0.2.8] - 2026-06-10
+
+### 侧边栏项目树优化
+
+- 目录折叠状态持久化：展开/收起完全由用户控制并记住，应用重启后保持上次状态，不再每次全部自动展开；分组被删除（含级联）或云同步覆盖后，失效的折叠记录会自动清理。
+- 项目/目录行内悬浮按钮精简为仅「启动」一个：原 Clone、编辑、删除、新增子目录、新增终端、重命名共 7 个行内按钮移除，统一走右键菜单，避免误触；同步清理 `TreeContext` 中不再使用的 action 字段。
+- 右键菜单视觉收紧：菜单项新增左侧图标，按「启动/分屏 → 编辑 → 删除」用分隔线分组，删除项保持红色；整体密度收紧（更窄宽度与行内边距）；历史列表右键菜单共用样式同步变紧凑。
+
+### 设置页修复
+
+- 修复 Mantine 主色色阶：自定义主色从单色 tuple 改为生成完整 10 级色阶（基色置于索引 6，配合 `primaryShade: 6`），`light` / `subtle` 等变体的浅色背景与深色文字取色恢复正常，`filled` 变体仍为用户选择的主色。
+- 快捷键页「终端换行快捷键」由 SegmentedControl 改为按钮组，规避控件在弹窗内挂载时指示器测量错位的问题。
+- 修复主题页预览卡片 sticky 吸顶：终端背景设置区移入网格布局、预览卡片 row-span 扩展，宽屏下右侧预览随滚动正确吸附。
+- 设置内容滚动区启用 `scrollbar-gutter: stable`，避免滚动条出现/消失引起的布局抖动。
+
+### 清理与体验
+
+- 删除无引用组件 `src/components/ui/icons.ts`、`src/components/ui/switch.tsx`，并清理 `App.css` 中 6 组无引用样式（`.mini-btn`、`.ui-surface-inset`、`.ui-primary-gradient`、`.ui-tree-root-drop`、`.ui-sidebar-footer-card`、`.ui-sidebar-sync-actions`）。
+- 移除未使用依赖：`@radix-ui/react-dropdown-menu`、`@radix-ui/react-switch`、`@tauri-apps/plugin-shell`；Rust 侧同步移除 `tauri-plugin-shell` 注册与 `shell:default` capability。
+- 设置弹窗打开动画改为下滑进入，关闭时即时关闭不再播放缩放动画。
+- 设置顶部搜索框迁移到 Mantine TextInput，与设置页其余控件风格统一。
+
 ## [V0.2.7] - 2026-06-09
 
 ### ccusage 用量分析

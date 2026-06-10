@@ -12,16 +12,9 @@ export interface TreeActions {
   onSelectProject: (e: ReactMouseEvent, p: Project) => void;
   onSelectProjectByKeyboard: (p: Project) => void;
   onOpenProject: (p: Project) => void;
-  onEditProject: (p: Project) => void;
-  onCloneProject: (p: Project) => void;
-  onDeleteProject: (p: Project) => void;
-  onAddSubGroup: (parentId: string) => void;
-  onAddProjectToGroup: (groupId: string) => void;
   onStartGroup: (groupId: string) => void;
-  onRenameGroup: (id: string, name: string) => void;
   onRenameConfirm: (id: string, newName: string) => void;
   onCancelRename: () => void;
-  onDeleteGroup: (id: string, name: string) => void;
   onContextMenuProject: (e: ReactMouseEvent, p: Project) => void;
   onContextMenuGroup: (e: ReactMouseEvent, groupId: string, groupName: string) => void;
   onCreateGroup: (parentId: string | null, name: string) => void;

@@ -1423,9 +1423,9 @@ samp,
 .context-menu {
   position: fixed;
   z-index: 60;
-  min-width: 160px;
+  min-width: 148px;
   padding: 4px;
-  border-radius: 12px;
+  border-radius: 10px;
   background-color: color-mix(in srgb, var(--surface) 84%, transparent);
   outline: 1px solid color-mix(in srgb, var(--border) 24%, transparent);
   box-shadow: 0 12px 32px color-mix(in srgb, var(--on-surface) 8%, transparent);
@@ -1435,9 +1435,12 @@ samp,
 }
 
 .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 6px 10px;
+  padding: 5px 8px;
   font-size: var(--font-size-meta);
   line-height: var(--line-height-meta);
   border: none;
@@ -1445,10 +1448,22 @@ samp,
   cursor: pointer;
   border-radius: 6px;
   color: var(--text-secondary);
+  white-space: nowrap;
   transition:
     background-color var(--animate-duration-fast),
     color var(--animate-duration-fast),
     box-shadow var(--animate-duration-fast);
+}
+
+.context-menu-item > svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 3px 6px;
+  background-color: color-mix(in srgb, var(--border) 36%, transparent);
 }
 
 .context-menu-item:hover {

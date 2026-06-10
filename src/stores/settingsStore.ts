@@ -122,6 +122,7 @@ interface Settings {
   defaultShell: string;
   sidebarWidth: number;
   historySidebarWidth: number;
+  collapsedGroupIds: string[];
   useExternalTerminal: boolean;
   debugMode: boolean;
   terminalThemeMode: TerminalThemeMode;
@@ -169,6 +170,7 @@ const DEFAULTS: Settings = {
   defaultShell: "powershell.exe",
   sidebarWidth: 280,
   historySidebarWidth: 300,
+  collapsedGroupIds: [],
   useExternalTerminal: false,
   debugMode: false,
   terminalThemeMode: "follow-app",
@@ -400,6 +402,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
 
     entries.keyboardShortcuts = migrateKeyboardShortcuts(entries.keyboardShortcuts);
+
+    entries.collapsedGroupIds = Array.isArray(entries.collapsedGroupIds)
+      ? entries.collapsedGroupIds.filter((id): id is string => typeof id === "string")
+      : DEFAULTS.collapsedGroupIds;
 
     entries.terminalToolbarVisibility = migrateTerminalToolbarVisibility(entries.terminalToolbarVisibility);
     entries.unsplitBehavior = migrateUnsplitBehavior(entries.unsplitBehavior);

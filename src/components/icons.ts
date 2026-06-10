@@ -19,6 +19,8 @@ export {
   Plus,
   Search,
   Settings,
+  SquareSplitHorizontal,
+  SquareSplitVertical,
   Terminal,
   TerminalSquare,
   Trash2,

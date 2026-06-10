@@ -6,7 +6,7 @@ import type { TreeNode as TNode } from "../../lib/types";
 import type { SessionStatus } from "../../stores/terminalStore";
 import { useTreeActions } from "./TreeContext";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { Folder, FolderPlus, Terminal, Pencil, Trash2, Play, ChevronRight, Plus, AlertTriangle, Copy } from "../icons";
+import { Folder, Terminal, Play, ChevronRight, AlertTriangle } from "../icons";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
   running: "#9ece6a",
@@ -146,15 +146,6 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
             <button onClick={(e) => { e.stopPropagation(); actions.onOpenProject(p); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="Open terminal">
               <Play size={14} strokeWidth={1.5} />
             </button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onCloneProject(p); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Clone">
-              <Copy size={14} strokeWidth={1.5} />
-            </button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onEditProject(p); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Edit">
-              <Pencil size={14} strokeWidth={1.5} />
-            </button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onDeleteProject(p); }} className="icon-btn" style={{ color: "var(--danger)", opacity: 0.7 }} title="Delete">
-              <Trash2 size={14} strokeWidth={1.5} />
-            </button>
           </span>
         </div>
       </div>
@@ -226,10 +217,6 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
           )}
           <span className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/grp:flex group-focus-within/grp:flex">
             <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="启动本目录"><Play size={14} strokeWidth={1.5} /></button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onAddSubGroup(g.id); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Add sub-group"><FolderPlus size={14} strokeWidth={1.5} /></button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onAddProjectToGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="Add project"><Plus size={12} strokeWidth={2} /></button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onRenameGroup(g.id, g.name); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Rename"><Pencil size={14} strokeWidth={1.5} /></button>
-            <button onClick={(e) => { e.stopPropagation(); actions.onDeleteGroup(g.id, g.name); }} className="icon-btn" style={{ color: "var(--danger)", opacity: 0.7 }} title="Delete group"><Trash2 size={14} strokeWidth={1.5} /></button>
           </span>
         </div>
 
