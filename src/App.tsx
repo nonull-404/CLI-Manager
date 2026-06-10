@@ -22,6 +22,7 @@ import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdateStore } from "./stores/updateStore";
 import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
+import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contrast";
 import "./App.css";
 
 const appStartAt =
@@ -36,16 +37,9 @@ const COMPACT_WINDOW_WIDTH = 350;
 const WINDOW_MIN_HEIGHT = 600;
 const IN_TAURI = isTauri();
 const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
-const MIN_UI_TEXT_CONTRAST_RATIO = 4.5;
 let claudeHookToastSequence = 0;
 
 type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
-
-interface RgbColor {
-  r: number;
-  g: number;
-  b: number;
-}
 
 interface ClaudeHookToastStyle {
   variant: ClaudeHookToastVariant;
@@ -62,37 +56,9 @@ interface ClaudeHookToastItem {
   style: ClaudeHookToastStyle;
 }
 
-function parseHexColor(value: string): RgbColor | null {
-  const match = /^#([0-9a-fA-F]{6})$/.exec(value.trim());
-  if (!match) return null;
-
-  const hex = match[1];
-  return {
-    r: Number.parseInt(hex.slice(0, 2), 16),
-    g: Number.parseInt(hex.slice(2, 4), 16),
-    b: Number.parseInt(hex.slice(4, 6), 16),
-  };
-}
-
-function getRelativeLuminance(color: RgbColor): number {
-  const [r, g, b] = [color.r, color.g, color.b].map((channel) => {
-    const value = channel / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function getContrastRatio(foreground: RgbColor, background: RgbColor): number {
-  const lighter = Math.max(getRelativeLuminance(foreground), getRelativeLuminance(background));
-  const darker = Math.min(getRelativeLuminance(foreground), getRelativeLuminance(background));
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
 function canUseUiTextColor(textColor: string, backgroundColor: string): boolean {
-  const foreground = parseHexColor(textColor);
-  const background = parseHexColor(backgroundColor);
-  if (!foreground || !background) return false;
-  return getContrastRatio(foreground, background) >= MIN_UI_TEXT_CONTRAST_RATIO;
+  const ratio = getContrastRatioFromHex(textColor, backgroundColor);
+  return ratio !== null && ratio >= MIN_APPLY_CONTRAST_RATIO;
 }
 
 function createClaudeHookToastId(tabId: string): string {

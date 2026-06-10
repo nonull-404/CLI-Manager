@@ -23,6 +23,11 @@ import {
   type TerminalToolbarVisibilitySettings,
   type ThemeMode,
 } from "../../../stores/settingsStore";
+import {
+  getContrastRatioFromHex,
+  MIN_APPLY_CONTRAST_RATIO,
+  MIN_READABLE_CONTRAST_RATIO,
+} from "../../../lib/contrast";
 import { AboutSection } from "../AboutSection";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
@@ -200,6 +205,40 @@ function getDefaultUiTextColor(
   darkPalette: DarkThemePalette
 ) {
   return resolvedTheme === "dark" ? DARK_TEXT_COLORS[darkPalette] : LIGHT_TEXT_COLORS[lightPalette];
+}
+
+// 与 App.css 各配色块的 --bg-primary 保持一致（同 LIGHT_TEXT_COLORS 的维护方式）。
+// 用纯映射而非 getComputedStyle：data-theme/data-*-palette 由 App.tsx 的 effect 在
+// render 之后才更新，render 期间读 computed style 会在切换主题/配色时拿到旧背景色。
+const LIGHT_BG_COLORS: Record<LightThemePalette, string> = {
+  "warm-paper": "#f9f9fb",
+  "cream-green": "#f7faf7",
+  "ink-red": "#f7f6f4",
+  "saas-analytics-dashboard": "#f8fafc",
+  "apple-pure": "#ffffff",
+  "apple-mist": "#fcfcfd",
+  "apple-warm": "#fdfcf9",
+  "apple-mono": "#ffffff",
+};
+
+const DARK_BG_COLORS: Record<DarkThemePalette, string> = {
+  "night-indigo": "#1a1b26",
+  "forest-night": "#111714",
+  "graphite-red": "#171616",
+  "investment-platform": "#0f172a",
+  "github-dark": "#24292f",
+  "catppuccin-mocha": "#1e1e2e",
+  "nord-night": "#2e3440",
+  "dracula-purple": "#282a36",
+  "carbon-black": "#161616",
+};
+
+function getDefaultUiBgColor(
+  resolvedTheme: "dark" | "light",
+  lightPalette: LightThemePalette,
+  darkPalette: DarkThemePalette
+) {
+  return resolvedTheme === "dark" ? DARK_BG_COLORS[darkPalette] : LIGHT_BG_COLORS[lightPalette];
 }
 
 const UI_FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
@@ -384,6 +423,22 @@ export function GeneralSettingsPage() {
     () => !UI_FONT_FAMILY_OPTIONS.some((opt) => opt.value === uiFontFamily),
     [uiFontFamily]
   );
+  // 对已提交的自定义颜色按当前配色的 --bg-primary（纯映射）计算对比度，
+  // 给出可见反馈（消除“静默未应用”）；计算量极小，无需 memo。
+  const uiBackgroundColor = getDefaultUiBgColor(resolvedTheme, lightThemePalette, darkThemePalette);
+  const uiTextColorContrastRatio = uiTextColor ? getContrastRatioFromHex(uiTextColor, uiBackgroundColor) : null;
+  let uiTextColorHint = "仅影响除终端外的应用主文字颜色；留空时跟随当前主题。";
+  let uiTextColorHintColor = "var(--text-muted)";
+  if (uiTextColorDraftInvalid) {
+    uiTextColorHint = "请输入 #RRGGBB 格式，例如 #c0caf5。";
+    uiTextColorHintColor = "var(--danger)";
+  } else if (uiTextColorContrastRatio !== null && uiTextColorContrastRatio < MIN_APPLY_CONTRAST_RATIO) {
+    uiTextColorHint = "颜色与背景过于接近，未应用。";
+    uiTextColorHintColor = "var(--danger)";
+  } else if (uiTextColorContrastRatio !== null && uiTextColorContrastRatio < MIN_READABLE_CONTRAST_RATIO) {
+    uiTextColorHint = "对比度较低，可能影响可读性。";
+    uiTextColorHintColor = "var(--warning)";
+  }
   const uiFontFamilyOptions = useMemo(
     () => [
       ...(isCustomUiFontFamily ? [{ value: uiFontFamily, label: "当前自定义（保留）" }] : []),
@@ -476,7 +531,11 @@ export function GeneralSettingsPage() {
                   type="color"
                   value={colorPickerValue}
                   onChange={(event) => {
-                    setUiTextColorDraft(event.currentTarget.value);
+                    // 原生取色器产出的总是合法 #rrggbb，onChange 直接提交实现实时生效；
+                    // onBlur 保留作兜底（如浏览器实现差异导致 change 未触发）。
+                    const value = event.currentTarget.value;
+                    setUiTextColorDraft(value);
+                    commitUiTextColor(value);
                   }}
                   onBlur={() => commitUiTextColor()}
                   w={52}
@@ -537,10 +596,8 @@ export function GeneralSettingsPage() {
                   {uiTextColor ? `当前自定义 ${uiTextColor}` : `当前跟随主题 ${defaultUiTextColor}`}
                 </Text>
               </Group>
-              <Text size="xs" c={uiTextColorDraftInvalid ? "var(--danger)" : "var(--text-muted)"}>
-                {uiTextColorDraftInvalid
-                  ? "请输入 #RRGGBB 格式，例如 #c0caf5。"
-                  : "仅影响除终端外的应用主文字颜色；留空时跟随当前主题。"}
+              <Text size="xs" c={uiTextColorHintColor}>
+                {uiTextColorHint}
               </Text>
             </Stack>
           </Stack>
