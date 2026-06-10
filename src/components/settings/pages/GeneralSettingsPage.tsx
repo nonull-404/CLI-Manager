@@ -372,7 +372,6 @@ export function GeneralSettingsPage() {
   const defaultUiTextColor = getDefaultUiTextColor(resolvedTheme, lightThemePalette, darkThemePalette);
   const normalizedUiTextColorDraft = uiTextColorDraft.trim();
   const uiTextColorDraftInvalid = normalizedUiTextColorDraft !== "" && !HEX_COLOR_PATTERN.test(normalizedUiTextColorDraft);
-  const uiTextColorResetDisabled = !uiTextColor && uiTextColorDraft === "";
   const colorPickerValue = HEX_COLOR_PATTERN.test(normalizedUiTextColorDraft) ? normalizedUiTextColorDraft : defaultUiTextColor;
   const commitUiTextColor = (value = uiTextColorDraft) => {
     const next = value.trim();
@@ -498,34 +497,31 @@ export function GeneralSettingsPage() {
                   }}
                   placeholder={defaultUiTextColor}
                   size="xs"
-                  className="flex-1"
+                  w={120}
                   aria-label="应用字体颜色十六进制值"
                   aria-invalid={uiTextColorDraftInvalid}
                   styles={{ input: { fontFamily: "var(--font-ui-mono)", fontSize: 12 } }}
                 />
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="light"
-                  color="cliPrimary"
-                  onClick={() => {
-                    setUiTextColorDraft("");
-                    void update("uiTextColor", "");
-                  }}
-                  disabled={uiTextColorResetDisabled}
-                  className="shrink-0"
-                  style={
-                    uiTextColorResetDisabled
-                      ? undefined
-                      : {
-                          backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                          border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-                          color: "var(--primary)",
-                        }
-                  }
-                >
-                  跟随主题
-                </Button>
+                {uiTextColor && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="light"
+                    color="cliPrimary"
+                    onClick={() => {
+                      setUiTextColorDraft("");
+                      void update("uiTextColor", "");
+                    }}
+                    className="shrink-0"
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
+                      border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
+                      color: "var(--primary)",
+                    }}
+                  >
+                    恢复跟随主题
+                  </Button>
+                )}
               </Group>
               <Group gap="xs" c="var(--text-muted)">
                 <Box

@@ -20,6 +20,7 @@ import { SidebarFooter } from "./SidebarFooter";
 import {
   Check,
   Copy,
+  FolderOpen,
   FolderPlus,
   Pencil,
   Play,
@@ -29,6 +30,7 @@ import {
   TerminalSquare,
   Trash2,
 } from "../icons";
+import { openPath } from "@tauri-apps/plugin-opener";
 import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarProps {
@@ -545,6 +547,15 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     setCloningProject(project);
   }, []);
 
+  const handleOpenProjectDirectory = useCallback(async (project: Project) => {
+    try {
+      await openPath(project.path);
+    } catch (err) {
+      logError("Failed to open project directory", err);
+      toast.error("打开目录失败", { description: String(err) });
+    }
+  }, []);
+
   const handleRequestDeleteProject = useCallback((project: Project) => {
     setConfirmAction({ kind: "delete-project", project });
   }, []);
@@ -914,6 +925,17 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                 >
                   <TerminalSquare size={14} strokeWidth={1.5} />
                   启动已选 ({selectedProjects.length})
+                </button>
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    void handleOpenProjectDirectory(contextMenu.project);
+                    setContextMenu(null);
+                  }}
+                >
+                  <FolderOpen size={14} strokeWidth={1.5} />
+                  打开所在目录
                 </button>
                 <button
                   className="context-menu-item"
