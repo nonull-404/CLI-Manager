@@ -133,61 +133,66 @@ export function ThemeSettingsPage() {
     }
   };
 
+  // 注意：sticky 必须放在普通 div wrapper 上。Mantine Card（.m_e615b15f）自带
+  // `position: relative`，且项目引入的是无 cascade layer 的 @mantine/core/styles.css，
+  // 其优先级高于 Tailwind v4 @layer utilities 中的 `sticky`，导致直接写在 Card 上失效。
   const terminalPreview = (
-    <Card className="ui-surface-card sticky top-5 z-10 self-start xl:col-start-2 xl:row-span-2 xl:row-start-1" p="md">
-      <Stack gap="sm">
-        <Box>
-          <Text size="sm" fw={600} c="var(--on-surface)">
-            终端预览
-          </Text>
-          <Text mt={4} size="xs" c="var(--on-surface-variant)">
-            {selectedTheme.label}
-          </Text>
-        </Box>
-        <Box
-          className="rounded-xl border p-3 font-mono text-xs"
-          style={{
-            borderColor: "var(--border)",
-            backgroundColor: selectedTheme.theme.background ?? "var(--surface-container-lowest)",
-            color: selectedTheme.theme.foreground ?? "var(--on-surface)",
-          }}
-        >
-          <div>$ echo "hello cli-manager"</div>
-          <div className="mt-1 opacity-80">hello cli-manager</div>
-          <Group mt="md" gap={6}>
-            {SWATCH_KEYS.map((key) => (
-              <Box
-                key={key}
-                component="span"
-                w={16}
-                h={16}
-                style={{
-                  backgroundColor:
-                    (selectedTheme.theme as Record<string, string | undefined>)[key] ?? "var(--surface-container-lowest)",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 4,
-                }}
-                title={key}
-              />
-            ))}
-          </Group>
-        </Box>
-
-        <Text size="xs" fw={600} c="var(--on-surface-variant)">
-          实时字体预览
-        </Text>
-        <Box
-          className="rounded-xl border border-border p-4 font-mono"
-          style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
-        >
-          <Box style={{ fontFamily, fontSize: `${fontSize}px` }}>
-            <div>$ cli-manager --doctor</div>
-            <div className="opacity-80">Environment ready. Launching workspace...</div>
-            <div className="mt-1 text-success">Terminal initialized</div>
+    <div className="self-start xl:sticky xl:top-5 xl:z-10 xl:col-start-2 xl:row-span-3 xl:row-start-1">
+      <Card className="ui-surface-card" p="md">
+        <Stack gap="sm">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              终端预览
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              {selectedTheme.label}
+            </Text>
           </Box>
-        </Box>
-      </Stack>
-    </Card>
+          <Box
+            className="rounded-xl border p-3 font-mono text-xs"
+            style={{
+              borderColor: "var(--border)",
+              backgroundColor: selectedTheme.theme.background ?? "var(--surface-container-lowest)",
+              color: selectedTheme.theme.foreground ?? "var(--on-surface)",
+            }}
+          >
+            <div>$ echo "hello cli-manager"</div>
+            <div className="mt-1 opacity-80">hello cli-manager</div>
+            <Group mt="md" gap={6}>
+              {SWATCH_KEYS.map((key) => (
+                <Box
+                  key={key}
+                  component="span"
+                  w={16}
+                  h={16}
+                  style={{
+                    backgroundColor:
+                      (selectedTheme.theme as Record<string, string | undefined>)[key] ?? "var(--surface-container-lowest)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    borderRadius: 4,
+                  }}
+                  title={key}
+                />
+              ))}
+            </Group>
+          </Box>
+
+          <Text size="xs" fw={600} c="var(--on-surface-variant)">
+            实时字体预览
+          </Text>
+          <Box
+            className="rounded-xl border border-border p-4 font-mono"
+            style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
+          >
+            <Box style={{ fontFamily, fontSize: `${fontSize}px` }}>
+              <div>$ cli-manager --doctor</div>
+              <div className="opacity-80">Environment ready. Launching workspace...</div>
+              <div className="mt-1 text-success">Terminal initialized</div>
+            </Box>
+          </Box>
+        </Stack>
+      </Card>
+    </div>
   );
 
   return (
@@ -467,9 +472,11 @@ export function ThemeSettingsPage() {
           )}
           </Stack>
         </Card>
-      </section>
 
-      <TerminalBackgroundSection />
+        <div className="min-w-0 xl:col-start-1 xl:row-start-3">
+          <TerminalBackgroundSection />
+        </div>
+      </section>
     </Stack>
   );
 }

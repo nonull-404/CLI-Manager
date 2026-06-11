@@ -125,8 +125,8 @@ export function SettingsModal({ open, onClose, initialTab }: Props) {
     >
       <div
         ref={dialogRef}
-        className={`ui-surface-base flex h-full w-full overflow-hidden ${
-          closing ? "animate-scale-out" : "animate-scale-in"
+        className={`ui-surface-base flex h-full w-full overflow-hidden${
+          closing ? "" : " animate-slide-down"
         }`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"

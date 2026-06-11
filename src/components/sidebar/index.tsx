@@ -17,6 +17,20 @@ import { SidebarHeader } from "./SidebarHeader";
 import { SidebarSearch } from "./SidebarSearch";
 import { ProjectTree } from "./ProjectTree";
 import { SidebarFooter } from "./SidebarFooter";
+import {
+  Check,
+  Copy,
+  FolderOpen,
+  FolderPlus,
+  Pencil,
+  Play,
+  Plus,
+  SquareSplitHorizontal,
+  SquareSplitVertical,
+  TerminalSquare,
+  Trash2,
+} from "../icons";
+import { openPath } from "@tauri-apps/plugin-opener";
 import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarProps {
@@ -119,7 +133,9 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   const [cloningProject, setCloningProject] = useState<Project | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addToGroupId, setAddToGroupId] = useState<string | null>(null);
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(
+    () => new Set(useSettingsStore.getState().collapsedGroupIds)
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<
@@ -462,6 +478,27 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     });
   }, []);
 
+  // 折叠状态持久化：跳过首次（初始值本就来自 settings），之后任何变化都写回。
+  const collapsedHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!collapsedHydratedRef.current) {
+      collapsedHydratedRef.current = true;
+      return;
+    }
+    void updateSetting("collapsedGroupIds", Array.from(collapsedIds));
+  }, [collapsedIds, updateSetting]);
+
+  // 自愈清理：分组被删除（含级联）或同步覆盖后，移除已不存在分组的折叠记录。
+  // groups 为空可能是尚未加载完成，此时不清理，避免误清全部记录。
+  useEffect(() => {
+    if (groups.length === 0) return;
+    const valid = new Set(groups.map((g) => g.id));
+    setCollapsedIds((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [groups]);
+
   const openProjectExternally = useCallback(async (items: Project[]) => {
     if (items.length === 0) return;
     await openWindowsTerminal(
@@ -508,6 +545,15 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
 
   const handleCloneProject = useCallback((project: Project) => {
     setCloningProject(project);
+  }, []);
+
+  const handleOpenProjectDirectory = useCallback(async (project: Project) => {
+    try {
+      await openPath(project.path);
+    } catch (err) {
+      logError("Failed to open project directory", err);
+      toast.error("打开目录失败", { description: String(err) });
+    }
   }, []);
 
   const handleRequestDeleteProject = useCallback((project: Project) => {
@@ -638,16 +684,9 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       onSelectProject: handleSelectProject,
       onSelectProjectByKeyboard: handleSelectProjectByKeyboard,
       onOpenProject: handleOpen,
-      onEditProject: setEditingProject,
-      onCloneProject: handleCloneProject,
-      onDeleteProject: handleRequestDeleteProject,
-      onAddSubGroup: (id) => setNewGroupParentId(id),
-      onAddProjectToGroup: handleAddProjectToGroup,
       onStartGroup: handleStartGroup,
-      onRenameGroup: handleRenameGroup,
       onRenameConfirm: handleRenameConfirm,
       onCancelRename: () => setRenamingGroupId(null),
-      onDeleteGroup: handleRequestDeleteGroup,
       onContextMenuProject: handleContextMenuProject,
       onContextMenuGroup: handleContextMenuGroup,
       onCreateGroup: handleCreateGroup,
@@ -666,13 +705,8 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       handleSelectProject,
       handleSelectProjectByKeyboard,
       handleOpen,
-      handleCloneProject,
-      handleRequestDeleteProject,
-      handleAddProjectToGroup,
       handleStartGroup,
-      handleRenameGroup,
       handleRenameConfirm,
-      handleRequestDeleteGroup,
       handleContextMenuProject,
       handleContextMenuGroup,
       handleCreateGroup,
@@ -830,6 +864,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Play size={14} strokeWidth={1.5} />
                   {compactMode ? "打开外部终端" : "打开终端"}
                 </button>
                 <button
@@ -841,6 +876,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <SquareSplitHorizontal size={14} strokeWidth={1.5} />
                   Split Right
                 </button>
                 <button
@@ -852,8 +888,10 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <SquareSplitVertical size={14} strokeWidth={1.5} />
                   Split Down
                 </button>
+                <div className="context-menu-separator" role="separator" />
                 <button
                   className="context-menu-item"
                   role="menuitem"
@@ -862,6 +900,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Copy size={14} strokeWidth={1.5} />
                   Clone
                 </button>
                 <button
@@ -872,6 +911,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Check size={14} strokeWidth={1.5} />
                   {selectedProjectIds.has(contextMenu.project.id) ? "取消选中" : "加入已选"}
                 </button>
                 <button
@@ -883,7 +923,19 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                   disabled={selectedProjects.length === 0}
                 >
+                  <TerminalSquare size={14} strokeWidth={1.5} />
                   启动已选 ({selectedProjects.length})
+                </button>
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    void handleOpenProjectDirectory(contextMenu.project);
+                    setContextMenu(null);
+                  }}
+                >
+                  <FolderOpen size={14} strokeWidth={1.5} />
+                  打开所在目录
                 </button>
                 <button
                   className="context-menu-item"
@@ -893,8 +945,10 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Pencil size={14} strokeWidth={1.5} />
                   修改
                 </button>
+                <div className="context-menu-separator" role="separator" />
                 <button
                   className="context-menu-item danger"
                   onClick={() => {
@@ -902,6 +956,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Trash2 size={14} strokeWidth={1.5} />
                   删除
                 </button>
               </>
@@ -916,8 +971,10 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Play size={14} strokeWidth={1.5} />
                   {compactMode ? "打开本目录到外部终端" : "启动本目录"}
                 </button>
+                <div className="context-menu-separator" role="separator" />
                 <button
                   className="context-menu-item"
                   role="menuitem"
@@ -927,6 +984,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <FolderPlus size={14} strokeWidth={1.5} />
                   新增子目录
                 </button>
                 <button
@@ -938,6 +996,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Plus size={14} strokeWidth={1.5} />
                   新增终端
                 </button>
                 <button
@@ -949,8 +1008,10 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Pencil size={14} strokeWidth={1.5} />
                   修改名称
                 </button>
+                <div className="context-menu-separator" role="separator" />
                 <button
                   className="context-menu-item danger"
                   onClick={() => {
@@ -958,6 +1019,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     setContextMenu(null);
                   }}
                 >
+                  <Trash2 size={14} strokeWidth={1.5} />
                   删除目录
                 </button>
               </>

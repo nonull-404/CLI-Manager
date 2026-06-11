@@ -206,3 +206,74 @@ Fixed Windows PowerShell terminal history disappearing after resize/tab changes 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Settings UI 修复收尾与侧边栏项目树 UX 优化
+
+**Date**: 2026-06-10
+**Task**: Settings UI 修复收尾与侧边栏项目树 UX 优化
+**Branch**: `master`
+
+### Summary
+
+提交 settings UI 重构修复（主色 10 级色阶+primaryShade、快捷键页按钮组替换 SegmentedControl、主题页 sticky 预览、scrollbar-gutter）与死代码/未用依赖/shell 插件清理；实现侧边栏项目树优化：目录折叠状态持久化到 settingsStore（含失效记录自愈清理）、行内悬浮按钮精简为仅启动、右键菜单加图标+分隔线分组并收紧密度；CHANGELOG 记录 V0.2.8 条目。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `75e1ede` | (see git log) |
+| `0383611` | (see git log) |
+| `f51eb81` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: Windows 闪窗修复与设置/侧栏 UX 修复
+
+**Date**: 2026-06-10
+**Task**: Windows 闪窗修复与设置/侧栏 UX 修复
+**Branch**: `master`
+
+### Summary
+
+修复 GUI 进程静默 spawn 未设 CREATE_NO_WINDOW 导致的 ccusage 面板/Git Bash 解析 CMD 闪窗（silent_command helper）；修复终端预览 sticky 被 Mantine 无 layer position:relative 覆盖的问题（wrapper div 承载 xl:sticky）；项目右键新增打开所在目录（openPath + 带 scope 的 opener:allow-open-path）；应用字体颜色控件打磨并修复偶尔才生效的两个根因（取色器 onChange 实时提交、对比度门槛 4.5→1.6 且不再静默丢弃，新增 src/lib/contrast.ts 共享工具与可见反馈）；变更计入 CHANGELOG V1.0.1 段。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7839e34` | (see git log) |
+| `f5c43ea` | (see git log) |
+| `4b4108b` | (see git log) |
+| `1680b6b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

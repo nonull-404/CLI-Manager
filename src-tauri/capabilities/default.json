@@ -21,6 +21,14 @@
     "core:window:allow-set-size",
     "core:window:allow-start-dragging",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
     "updater:default",
     "process:allow-restart",
     "sql:default",
@@ -28,7 +36,6 @@
     "sql:allow-select",
     "store:default",
     "log:default",
-    "shell:default",
     "dialog:default",
     "fs:default"
   ]
