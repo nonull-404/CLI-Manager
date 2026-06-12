@@ -61,6 +61,7 @@ export function SyncSettingsPage() {
     loaded,
     syncMode,
     localSyncDir,
+    remoteDir,
     deviceName,
     knownDeviceNames,
     autoSyncOnStartup,
@@ -79,6 +80,7 @@ export function SyncSettingsPage() {
     clearConflict,
     setSyncMode,
     setLocalSyncDir,
+    setRemoteDir,
     localExport,
     localImport,
   } = useSyncStore();
@@ -89,6 +91,7 @@ export function SyncSettingsPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deviceNameInput, setDeviceNameInput] = useState("");
+  const [remoteDirInput, setRemoteDirInput] = useState("");
   const [preview, setPreview] = useState<SyncPreview | null>(null);
   const [previewMode, setPreviewMode] = useState<"upload" | "download" | null>(null);
   const [previewDeviceName, setPreviewDeviceName] = useState("");
@@ -110,9 +113,10 @@ export function SyncSettingsPage() {
       setUrl(webdavUrl);
       setUsername(webdavUsername);
       setDeviceNameInput(deviceName);
+      setRemoteDirInput(remoteDir);
       setPreviewDeviceName(deviceName);
     }
-  }, [loaded, webdavUrl, webdavUsername, deviceName]);
+  }, [loaded, webdavUrl, webdavUsername, deviceName, remoteDir]);
 
   const handleTest = async () => {
     if (!url.trim() || !username.trim() || !password.trim()) {
@@ -154,6 +158,15 @@ export function SyncSettingsPage() {
     try {
       await setDeviceName(deviceNameInput);
       toast.success("设备名称已保存");
+    } catch (error) {
+      toast.error("保存失败", { description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const handleSaveRemoteDir = async () => {
+    try {
+      await setRemoteDir(remoteDirInput.trim());
+      toast.success("远程目录已保存");
     } catch (error) {
       toast.error("保存失败", { description: error instanceof Error ? error.message : String(error) });
     }
@@ -379,6 +392,33 @@ export function SyncSettingsPage() {
                   size="sm"
                   aria-label="WebDAV 服务器地址"
               />
+
+              <Box>
+                <Group align="flex-end" gap="xs" wrap="nowrap">
+                  <TextInput
+                    label="远程目录"
+                    type="text"
+                    value={remoteDirInput}
+                    onChange={(event) => setRemoteDirInput(event.currentTarget.value)}
+                    placeholder="cli-manager（默认）"
+                    size="sm"
+                    className="flex-1"
+                    aria-label="远程目录"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    color="gray"
+                    onClick={handleSaveRemoteDir}
+                  >
+                    保存目录
+                  </Button>
+                </Group>
+                <Text mt={4} size="xs" c="var(--on-surface-variant)">
+                  自定义云端存储目录，留空则使用默认 cli-manager。修改后重新上传/下载以切换命名空间。
+                </Text>
+              </Box>
 
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
                 <TextInput

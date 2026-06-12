@@ -51,13 +51,14 @@ pub async fn sync_get_default_device_name() -> Result<DeviceNameResult, String> 
 pub async fn sync_list_device_snapshots(
     config: SyncConfigInput,
     device_names: Vec<String>,
+    remote_dir: Option<String>,
 ) -> Result<Vec<DeviceSnapshotInfo>, String> {
     let webdav_config = WebDavConfig {
         url: config.url,
         username: config.username,
         password: config.password,
     };
-    list_device_snapshots(webdav_config, device_names).await
+    list_device_snapshots(webdav_config, device_names, remote_dir).await
 }
 
 #[tauri::command]
@@ -88,6 +89,7 @@ pub async fn sync_test_connection(config: SyncConfigInput) -> Result<SyncTestRes
 pub async fn sync_upload(
     config: SyncConfigInput,
     data: SyncData,
+    remote_dir: Option<String>,
 ) -> Result<SyncUploadResult, String> {
     info!("Starting sync_upload to {}", config.url);
 
@@ -104,7 +106,7 @@ pub async fn sync_upload(
         data.data.command_templates.len()
     );
 
-    if let Err(e) = upload(webdav_config, data).await {
+    if let Err(e) = upload(webdav_config, data, remote_dir).await {
         error!("Upload failed: {}", e);
         return Err(e);
     }
@@ -123,6 +125,7 @@ pub async fn sync_download(
     local_data: Option<SyncData>,
     force: bool,
     device_name: Option<String>,
+    remote_dir: Option<String>,
 ) -> Result<SyncDownloadResult, String> {
     let webdav_config = WebDavConfig {
         url: config.url,
@@ -130,7 +133,7 @@ pub async fn sync_download(
         password: config.password,
     };
 
-    let remote_data = download(webdav_config, device_name, false).await?;
+    let remote_data = download(webdav_config, device_name, false, remote_dir).await?;
 
     // Check for conflict if local data is provided
     if let Some(local) = local_data {

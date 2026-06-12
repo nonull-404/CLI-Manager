@@ -82,6 +82,7 @@ interface SyncStore {
   loaded: boolean;
   syncMode: SyncMode;
   localSyncDir: string;
+  remoteDir: string;
 
   load: () => Promise<void>;
   setConfig: (url: string, username: string, password?: string) => Promise<void>;
@@ -99,6 +100,7 @@ interface SyncStore {
   clearConflict: () => void;
   setSyncMode: (mode: SyncMode) => Promise<void>;
   setLocalSyncDir: (dir: string) => Promise<void>;
+  setRemoteDir: (dir: string) => Promise<void>;
   localExport: () => Promise<string>;
   localImport: (zipPath: string) => Promise<void>;
 }
@@ -114,7 +116,7 @@ async function getStore() {
 const SYNC_DATA_VERSION = 1;
 const AUTO_SYNC_ACTIONS: readonly AutoSyncAction[] = ["off", "upload", "download"];
 const SYNC_DATA_DOMAINS: readonly SyncDataDomain[] = ["projects", "groups", "command_templates"];
-const HTTP_NOT_FOUND_PATTERN = /HTTP error:\s*404\b/i;
+const HTTP_NOT_FOUND_PATTERN = /HTTP error:\s*(404|409)\b/i;
 const REMOTE_SYNC_UNAVAILABLE_MESSAGE = "无法从云端同步";
 
 interface SyncDownloadCommandResult {
@@ -164,12 +166,14 @@ function downloadRemoteSnapshot(
   localData: SyncData,
   force: boolean,
   deviceName: string,
+  remoteDir: string,
 ): Promise<SyncDownloadCommandResult> {
   return invoke<SyncDownloadCommandResult>("sync_download", {
     config: { url: webdavUrl, username: webdavUsername, password },
     localData,
     force,
     deviceName,
+    remoteDir,
   });
 }
 
@@ -193,6 +197,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   loaded: false,
   syncMode: "cloud",
   localSyncDir: "",
+  remoteDir: "",
 
   load: async () => {
     const s = await getStore();
@@ -201,6 +206,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     const hasPassword = (await s.get<boolean>("hasPassword")) ?? false;
     const syncMode = ((await s.get<string>("syncMode")) as SyncMode | undefined) ?? "cloud";
     const localSyncDir = (await s.get<string>("localSyncDir")) ?? "";
+    const remoteDir = (await s.get<string>("remoteDir")) ?? "";
     const autoSyncOnStartup = migrateAutoSyncAction(await s.get("autoSyncOnStartup"));
     const autoSyncOnClose = migrateAutoSyncAction(await s.get("autoSyncOnClose"));
     const storedKnownDeviceNames = (await s.get<string[]>("knownDeviceNames")) ?? [];
@@ -237,6 +243,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
       lastSyncAt,
       syncMode,
       localSyncDir,
+      remoteDir,
       autoSyncOnStartup,
       autoSyncOnClose,
       loaded: true,
@@ -298,7 +305,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   },
 
   upload: async () => {
-    const { webdavUrl, webdavUsername, deviceId, deviceName } = get();
+    const { webdavUrl, webdavUsername, deviceId, deviceName, remoteDir } = get();
     const s = await getStore();
     const password = (await s.get<string>("webdavPassword")) ?? "";
 
@@ -338,6 +345,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
       await invoke("sync_upload", {
         config: { url: webdavUrl, username: webdavUsername, password },
         data: syncData,
+        remoteDir: remoteDir || undefined,
       });
 
       const now = new Date().toISOString();
@@ -355,7 +363,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   },
 
   download: async (force = false, options) => {
-    const { webdavUrl, webdavUsername, deviceId, deviceName } = get();
+    const { webdavUrl, webdavUsername, deviceId, deviceName, remoteDir } = get();
     const s = await getStore();
     const password = (await s.get<string>("webdavPassword")) ?? "";
 
@@ -399,6 +407,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
         localData,
         force,
         options?.deviceName ?? deviceName,
+        remoteDir,
       );
 
       if (!result.data) {
@@ -432,7 +441,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   },
 
   getPreview: async (targetDeviceName) => {
-    const { webdavUrl, webdavUsername, deviceId, deviceName } = get();
+    const { webdavUrl, webdavUsername, deviceId, deviceName, remoteDir } = get();
     const s = await getStore();
     const password = (await s.get<string>("webdavPassword")) ?? "";
     if (!webdavUrl || !password) {
@@ -449,6 +458,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
         localData,
         true,
         targetDeviceName ?? deviceName,
+        remoteDir,
       );
       if (previewResult.data) {
         const remoteData = previewResult.data;
@@ -469,13 +479,14 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   },
 
   listDeviceSnapshots: async () => {
-    const { webdavUrl, webdavUsername, knownDeviceNames } = get();
+    const { webdavUrl, webdavUsername, knownDeviceNames, remoteDir } = get();
     const s = await getStore();
     const password = (await s.get<string>("webdavPassword")) ?? "";
     if (!webdavUrl || !password) return [];
     return invoke<DeviceSnapshotInfo[]>("sync_list_device_snapshots", {
       config: { url: webdavUrl, username: webdavUsername, password },
       deviceNames: knownDeviceNames,
+      remoteDir: remoteDir || undefined,
     });
   },
 
@@ -528,6 +539,12 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     const s = await getStore();
     await s.set("localSyncDir", dir);
     set({ localSyncDir: dir });
+  },
+
+  setRemoteDir: async (dir) => {
+    const s = await getStore();
+    await s.set("remoteDir", dir);
+    set({ remoteDir: dir });
   },
 
   localExport: async () => {

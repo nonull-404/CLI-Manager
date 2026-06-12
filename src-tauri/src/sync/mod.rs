@@ -5,8 +5,7 @@ use log::{info, error};
 use std::fs::{self, File};
 use std::path::Path;
 
-const SYNC_DEVICES_DIR_PATH: &str = "cli-manager/devices";
-const LEGACY_SYNC_FILE_PATH: &str = "cli-manager/sync.json";
+const DEFAULT_REMOTE_DIR: &str = "cli-manager";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncData {
@@ -65,14 +64,17 @@ pub async fn test_connection(config: WebDavConfig) -> Result<bool, String> {
     client.test_connection().await.map_err(|e| e.message)
 }
 
-pub async fn upload(config: WebDavConfig, data: SyncData) -> Result<(), String> {
+pub async fn upload(config: WebDavConfig, data: SyncData, remote_dir: Option<String>) -> Result<(), String> {
     info!("Creating WebDAV client for {}", config.url);
     let client = WebDavClient::new(config);
-    let remote_path = device_sync_file_path(&data.device_name)?;
+    let dir = sanitize_remote_dir(remote_dir.as_deref());
+    let devices_dir = format!("{}/devices", dir);
+    let remote_path = device_sync_file_path(&dir, &data.device_name)?;
 
-    info!("Ensuring directory exists: {}", SYNC_DEVICES_DIR_PATH);
+    // ensure_directory 会递归创建所有父目录（backups → backups/cli-mgr → backups/cli-mgr/devices）
+    info!("Ensuring directory exists: {}", devices_dir);
     client
-        .ensure_directory(SYNC_DEVICES_DIR_PATH)
+        .ensure_directory(&devices_dir)
         .await
         .map_err(|e| {
             error!("Failed to ensure directory: {}", e);
@@ -100,22 +102,25 @@ pub async fn download(
     config: WebDavConfig,
     device_name: Option<String>,
     allow_legacy_fallback: bool,
+    remote_dir: Option<String>,
 ) -> Result<SyncData, String> {
     let client = WebDavClient::new(config);
+    let base_dir = sanitize_remote_dir(remote_dir.as_deref());
+    let legacy_path = legacy_sync_file_path(&base_dir);
     let remote_path = match device_name.as_deref() {
-        Some(name) if !name.trim().is_empty() => device_sync_file_path(name)?,
-        _ => LEGACY_SYNC_FILE_PATH.to_string(),
+        Some(name) if !name.trim().is_empty() => device_sync_file_path(&base_dir, name)?,
+        _ => legacy_path.clone(),
     };
 
     let data = match client.download(&remote_path).await {
         Ok(data) => data,
         Err(e)
             if allow_legacy_fallback
-                && remote_path != LEGACY_SYNC_FILE_PATH
-                && e.status_code == Some(404) =>
+                && remote_path != legacy_path
+                && (e.status_code == Some(404) || e.status_code == Some(409)) =>
         {
             client
-                .download(LEGACY_SYNC_FILE_PATH)
+                .download(&legacy_path)
                 .await
                 .map_err(|legacy_error| legacy_error.message)?
         }
@@ -128,8 +133,9 @@ pub async fn download(
     Ok(sync_data)
 }
 
-pub async fn list_device_snapshots(config: WebDavConfig, device_names: Vec<String>) -> Result<Vec<DeviceSnapshotInfo>, String> {
+pub async fn list_device_snapshots(config: WebDavConfig, device_names: Vec<String>, remote_dir: Option<String>) -> Result<Vec<DeviceSnapshotInfo>, String> {
     let client = WebDavClient::new(config);
+    let base_dir = sanitize_remote_dir(remote_dir.as_deref());
     let mut snapshots = Vec::new();
 
     for device_name in device_names {
@@ -137,10 +143,10 @@ pub async fn list_device_snapshots(config: WebDavConfig, device_names: Vec<Strin
         if name.is_empty() {
             continue;
         }
-        let remote_path = device_sync_file_path(name)?;
+        let remote_path = device_sync_file_path(&base_dir, name)?;
         let data = match client.download(&remote_path).await {
             Ok(data) => data,
-            Err(e) if e.status_code == Some(404) => continue,
+            Err(e) if e.status_code == Some(404) || e.status_code == Some(409) => continue,
             Err(e) => return Err(e.message),
         };
         let sync_data: SyncData = serde_json::from_slice(&data)
@@ -170,12 +176,36 @@ pub fn default_device_name() -> String {
         .unwrap_or_else(|| "当前设备".to_string())
 }
 
-fn device_sync_file_path(device_name: &str) -> Result<String, String> {
+fn device_sync_file_path(base_dir: &str, device_name: &str) -> Result<String, String> {
     let safe_name = sanitize_device_name(device_name);
     if safe_name.is_empty() {
         return Err("设备名称不能为空".to_string());
     }
-    Ok(format!("{}/{}.json", SYNC_DEVICES_DIR_PATH, safe_name))
+    Ok(format!("{}/devices/{}.json", base_dir, safe_name))
+}
+
+fn legacy_sync_file_path(base_dir: &str) -> String {
+    format!("{}/sync.json", base_dir)
+}
+
+/// 规整用户自定义的远程目录片段。用户输入，按安全清单做字符串层校验：
+/// 拒绝父目录跳出 (`..`)、反斜杠分隔符，去除前后 `/`，空值回退默认 `cli-manager`。
+fn sanitize_remote_dir(remote_dir: Option<&str>) -> String {
+    let raw = remote_dir.unwrap_or("").trim();
+    if raw.is_empty() {
+        return DEFAULT_REMOTE_DIR.to_string();
+    }
+    // 统一分隔符，去除前后斜杠与空段。
+    let normalized = raw.replace('\\', "/");
+    let cleaned: Vec<&str> = normalized
+        .split('/')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty() && *segment != "." && *segment != "..")
+        .collect();
+    if cleaned.is_empty() {
+        return DEFAULT_REMOTE_DIR.to_string();
+    }
+    cleaned.join("/")
 }
 
 fn sanitize_device_name(device_name: &str) -> String {
@@ -244,4 +274,59 @@ pub fn local_import(zip_path: &str) -> Result<SyncData, String> {
     let data: SyncData = serde_json::from_reader(&mut entry)
         .map_err(|e| format!("解析数据失败: {}", e))?;
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_remote_dir_defaults_when_empty() {
+        assert_eq!(sanitize_remote_dir(None), DEFAULT_REMOTE_DIR);
+        assert_eq!(sanitize_remote_dir(Some("")), DEFAULT_REMOTE_DIR);
+        assert_eq!(sanitize_remote_dir(Some("   ")), DEFAULT_REMOTE_DIR);
+    }
+
+    #[test]
+    fn sanitize_remote_dir_keeps_valid_paths() {
+        assert_eq!(sanitize_remote_dir(Some("cli-manager")), "cli-manager");
+        assert_eq!(sanitize_remote_dir(Some("backups/cli-mgr")), "backups/cli-mgr");
+    }
+
+    #[test]
+    fn sanitize_remote_dir_strips_surrounding_slashes() {
+        assert_eq!(sanitize_remote_dir(Some("/backups/cli-mgr/")), "backups/cli-mgr");
+    }
+
+    #[test]
+    fn sanitize_remote_dir_normalizes_backslashes() {
+        assert_eq!(sanitize_remote_dir(Some("back\\slash")), "back/slash");
+    }
+
+    #[test]
+    fn sanitize_remote_dir_rejects_parent_escape() {
+        // `..` 段被剥离，剩余安全段保留。
+        assert_eq!(sanitize_remote_dir(Some("../etc")), "etc");
+        assert_eq!(sanitize_remote_dir(Some("a/../b")), "a/b");
+        // 仅由跳出/空段组成时回退默认。
+        assert_eq!(sanitize_remote_dir(Some("..")), DEFAULT_REMOTE_DIR);
+        assert_eq!(sanitize_remote_dir(Some("./.")), DEFAULT_REMOTE_DIR);
+    }
+
+    #[test]
+    fn device_sync_file_path_uses_base_dir() {
+        assert_eq!(
+            device_sync_file_path("cli-manager", "laptop").unwrap(),
+            "cli-manager/devices/laptop.json"
+        );
+        assert_eq!(
+            device_sync_file_path("backups/cli-mgr", "laptop").unwrap(),
+            "backups/cli-mgr/devices/laptop.json"
+        );
+    }
+
+    #[test]
+    fn legacy_sync_file_path_uses_base_dir() {
+        assert_eq!(legacy_sync_file_path("cli-manager"), "cli-manager/sync.json");
+    }
 }
