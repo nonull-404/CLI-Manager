@@ -880,7 +880,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <SquareSplitHorizontal size={14} strokeWidth={1.5} />
-                  Split Right
+                  向右分屏
                 </button>
                 <button
                   className="context-menu-item"
@@ -892,7 +892,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <SquareSplitVertical size={14} strokeWidth={1.5} />
-                  Split Down
+                  向下分屏
                 </button>
                 <div className="context-menu-separator" role="separator" />
                 <button
@@ -904,7 +904,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Copy size={14} strokeWidth={1.5} />
-                  Clone
+                  克隆
                 </button>
                 <button
                   className="context-menu-item"
