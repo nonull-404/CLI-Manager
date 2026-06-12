@@ -152,6 +152,8 @@ interface Settings {
   hookPopupAutoCloseSeconds: number;
   claudeHookConfigDir: string | null;
   codexHookConfigDir: string | null;
+  /** cc-switch 数据库路径；null 表示使用默认路径 ~/.cc-switch/cc-switch.db */
+  ccSwitchDbPath: string | null;
 }
 
 interface SettingsStore extends Settings {
@@ -217,6 +219,7 @@ const DEFAULTS: Settings = {
   hookPopupAutoCloseSeconds: 60,
   claudeHookConfigDir: null,
   codexHookConfigDir: null,
+  ccSwitchDbPath: null,
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -468,6 +471,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.codexHookConfigDir =
       typeof entries.codexHookConfigDir === "string" && entries.codexHookConfigDir.trim()
         ? entries.codexHookConfigDir
+        : null;
+    entries.ccSwitchDbPath =
+      typeof entries.ccSwitchDbPath === "string" && entries.ccSwitchDbPath.trim()
+        ? entries.ccSwitchDbPath
         : null;
 
     // 检测背景图是否仍存在；若不存在，仅在内存中清空 imagePath，保留 settings.json
