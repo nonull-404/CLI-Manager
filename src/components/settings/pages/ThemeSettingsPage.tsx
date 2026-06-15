@@ -388,7 +388,7 @@ export function ThemeSettingsPage() {
                     通用 Shell 运行监控
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    开启后新建 PowerShell / pwsh 终端会注入会话级监控逻辑，用于更新标签运行状态。
+                    默认关闭；如需标签运行状态，可在此开启。开启后仅影响新建 PowerShell / pwsh 终端，并可能略微增加启动耗时。
                   </Text>
                 </Box>
                 <Switch

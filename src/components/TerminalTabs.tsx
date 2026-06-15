@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/shallow";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import {
   DndContext,
   DragOverlay,
@@ -19,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useTerminalStore, type SplitTerminalOptions, type TabNotificationState } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
+import { logError } from "../lib/logger";
 import type { TerminalPaneDropEdge, TerminalPaneLeaf, TerminalPaneSplitDirection } from "../stores/terminalPaneTree";
 import { collectPaneLeaves } from "../stores/terminalPaneTree";
 import { SplitTerminalView } from "./SplitTerminalView";
@@ -1128,6 +1131,31 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     setActive(sessionId);
   }, [setActive]);
 
+  const handleToggleStatsPanel = useCallback(async () => {
+    if (!statsPanelOpen) {
+      // 打开前检查：实时统计需要 Hook
+      try {
+        const settings = useSettingsStore.getState();
+        const status = await invoke<{ claude: { status: string }; codex: { status: string } }>(
+          "hook_settings_get_status",
+          {
+            selectedDir: settings.claudeHookConfigDir?.trim() || null,
+            codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+          }
+        );
+        if (status.claude.status !== "installed" && status.codex.status !== "installed") {
+          toast.warning("实时统计需要先安装 Hook", {
+            description: "实时统计依赖 Claude/Codex Hook 上报 sessionId。请先到设置 → Hook 设置中安装对应工具的 Hook。",
+          });
+          return;
+        }
+      } catch (err) {
+        logError("Failed to check hook status before opening terminal stats panel", err);
+      }
+    }
+    setStatsPanelOpen((prev) => !prev);
+  }, [statsPanelOpen]);
+
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {
       closeHistory();
@@ -1292,7 +1320,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
         </button>
       )}
       <button
-        onClick={() => setStatsPanelOpen((prev) => !prev)}
+        onClick={handleToggleStatsPanel}
         className={
           showToolbarText
             ? `ui-flat-action ui-toolbar-button ${statsPanelOpen ? "ui-primary-action" : ""}`
@@ -1311,6 +1339,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     fullscreen,
     handleNewTab,
     handleOpenHistoryTab,
+    handleToggleStatsPanel,
     historyOpen,
     onToggleFullscreen,
     sessionHistoryShortcut,

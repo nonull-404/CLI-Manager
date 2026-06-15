@@ -202,7 +202,7 @@ const DEFAULTS: Settings = {
     sessionHistory: true,
     showText: false,
   },
-  shellRuntimeMonitoringEnabled: true,
+  shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
   terminalBackground: {
     enabled: false,

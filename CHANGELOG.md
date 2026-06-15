@@ -15,6 +15,12 @@
 - 后端 `hook_settings_install_codex` 安装命令不再自动创建默认 `~/.codex`；未识别/未选择有效 Codex 配置目录时返回明确错误，要求先选择 Codex 配置目录。
 - 补充后端回归测试，覆盖目录缺失与用户选择目录不存在等场景，锁定安装入口不自动创建默认目录的行为。
 
+### 终端创建性能优化与 Hook 环境注入改进
+
+- **默认关闭通用 Shell 运行监控**：`shellRuntimeMonitoringEnabled` 默认值改为 `false`，显著改善 PowerShell/pwsh 新建终端时的 prompt 出现速度；用户可在设置页手动启用，文案明确告知"默认关闭；开启后略微增加启动耗时"。
+- **Hook 环境注入增加安装状态判断**：后端 `pty_create` 新增 `hook_env_enabled` 可选参数（默认 false），前端在创建 Claude/Codex 终端时先查询 `hook_settings_get_status`，仅当对应工具 Hook 状态为 `installed` 时才注入 `CLI_MANAGER_NOTIFY_*` 等环境变量；空终端和未安装 Hook 的项目按普通 shell 处理，避免无意义的环境变量注入。
+- **实时统计入口增加 Hook 安装提示**：侧边栏"历史用量统计"与内部终端工具栏"统计"按钮在点击时判断，启用实时统计模式但 Claude/Codex Hook 都未安装时弹出 toast 提示并引导去 Hook 设置页，避免面板打开后无数据可用。
+
 ## [V1.0.5] - 2026-06-12
 
 ### 终端状态通知准确性优化

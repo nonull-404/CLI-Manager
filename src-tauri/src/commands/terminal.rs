@@ -13,11 +13,14 @@ pub async fn pty_create(
     cwd: Option<String>,
     env_vars: Option<HashMap<String, String>>,
     shell: Option<String>,
+    hook_env_enabled: Option<bool>,
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let mut env_vars = env_vars.unwrap_or_default();
     env_vars.insert("CLI_MANAGER_TAB_ID".to_string(), session_id.clone());
-    claude_hook_bridge.apply_env(&session_id, &mut env_vars);
+    if hook_env_enabled.unwrap_or(false) {
+        claude_hook_bridge.apply_env(&session_id, &mut env_vars);
+    }
     let env_count = env_vars.len();
     info!(
         "pty_create requested: session_id={}, cwd={:?}, shell={:?}, env_vars={}",

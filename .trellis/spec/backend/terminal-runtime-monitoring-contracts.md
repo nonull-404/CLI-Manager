@@ -163,6 +163,13 @@ export interface ShellRuntimePayload {
 | `CLI_MANAGER_TAB_ID` | Yes | Rust `pty_create` | Must equal the frontend session id for the PTY. |
 | `CLI_MANAGER_SHELL_RUNTIME_MONITORING` | Optional | Frontend `terminalStore` | Value `"1"` enables shell runtime monitoring for a new PTY. Missing or any other value disables injection. |
 
+- Setting default and opt-in behavior:
+  - `settingsStore.DEFAULTS.shellRuntimeMonitoringEnabled` must be `false`.
+  - Missing or invalid persisted values load as disabled; explicit saved booleans must be preserved (`true` stays enabled, `false` stays disabled).
+  - The settings UI must keep a user-facing "通用 Shell 运行监控" switch so users can opt in.
+  - Enabling applies only to newly-created PowerShell / pwsh terminals; existing PTY sessions are not retrofitted.
+  - Rationale: the PowerShell / pwsh implementation launches through a prompt wrapper (`-Command <script>`) to emit private OSC status markers, which can make prompt-ready time slightly slower. Do not re-enable this by default without measuring startup impact.
+
 - Private OSC marker format:
 
 ```text
@@ -198,6 +205,8 @@ Hook-driven `attention` must win over shell runtime state until the user activat
 
 | Condition | Required behavior |
 |---|---|
+| Persisted `shellRuntimeMonitoringEnabled` is missing or invalid | Load as disabled (`false`); new PowerShell / pwsh PTY must not receive `CLI_MANAGER_SHELL_RUNTIME_MONITORING=1`. |
+| Persisted `shellRuntimeMonitoringEnabled` is explicit `true` | Preserve the user opt-in; newly-created PowerShell / pwsh PTY may receive `CLI_MANAGER_SHELL_RUNTIME_MONITORING=1`. |
 | Monitoring setting is disabled | New PTY must not receive `CLI_MANAGER_SHELL_RUNTIME_MONITORING=1`; frontend must ignore shell runtime events for that shell. |
 | Shell is not PowerShell / pwsh | Do not inject PowerShell prompt wrapper. Preserve the normal shell launch path. |
 | OSC marker is split across output chunks | Buffer until `BEL`, then parse and strip before writing to xterm. |
@@ -208,12 +217,17 @@ Hook-driven `attention` must win over shell runtime state until the user activat
 
 ### 5. Good/Base/Bad Cases
 
-- Good: PowerShell emits `command_finished;exit=0`; frontend strips the marker and tab shows `已完成` with the updated timestamp.
-- Base: Monitoring is disabled; PowerShell starts normally and tab state only changes from hook events or direct UI actions.
+- Good: PowerShell with explicit user opt-in emits `command_finished;exit=0`; frontend strips the marker and tab shows `已完成` with the updated timestamp.
+- Base: Monitoring is missing/default-disabled; PowerShell starts normally and tab state only changes from hook events or direct UI actions.
+- Bad: Defaulting new users to monitoring-enabled makes every new PowerShell / pwsh terminal pay prompt-wrapper startup cost before they ask for ordinary shell command status.
 - Bad: An unterminated OSC marker appears in terminal output; the parser must not leak `]777;cli-manager` text into xterm.
 
 ### 6. Tests Required
 
+- Settings migration/default assertions:
+  - Missing `shellRuntimeMonitoringEnabled` falls back to `false`.
+  - Explicit saved `true` remains `true`; explicit saved `false` remains `false`.
+  - Settings UI copy states the feature is default-off/opt-in, only affects newly-created PowerShell / pwsh terminals, and may slightly increase startup time.
 - TypeScript status reducer assertions:
   - `attention` beats `failed`, `running`, and `done`.
   - `failed` beats `running` and `done`.
