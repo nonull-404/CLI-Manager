@@ -31,6 +31,29 @@
 - TypeScript 类型检查通过，所有 hooks 依赖数组正确，边界情况处理完善
 - 代码规范审查通过，无未使用导入、无 console.log 残留
 
+### 终端 - 跨平台默认 Shell 识别
+
+#### 核心改进
+
+- **按操作系统区分 Shell 选项**：新建/编辑终端及设置中心的"默认 Shell"现根据运行平台动态展示可选项——Windows（PowerShell / CMD / PowerShell Core / WSL / Git Bash / Bash）、macOS（Zsh / Bash / Fish / Sh）、Linux（Bash / Zsh / Fish / Sh），不再硬编码 Windows 专属终端。
+- **平台默认值**：新建终端时按系统自动选择默认 Shell（macOS → zsh，Linux → bash，Windows → powershell）；用户从未设置过"默认 Shell"时，设置项也按平台初始化，避免在 mac/linux 上残留 `powershell.exe`。
+- **跨平台配置兼容**：编辑在其它系统创建的终端时，若其 Shell 在当前平台不可用，下拉框保留为"（当前自定义）"选项，不丢失原配置。
+
+#### 详细实现
+
+- 后端（Rust）：
+  - 新增 `get_os_platform` 命令返回当前平台（`windows` / `macos` / `linux` / `unknown`）。
+  - `PtyManager::resolve_shell` 与外部终端 `shell_exe` 增加 `zsh` / `fish` / `sh` 支持；`bash` 与默认分支用 `cfg!(target_os)` 区分平台（Windows 用 `bash.exe` / `powershell.exe`，Unix 回退用户登录 Shell `$SHELL`，再回退 macOS=zsh / 其它=bash）。
+- 前端（TS/React）：
+  - `ShellKey` 扩展 Unix Shell；`normalizeShellKey` 支持识别 `zsh` / `fish` / `sh` 及其路径与 `.exe` 变体。
+  - 新增 `getOsPlatform`、`getDefaultShellForPlatform`、`defaultShellForOs` 辅助与 `getShellOptions(os)` 平台选项映射。
+  - `ConfigModal`、`ThemeSettingsPage`、`settingsStore` 接入平台检测。
+
+#### 代码质量
+
+- 后端跨平台分支统一改用 `cfg!()` 宏，使 macOS/Linux 代码路径也在 Windows 上参与类型检查（无 mac/linux 环境亦可验证）。
+- TypeScript 类型检查与 `cargo check` 均通过。
+
 ### 版本发布
 
 - 应用版本同步升级到 1.0.9（npm、Cargo、Tauri 配置）。

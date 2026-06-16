@@ -3,6 +3,7 @@ import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
 import { backgroundImageExists } from "../lib/assetUrl";
+import { getDefaultShellForPlatform } from "../lib/shell";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type LightThemePalette =
@@ -440,6 +441,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ? entries.showProjectTreeBadges
         : DEFAULTS.showProjectTreeBadges;
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+
+    // 默认 Shell：用户从未设置过时，根据操作系统选择合适的默认值
+    // （DEFAULTS.defaultShell 是 Windows 的 powershell.exe，在 mac/linux 上不合适）
+    if (entries.defaultShell === undefined) {
+      try {
+        entries.defaultShell = await getDefaultShellForPlatform();
+      } catch {
+        entries.defaultShell = DEFAULTS.defaultShell;
+      }
+    }
 
     entries.shellRuntimeMonitoringEnabled =
       typeof entries.shellRuntimeMonitoringEnabled === "boolean"
