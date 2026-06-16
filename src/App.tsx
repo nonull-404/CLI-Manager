@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { toast, Toaster } from "sonner";
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -46,6 +46,21 @@ const WINDOW_MIN_HEIGHT = 600;
 const IN_TAURI = isTauri();
 const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
 let claudeHookToastSequence = 0;
+type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
+
+interface HookSettingsStatusPayload {
+  claude: { status: HookInstallStatus };
+  codex: { status: HookInstallStatus };
+}
+
+async function hasInstalledCliHook(): Promise<boolean> {
+  const settings = useSettingsStore.getState();
+  const status = await invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
+    selectedDir: settings.claudeHookConfigDir?.trim() || null,
+    codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+  });
+  return status.claude.status === "installed" || status.codex.status === "installed";
+}
 
 type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
 
@@ -243,8 +258,32 @@ function App() {
   }, []);
 
   const handleOpenStats = useCallback(() => {
-    setStatsOpen(true);
-  }, []);
+    // 历史用量分析（StatsPanel）不需要 hook，直接打开
+    if (!ccusageAnalyticsEnabled) {
+      setStatsOpen(true);
+      return;
+    }
+
+    // 实时统计（CcusageStatsPanel）需要检查 hook 是否安装
+    void (async () => {
+      try {
+        if (await hasInstalledCliHook()) {
+          setStatsOpen(true);
+          return;
+        }
+      } catch (err) {
+        logWarn("Failed to check hook status before opening realtime stats", err);
+      }
+
+      toast.warning("实时统计需要先安装 Hook", {
+        description: "实时统计依赖 Claude/Codex Hook 上报 sessionId。请先到 Hook 设置中安装对应工具的 Hook。",
+        action: {
+          label: "去设置",
+          onClick: () => handleOpenSettings("hooks"),
+        },
+      });
+    })();
+  }, [ccusageAnalyticsEnabled, handleOpenSettings]);
 
   const handleOpenStatsSession = useCallback(
     async (sessionKey: string) => {
