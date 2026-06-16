@@ -258,11 +258,13 @@ function App() {
   }, []);
 
   const handleOpenStats = useCallback(() => {
+    // 历史用量分析（StatsPanel）不需要 hook，直接打开
     if (!ccusageAnalyticsEnabled) {
       setStatsOpen(true);
       return;
     }
 
+    // 实时统计（CcusageStatsPanel）需要检查 hook 是否安装
     void (async () => {
       try {
         if (await hasInstalledCliHook()) {
