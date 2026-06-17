@@ -955,14 +955,25 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
     const pinHelperTextareaAnchor = () => {
       if (!textarea || isComposingRef.current) return;
-      textarea.style.left = "-9999em";
-      textarea.style.top = "0px";
+      // Pre-position the hidden helper textarea ON the caret cell instead of
+      // pushing it off-screen. Some IMEs — notably Sogou — anchor their
+      // candidate popup to the textarea position at the instant composition
+      // STARTS and never follow it afterwards. If the textarea sits at
+      // "-9999em" at that moment, the popup is clamped to the window's top-left
+      // corner for the entire composition (and our mid-composition re-anchoring
+      // never gets a chance to move it). Keep it on the caret and hide it with
+      // opacity:0 in place, so the popup opens at the cursor from the first key.
+      const anchor = resolveCompositionAnchorCell();
+      const cell = estimateCellSize();
+      textarea.style.left = `${Math.max(0, anchor.x * cell.width)}px`;
+      textarea.style.top = `${Math.max(0, anchor.y * cell.height)}px`;
+      textarea.style.opacity = "0";
       // Keep the hidden input measurable: xterm's IME fallback for active IME
       // punctuation reads textarea diffs after keyCode 229, and some IMEs drop
       // the first character when the helper textarea is 0x0.
       textarea.style.width = "1px";
-      textarea.style.height = "1px";
-      textarea.style.lineHeight = "1px";
+      textarea.style.height = `${Math.max(1, cell.height)}px`;
+      textarea.style.lineHeight = `${Math.max(1, cell.height)}px`;
     };
 
     const scheduleHelperTextareaAnchorPin = () => {
