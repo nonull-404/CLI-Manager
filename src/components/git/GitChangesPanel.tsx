@@ -1,37 +1,70 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, GitBranch, Undo2 } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import { GitChangesTree } from "./GitChangesTree";
 import { DiffViewerModal } from "./DiffViewerModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { TERM, EmptyHint } from "../stats/termStatsUi";
+import type { GitTreeNode } from "../../lib/types";
 
 interface GitChangesPanelProps {
   open: boolean;
   projectPath: string | null;
+  visible?: boolean;
+  embedded?: boolean;
 }
 
 // 聚焦轮询间隔：仅在窗口聚焦且面板可见时静默刷新，避免无谓查询。
 const POLL_INTERVAL_MS = 4000;
 
-export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
-  const { fetchChanges, reset, changes, loading, statusFilter, setStatusFilter, discardFile, discardAll, discarding } = useGitStore();
+function collectDirectoryPaths(nodes: GitTreeNode[]): string[] {
+  const paths: string[] = [];
+
+  const visit = (items: GitTreeNode[]) => {
+    for (const node of items) {
+      if (node.type !== "directory") continue;
+      paths.push(node.path);
+      visit(node.children ?? []);
+    }
+  };
+
+  visit(nodes);
+  return paths;
+}
+
+export function GitChangesPanel({ open, projectPath, visible = true, embedded = false }: GitChangesPanelProps) {
+  const {
+    fetchChanges,
+    reset,
+    changes,
+    tree,
+    collapsedDirs,
+    loading,
+    statusFilter,
+    setStatusFilter,
+    collapseAllDirs,
+    expandAllDirs,
+    discardFile,
+    discardAll,
+    discarding,
+  } = useGitStore();
   const [diffModalOpen, setDiffModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ path: string; name: string; status: string } | null>(null);
   const [confirmAllOpen, setConfirmAllOpen] = useState(false);
   const [discardTarget, setDiscardTarget] = useState<{ path: string; name: string; status: string } | null>(null);
+  const panelActive = open && visible;
 
   useEffect(() => {
-    if (open && projectPath) {
+    if (panelActive && projectPath) {
       fetchChanges(projectPath);
     } else if (!open) {
       reset();
     }
-  }, [open, projectPath, fetchChanges, reset]);
+  }, [panelActive, open, projectPath, fetchChanges, reset]);
 
   // 自动刷新：窗口聚焦且面板可见时每 ~4s 静默刷新；失焦/隐藏暂停。
   useEffect(() => {
-    if (!open || !projectPath) return;
+    if (!panelActive || !projectPath) return;
 
     let timer: number | undefined;
     const isActive = () => document.visibilityState === "visible" && document.hasFocus();
@@ -68,9 +101,13 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
       window.removeEventListener("blur", stop);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [open, projectPath, fetchChanges]);
+  }, [panelActive, projectPath, fetchChanges]);
 
-  if (!open) return null;
+  const directoryPaths = useMemo(() => collectDirectoryPaths(tree), [tree]);
+  const hasDirectories = directoryPaths.length > 0;
+  const allCollapsed = hasDirectories && directoryPaths.every((path) => collapsedDirs.has(path));
+
+  if (!open || !visible) return null;
 
   const handleRefresh = () => {
     if (projectPath) {
@@ -105,20 +142,38 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
     { label: "删除", value: "D" as const, count: deletedCount, color: "#808080" },
   ];
 
+  const panelClassName = embedded
+    ? "flex h-full min-h-0 flex-col overflow-hidden font-mono"
+    : "relative z-[1] flex w-[290px] shrink-0 flex-col overflow-hidden border-l border-border font-mono";
+  const Container = embedded ? "div" : "aside";
+
   return (
-    <aside
-      className="relative z-[1] flex w-[290px] shrink-0 flex-col border-l border-border overflow-hidden font-mono"
+    <Container
+      className={panelClassName}
       style={{ backgroundColor: TERM.bg }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-2 py-1.5 border-b" style={{ borderColor: TERM.dim }}>
+      <div className="flex items-center justify-between gap-2 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
         <span className="flex items-center gap-2 text-[11px] font-bold" style={{ color: TERM.fg }}>
           <GitBranch size={12} strokeWidth={2} />
           Git 变更
         </span>
-        <div className="flex items-center gap-1">
+        <span className="flex items-center gap-1">
+          {hasDirectories && (
+            <button
+              type="button"
+              onClick={allCollapsed ? expandAllDirs : collapseAllDirs}
+              className="ui-focus-ring rounded px-1 py-0.5 text-[10px] transition-colors"
+              style={{ color: TERM.cyan, backgroundColor: `${TERM.cyan}12` }}
+              title={allCollapsed ? "全部展开 Git 文件树" : "全部收起 Git 文件树"}
+              aria-label={allCollapsed ? "全部展开 Git 文件树" : "全部收起 Git 文件树"}
+            >
+              {allCollapsed ? "展开" : "收起"}
+            </button>
+          )}
           {trackableCount > 0 && (
             <button
+              type="button"
               onClick={() => setConfirmAllOpen(true)}
               disabled={discarding}
               className="ui-focus-ring rounded p-0.5 disabled:opacity-40"
@@ -130,6 +185,7 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
             </button>
           )}
           <button
+            type="button"
             onClick={handleRefresh}
             className={`ui-focus-ring rounded p-0.5 ${loading ? "animate-spin" : ""}`}
             style={{ color: TERM.cyan }}
@@ -138,17 +194,18 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
           >
             <RefreshCw size={11} />
           </button>
-        </div>
+        </span>
       </div>
 
       {/* Filter */}
       {changes.length > 0 && (
-        <div className="shrink-0 flex gap-1 px-2 py-1.5 border-b" style={{ borderColor: TERM.dim }}>
+        <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
           {filterButtons.map((btn) => (
             <button
               key={btn.value}
+              type="button"
               onClick={() => setStatusFilter(btn.value)}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
               style={{
                 backgroundColor: statusFilter === btn.value ? `${btn.color}30` : "transparent",
                 color: statusFilter === btn.value ? btn.color : TERM.dim,
@@ -164,7 +221,7 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
 
       {/* Summary */}
       {changes.length > 0 && (
-        <div className="shrink-0 px-2 py-1.5 text-[10px] border-b" style={{ borderColor: TERM.dim, color: TERM.dim }}>
+        <div className="shrink-0 border-b px-2 py-1.5 text-[10px]" style={{ borderColor: TERM.dim, color: TERM.dim }}>
           <span style={{ color: TERM.fg }}>{allCount}</span> 个文件
           {modifiedCount > 0 && (
             <>
@@ -188,7 +245,7 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto ui-thin-scroll p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll">
         {!projectPath ? (
           <EmptyHint text="当前终端未关联项目" />
         ) : loading && changes.length === 0 ? (
@@ -242,6 +299,6 @@ export function GitChangesPanel({ open, projectPath }: GitChangesPanelProps) {
         }}
         onClose={() => setConfirmAllOpen(false)}
       />
-    </aside>
+    </Container>
   );
 }

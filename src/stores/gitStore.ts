@@ -28,6 +28,8 @@ interface GitStore {
   revertHunk: (diffText: string, hunkIndex: number) => Promise<void>;
   revertLines: (diffText: string, selectedLines: { side: "old" | "new"; lineNumber: number }[]) => Promise<void>;
   toggleDir: (path: string) => void;
+  collapseAllDirs: () => void;
+  expandAllDirs: () => void;
   setStatusFilter: (filter: GitStatusFilter) => void;
   reset: () => void;
 }
@@ -75,6 +77,21 @@ function buildTree(changes: GitFileChange[]): GitTreeNode[] {
   }
 
   return root;
+}
+
+function collectDirectoryPaths(nodes: GitTreeNode[]): string[] {
+  const paths: string[] = [];
+
+  const visit = (items: GitTreeNode[]) => {
+    for (const node of items) {
+      if (node.type !== "directory") continue;
+      paths.push(node.path);
+      visit(node.children ?? []);
+    }
+  };
+
+  visit(nodes);
+  return paths;
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
@@ -203,6 +220,14 @@ export const useGitStore = create<GitStore>((set, get) => ({
       }
       return { collapsedDirs: newCollapsed };
     });
+  },
+
+  collapseAllDirs: () => {
+    set((state) => ({ collapsedDirs: new Set(collectDirectoryPaths(state.tree)) }));
+  },
+
+  expandAllDirs: () => {
+    set({ collapsedDirs: new Set() });
   },
 
   setStatusFilter: (filter: GitStatusFilter) => {
