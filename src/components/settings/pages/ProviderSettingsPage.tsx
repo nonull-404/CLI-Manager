@@ -14,9 +14,34 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  UnstyledButton,
 } from "@mantine/core";
-import { AlertTriangle, Copy, ChevronDown } from "@/components/icons";
-import { ProviderBadge, ProviderRow } from "@/components/provider/ProviderRow";
+import type { LucideIcon } from "lucide-react";
+import {
+  AlertTriangle,
+  Boxes,
+  Braces,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Copy,
+  Cpu,
+  Database,
+  Download,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  Globe,
+  Hash,
+  KeyRound,
+  Link2,
+  RefreshCw,
+  Settings,
+  Tag,
+  Undo2,
+} from "@/components/icons";
+import { ProviderBadge } from "@/components/provider/ProviderRow";
+import { VendorIcon, inferVendor, type VendorKey } from "@/components/VendorIcon";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 // 深度合并对象（target 覆盖 source）
@@ -67,6 +92,16 @@ interface CcSwitchCommonConfigResponse {
   dbPath: string;
   commonConfigs: CcSwitchCommonConfig[];
 }
+
+type Tone = "primary" | "neutral" | "success" | "warning" | "danger";
+
+const TONE_COLOR: Record<Tone, string> = {
+  primary: "var(--primary)",
+  neutral: "var(--on-surface-variant)",
+  success: "var(--success)",
+  warning: "var(--warning)",
+  danger: "var(--danger)",
+};
 
 // 供应商页样式：参考 docs/UI「Editorial Analyst」设计，但全部映射到主题 token，
 // 以便在 App 的 18 套主题（9 亮 + 9 暗）与暗色模式下一致工作。
@@ -178,6 +213,63 @@ function formatError(error: unknown): string {
   return `读取 cc-switch 数据库失败：${message}`;
 }
 
+// 苹果设置页标志性的圆角图标砖（filled / soft 两种）
+function IconTile({
+  icon: Icon,
+  tone = "primary",
+  variant = "soft",
+  size = 34,
+}: {
+  icon: LucideIcon;
+  tone?: Tone;
+  variant?: "soft" | "solid";
+  size?: number;
+}) {
+  const color = TONE_COLOR[tone];
+  const solid = variant === "solid";
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.3),
+        backgroundColor: solid ? color : `color-mix(in srgb, ${color} 14%, transparent)`,
+        color: solid ? (tone === "primary" ? "var(--on-primary)" : "#fff") : color,
+        boxShadow: solid ? `0 6px 16px color-mix(in srgb, ${color} 30%, transparent)` : "none",
+      }}
+    >
+      <Icon size={Math.round(size * 0.54)} strokeWidth={2.2} />
+    </span>
+  );
+}
+
+// 综合 model / baseUrl / appType / 名称 / 分类 推断供应商所属厂商
+function inferProviderVendor(provider: CcSwitchProvider): VendorKey | null {
+  return (
+    inferVendor(provider.model) ??
+    inferVendor(provider.baseUrl) ??
+    inferVendor(provider.appType) ??
+    inferVendor(provider.name) ??
+    inferVendor(provider.category)
+  );
+}
+
+// 环境变量按 key 语义映射不同图标（替代「全是钥匙」）
+function envIcon(key: string): LucideIcon {
+  const k = key.toUpperCase();
+  if (/(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|BEARER)/.test(k)) return KeyRound;
+  if (/(URL|ENDPOINT|HOST|BASE|DOMAIN|URI|ADDR)/.test(k)) return Link2;
+  if (/(MODEL|ENGINE|DEPLOYMENT)/.test(k)) return Cpu;
+  if (/(PROXY|HTTP|NETWORK)/.test(k)) return Globe;
+  if (/(TIMEOUT|INTERVAL|DELAY|TTL|EXPIRE|RETRY)/.test(k)) return Clock;
+  if (/(VERSION|API_VERSION)/.test(k)) return Tag;
+  if (/(ORG|PROJECT|ACCOUNT|TENANT|WORKSPACE|GROUP)/.test(k)) return Boxes;
+  if (/(REGION|ZONE|LOCATION|AREA)/.test(k)) return Globe;
+  if (/(MAX|LIMIT|TOKENS|SIZE|COUNT|NUM|TEMPERATURE|TOP_)/.test(k)) return Hash;
+  return Braces;
+}
+
 function CopyButton({ value, label = "已复制" }: { value: string; label?: string }) {
   return (
     <ActionIcon
@@ -229,23 +321,64 @@ function ProviderListItem({
   onClick: () => void;
 }) {
   // 右侧徽章：优先显示 isCurrent，否则显示 category（若有）
-  let badge: { label: string; variant: "active" | "current" | "neutral" } | undefined;
+  let badge: { label: string; tone: "primary" | "neutral" } | undefined;
   if (isSelected && provider.isCurrent) {
-    badge = { label: "ACTIVE", variant: "active" };
+    badge = { label: "ACTIVE", tone: "primary" };
   } else if (provider.isCurrent) {
-    badge = { label: "当前", variant: "current" };
+    badge = { label: "当前", tone: "primary" };
   } else if (provider.category) {
-    badge = { label: provider.category, variant: "neutral" };
+    badge = { label: provider.category, tone: "neutral" };
   }
 
+  const vendor = inferProviderVendor(provider);
+  const subtitle = provider.category ?? provider.model ?? undefined;
+
   return (
-    <ProviderRow
-      selected={isSelected}
+    <UnstyledButton
+      type="button"
       onClick={onClick}
-      name={provider.name}
-      subtitle={provider.category ?? undefined}
-      badge={badge}
-    />
+      data-selected={isSelected ? "true" : "false"}
+      aria-pressed={isSelected}
+      className="ui-focus-ring flex w-full items-center gap-3 text-left transition-all"
+      style={{
+        padding: "11px 12px",
+        borderRadius: 16,
+        backgroundColor: isSelected
+          ? "color-mix(in srgb, var(--primary) 10%, var(--surface-container-lowest))"
+          : "var(--surface-container-lowest)",
+        border: isSelected
+          ? "1px solid color-mix(in srgb, var(--primary) 42%, transparent)"
+          : "1px solid color-mix(in srgb, var(--border) 22%, transparent)",
+        boxShadow: isSelected ? "0 4px 14px color-mix(in srgb, var(--primary) 12%, transparent)" : "none",
+      }}
+      onMouseEnter={(e) => {
+        if (!isSelected) e.currentTarget.style.backgroundColor = "var(--surface-container-low)";
+      }}
+      onMouseLeave={(e) => {
+        if (!isSelected) e.currentTarget.style.backgroundColor = "var(--surface-container-lowest)";
+      }}
+    >
+      <span
+        className="inline-flex shrink-0 items-center justify-center"
+        style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "var(--surface-container-high)", color: "var(--on-surface)" }}
+      >
+        <VendorIcon vendor={vendor} size={24} fallback={Boxes} />
+      </span>
+      <Box className="min-w-0 flex-1">
+        <Text className="truncate" fz={14} fw={700} c={isSelected ? "var(--primary)" : "var(--on-surface)"}>
+          {provider.name}
+        </Text>
+        {subtitle && (
+          <Text className="truncate" fz={11} c="var(--text-muted)" mt={1}>
+            {subtitle}
+          </Text>
+        )}
+      </Box>
+      {badge && (
+        <ProviderBadge tone={badge.tone}>{badge.label}</ProviderBadge>
+      )}
+      <ChevronRight size={16} style={{ color: "var(--text-muted)" }} className="shrink-0" />
+    </UnstyledButton>
   );
 }
 
@@ -253,6 +386,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const envEntries = Object.entries(provider.maskedEnv);
   const websiteUrl = provider.websiteUrl;
+  const vendor = inferProviderVendor(provider);
   // 优化 9: 环境变量折叠状态
   const [envExpanded, setEnvExpanded] = useState(false);
   const displayedEnv = envExpanded ? envEntries : envEntries.slice(0, 5);
@@ -355,30 +489,39 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
       <Box className="prov-detail-hero" p="xl">
         <Stack gap="lg">
           <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
-            <Box className="min-w-0">
-              <Group gap="sm" align="center" wrap="wrap">
-                <Text
-                  className="font-headline tracking-tight"
-                  fz={32}
-                  fw={800}
-                  c="var(--on-surface)"
-                  lh={1.1}
-                  style={{ wordBreak: "break-word" }}
-                >
-                  {provider.name}
-                </Text>
-                {provider.isCurrent && <ProviderBadge tone="primary">全局当前</ProviderBadge>}
-                {provider.configParseError && <ProviderBadge tone="danger">配置解析失败</ProviderBadge>}
-              </Group>
-              <Group gap="xs" mt={8}>
-                {provider.category && <ProviderBadge tone="neutral">{provider.category}</ProviderBadge>}
-                {provider.apiFormat && <ProviderBadge tone="primary">{provider.apiFormat}</ProviderBadge>}
-              </Group>
-            </Box>
+            <Group gap="md" align="flex-start" wrap="nowrap" className="min-w-0">
+              <span
+                className="inline-flex shrink-0 items-center justify-center"
+                style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: "var(--surface-container-high)", color: "var(--on-surface)" }}
+              >
+                <VendorIcon vendor={vendor} size={30} fallback={Boxes} />
+              </span>
+              <Box className="min-w-0">
+                <Group gap="sm" align="center" wrap="wrap">
+                  <Text
+                    className="font-headline tracking-tight"
+                    fz={32}
+                    fw={800}
+                    c="var(--on-surface)"
+                    lh={1.1}
+                    style={{ wordBreak: "break-word" }}
+                  >
+                    {provider.name}
+                  </Text>
+                  {provider.isCurrent && <ProviderBadge tone="primary">全局当前</ProviderBadge>}
+                  {provider.configParseError && <ProviderBadge tone="danger">配置解析失败</ProviderBadge>}
+                </Group>
+                <Group gap="xs" mt={8}>
+                  {provider.category && <ProviderBadge tone="neutral">{provider.category}</ProviderBadge>}
+                  {provider.apiFormat && <ProviderBadge tone="primary">{provider.apiFormat}</ProviderBadge>}
+                </Group>
+              </Box>
+            </Group>
             {websiteUrl && (
               <Button
                 size="compact-sm"
                 variant="subtle"
+                leftSection={<Globe size={14} />}
                 className="shrink-0"
                 onClick={() => {
                   void openUrl(websiteUrl).catch((err) => {
@@ -408,7 +551,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
           {/* 关键元数据网格（无分隔线，靠间距与 label 弱化分区） */}
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl" verticalSpacing="md">
             {provider.baseUrl && (
-              <MetaField label="BASE API ENDPOINT">
+              <MetaField label="BASE API ENDPOINT" icon={Link2}>
                 <Group gap={6} wrap="nowrap" className="min-w-0">
                   <Text
                     component="code"
@@ -425,14 +568,14 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
               </MetaField>
             )}
             {provider.model && (
-              <MetaField label="DEFAULT MODEL">
+              <MetaField label="DEFAULT MODEL" icon={Cpu}>
                 <Text fz={15} fw={700} c="var(--on-surface)" className="break-all leading-5">
                   {provider.model}
                 </Text>
               </MetaField>
             )}
             {provider.notes && (
-              <MetaField label="备注">
+              <MetaField label="备注" icon={FileText}>
                 <Text fz={13} c="var(--on-surface)" className="break-all leading-5">
                   {provider.notes}
                 </Text>
@@ -446,6 +589,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
       {envEntries.length > 0 && (
         <Box>
           <Group gap="sm" mb="md" align="center">
+            <IconTile icon={KeyRound} tone="primary" size={28} />
             <Text className="font-headline tracking-tight" fz={20} fw={800} c="var(--on-surface)">
               环境变量
             </Text>
@@ -462,23 +606,26 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
             {displayedEnv.map(([key, value]) => (
               <Box key={key} className="prov-env-card">
-                <Group justify="space-between" wrap="nowrap" gap="xs" align="flex-start">
-                  <Box className="min-w-0 flex-1">
-                    <Text className="prov-env-key" component="div">
-                      {key}
-                    </Text>
-                    <Text
-                      component="code"
-                      ff="var(--font-ui-mono)"
-                      fz={13}
-                      fw={600}
-                      c="var(--on-surface)"
-                      className="break-all leading-5"
-                      mt={4}
-                    >
-                      {value}
-                    </Text>
-                  </Box>
+                <Group justify="space-between" wrap="nowrap" gap="sm" align="flex-start">
+                  <Group gap="sm" wrap="nowrap" align="flex-start" className="min-w-0 flex-1">
+                    <IconTile icon={envIcon(key)} tone="primary" size={24} />
+                    <Box className="min-w-0 flex-1">
+                      <Text className="prov-env-key" component="div">
+                        {key}
+                      </Text>
+                      <Text
+                        component="code"
+                        ff="var(--font-ui-mono)"
+                        fz={13}
+                        fw={600}
+                        c="var(--on-surface)"
+                        className="break-all leading-5"
+                        mt={4}
+                      >
+                        {value}
+                      </Text>
+                    </Box>
+                  </Group>
                   <CopyButton value={`${key}=${value}`} />
                 </Group>
               </Box>
@@ -500,6 +647,12 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
 
       {/* 配置区（editorial 下划线 Tab + 大圆角代码块） */}
       <Box className="prov-detail-hero" p="lg">
+        <Group gap="sm" align="center" mb="md">
+          <IconTile icon={Braces} tone="primary" size={28} />
+          <Text className="font-headline tracking-tight" fz={16} fw={800} c="var(--on-surface)">
+            配置
+          </Text>
+        </Group>
         <Group gap={0} mb="md" wrap="wrap">
           {configTabs.map((tab) => (
             <button
@@ -536,81 +689,70 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
   );
 }
 
-function MetaField({ label, children }: { label: string; children: ReactNode }) {
+function MetaField({ label, icon: Icon, children }: { label: string; icon?: LucideIcon; children: ReactNode }) {
   return (
     <Stack gap={6} className="min-w-0">
-      <Text
-        component="div"
-        fz={11}
-        fw={700}
-        c="var(--text-muted)"
-        style={{ letterSpacing: "0.18em", textTransform: "uppercase" }}
-      >
-        {label}
-      </Text>
+      <Group gap={6} align="center">
+        {Icon && <Icon size={13} style={{ color: "var(--text-muted)" }} />}
+        <Text
+          component="div"
+          fz={11}
+          fw={700}
+          c="var(--text-muted)"
+          style={{ letterSpacing: "0.18em", textTransform: "uppercase" }}
+        >
+          {label}
+        </Text>
+      </Group>
       {children}
     </Stack>
   );
 }
 
-function StepCircle({ n }: { n: number }) {
-  return (
-    <span
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold leading-none"
-      style={{
-        backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)",
-        border: "1px solid color-mix(in srgb, var(--primary) 24%, transparent)",
-        color: "var(--primary)",
-      }}
-    >
-      {n}
-    </span>
-  );
-}
-
 function EmptyStateGuideCard() {
+  const steps: { icon: LucideIcon; text: string }[] = [
+    { icon: Download, text: "安装 cc-switch" },
+    { icon: Settings, text: "配置你的供应商" },
+    { icon: RefreshCw, text: "回到此页点击刷新" },
+  ];
+
   return (
-    <Card className="ui-surface-card" p="md">
-      <Stack gap="md">
-        <Box>
-          <Text size="lg" fw={600} c="var(--on-surface)" mb="xs">
-            欢迎使用供应商设置
-          </Text>
-          <Text size="sm" c="var(--text-muted)" mb="md">
-            cc-switch 是一款供应商切换工具，可以帮助你管理多个 AI 服务提供商的配置。
-          </Text>
-        </Box>
+    <Card className="ui-surface-card" p="lg">
+      <Stack gap="lg">
+        <Group gap="md" align="center" wrap="nowrap">
+          <IconTile icon={Database} tone="primary" variant="solid" size={44} />
+          <Box className="min-w-0">
+            <Text size="lg" fw={700} c="var(--on-surface)">
+              欢迎使用供应商设置
+            </Text>
+            <Text size="sm" c="var(--text-muted)">
+              cc-switch 是一款供应商切换工具，可以帮助你管理多个 AI 服务提供商的配置。
+            </Text>
+          </Box>
+        </Group>
 
         <Divider />
 
         <Box>
-          <Text size="sm" fw={500} c="var(--on-surface)" mb="xs">
+          <Text size="sm" fw={600} c="var(--on-surface)" mb="sm">
             开始使用
           </Text>
-          <Stack gap="xs">
-            <Group gap="xs">
-              <StepCircle n={1} />
-              <Text size="sm" c="var(--on-surface)">
-                安装 cc-switch
-              </Text>
-            </Group>
-            <Group gap="xs">
-              <StepCircle n={2} />
-              <Text size="sm" c="var(--on-surface)">
-                配置你的供应商
-              </Text>
-            </Group>
-            <Group gap="xs">
-              <StepCircle n={3} />
-              <Text size="sm" c="var(--on-surface)">
-                回到此页点击刷新
-              </Text>
-            </Group>
+          <Stack gap="sm">
+            {steps.map((step) => (
+              <Group key={step.text} gap="sm" align="center">
+                <IconTile icon={step.icon} tone="primary" size={28} />
+                <Text size="sm" c="var(--on-surface)">
+                  {step.text}
+                </Text>
+              </Group>
+            ))}
           </Stack>
         </Box>
 
         <Button
           variant="light"
+          leftSection={<ExternalLink size={15} />}
+          className="self-start"
           onClick={() => {
             void openUrl("https://github.com/deanxv/cc-switch").catch((err) => {
               toast.error("无法打开链接", { description: String(err) });
@@ -741,30 +883,43 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
       <Card className="ui-surface-card" p="sm">
         <Stack gap="xs">
           <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-            <Box className="min-w-0 flex-1">
-              <Group gap="xs" mb={4}>
-                <Text size="sm" fw={500} c="var(--on-surface)">
-                  cc-switch 数据库
+            <Group gap="sm" align="center" wrap="nowrap" className="min-w-0 flex-1">
+              <IconTile icon={Database} tone="primary" variant="solid" size={36} />
+              <Box className="min-w-0 flex-1">
+                <Group gap="xs" mb={2} align="center">
+                  <Text size="sm" fw={600} c="var(--on-surface)">
+                    cc-switch 数据库
+                  </Text>
+                  <ProviderBadge tone={data ? "primary" : "neutral"}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 6,
+                        height: 6,
+                        borderRadius: 999,
+                        marginRight: 5,
+                        backgroundColor: data ? "var(--success)" : "var(--text-muted)",
+                      }}
+                    />
+                    {data ? "已连接" : "未连接"}
+                  </ProviderBadge>
+                </Group>
+                <Text size="xs" c="var(--text-muted)">
+                  只读解析 cc-switch 的供应商配置；密钥已脱敏，留空使用默认路径
+                  ~/.cc-switch/cc-switch.db。
                 </Text>
-                <ProviderBadge tone={data ? "primary" : "neutral"}>
-                  {data ? "已连接" : "未连接"}
-                </ProviderBadge>
-              </Group>
-              <Text size="xs" c="var(--text-muted)">
-                只读解析 cc-switch 的供应商配置；密钥已脱敏，留空使用默认路径
-                ~/.cc-switch/cc-switch.db。
-              </Text>
-            </Box>
+              </Box>
+            </Group>
             <Group gap="xs" className="shrink-0">
-              <Button size="compact-sm" variant="default" onClick={() => void pickDbFile()}>
+              <Button size="compact-sm" variant="default" leftSection={<FolderOpen size={14} />} onClick={() => void pickDbFile()}>
                 选择文件
               </Button>
               {ccSwitchDbPath && (
-                <Button size="compact-sm" variant="subtle" color="gray" onClick={() => void resetDbPath()}>
+                <Button size="compact-sm" variant="subtle" color="gray" leftSection={<Undo2 size={14} />} onClick={() => void resetDbPath()}>
                   使用默认路径
                 </Button>
               )}
-              <Button size="compact-sm" variant="default" onClick={() => void loadProviders(true)} loading={loading}>
+              <Button size="compact-sm" variant="default" leftSection={<RefreshCw size={14} />} onClick={() => void loadProviders(true)} loading={loading}>
                 刷新
               </Button>
             </Group>
