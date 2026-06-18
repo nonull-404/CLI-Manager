@@ -705,9 +705,28 @@ fn ensure_child_object<'a>(
 }
 
 fn build_command(exe: &str, source: &str, event: &str) -> String {
-    // 注册命令直接指向本应用二进制的隐藏子命令，跨平台一致；
-    // exe 路径可能含空格（如 macOS .app bundle），统一用双引号包裹。
+    if is_windows_native_exe_path(exe) {
+        let exe = escape_powershell_single_quoted(exe);
+        return format!(
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& '{exe}' {HOOK_COMMAND_MARKER} --source {source} --event {event}\""
+        );
+    }
+
+    // WSL/POSIX 环境继续交给 shell 执行，保持历史格式不变。
     format!("\"{exe}\" {HOOK_COMMAND_MARKER} --source {source} --event {event}")
+}
+
+fn is_windows_native_exe_path(exe: &str) -> bool {
+    let bytes = exe.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || exe.starts_with(r"\\")
+}
+
+fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn cli_manager_exe() -> Result<String, String> {
@@ -841,6 +860,48 @@ mod tests {
         assert!(!settings.contains(".ps1"));
         assert!(settings.contains(HOOK_COMMAND_MARKER));
         assert!(!hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME).is_file());
+    }
+
+    #[test]
+    fn build_command_wraps_windows_native_path_for_powershell() {
+        let command = build_command(
+            r"D:\Program Files\CLI-Manager\cli-manager.exe",
+            "codex",
+            "SessionStart",
+        );
+
+        assert_eq!(
+            command,
+            r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "& 'D:\Program Files\CLI-Manager\cli-manager.exe' __hook --source codex --event SessionStart""#
+        );
+    }
+
+    #[test]
+    fn build_command_escapes_powershell_single_quote_in_windows_path() {
+        let command = build_command(
+            r"D:\Program Files\CLI-Manager's\cli-manager.exe",
+            "claude",
+            "Stop",
+        );
+
+        assert_eq!(
+            command,
+            r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "& 'D:\Program Files\CLI-Manager''s\cli-manager.exe' __hook --source claude --event Stop""#
+        );
+    }
+
+    #[test]
+    fn build_command_keeps_wsl_mnt_path_shell_format() {
+        let command = build_command(
+            "/mnt/d/Program Files/CLI-Manager/cli-manager.exe",
+            "codex",
+            "SessionStart",
+        );
+
+        assert_eq!(
+            command,
+            "\"/mnt/d/Program Files/CLI-Manager/cli-manager.exe\" __hook --source codex --event SessionStart"
+        );
     }
 
     #[cfg(windows)]
