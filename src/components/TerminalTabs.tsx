@@ -906,6 +906,7 @@ function PaneLeafView({
             <XTermTerminal
               sessionId={session.id}
               isActive={!historyActive && session.id === activeSessionId}
+              isVisible={!historyActive && session.id === pane.activeSessionId}
               fontSize={fontSize}
               fontFamily={fontFamily}
               resolvedTheme={resolvedTheme}

@@ -13,6 +13,11 @@
 
 - 修复环境变量卡片中长变量名（如 `ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME`）与右上角复制按钮重叠的问题：`.prov-env-key` 增加 `overflow-wrap: anywhere` / `word-break: break-word` 允许长 key 换行，复制按钮加 `shrink-0` 固定不被压缩。
 
+### 终端分屏输出修复
+
+- 修复左右 / 上下分屏时，非聚焦一侧终端停止实时输出、需重新点击该侧才恢复刷新的问题。根因是输出渲染门控复用了「全局聚焦会话」判断：分屏下两个 pane 同时可见，却只有被聚焦的一个被判为活跃，另一侧的 PTY 输出被暂存进后台 ring buffer（点击激活才 flush）。
+- 现将终端的实时输出渲染与尺寸自适应改由「在所属 pane 内可见」判定（新增 `isVisible`）驱动，键盘 / 光标 / 输入法仍跟随「全局聚焦」（`isActive`）；后台 Tab（`display:none`）的省渲染缓冲机制保持不变。
+
 ## [V1.1.3] - 2026-06-18
 
 ### 厂商品牌图标全面接入
