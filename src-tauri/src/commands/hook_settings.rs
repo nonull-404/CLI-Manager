@@ -142,7 +142,7 @@ pub async fn hook_settings_select_dir(
 }
 
 fn install_claude_hooks(claude_dir: &Path) -> Result<(), String> {
-    let exe = cli_manager_exe()?;
+    let exe = hook_exe_for_dir(claude_dir)?;
     let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
     let mut settings = read_json(&settings_path)?;
     ensure_root_object(&settings, "settings.json")?;
@@ -198,7 +198,7 @@ fn uninstall_claude_hooks(claude_dir: &Path) -> Result<(), String> {
 }
 
 fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
-    let exe = cli_manager_exe()?;
+    let exe = hook_exe_for_dir(codex_dir)?;
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let mut settings = read_json(&hooks_path)?;
     ensure_root_object(&settings, "hooks.json")?;
@@ -396,8 +396,8 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
 
     let hooks_dir = claude_dir.join("hooks");
     let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
-    // 新方案不再有脚本文件，可执行体可解析即视为"脚本就绪"，命令是否注册才是关键。
-    let exe = cli_manager_exe().ok();
+    // 目标目录在 WSL 时，注册命令的 exe 须用 /mnt 形式，否则 Linux shell 执行报 not found
+    let exe = hook_exe_for_dir(&claude_dir).ok();
     let settings = read_json_if_exists(&settings_path)?;
     let registered = |event: &str| {
         exe.as_deref().is_some_and(|exe| {
@@ -433,7 +433,7 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
     let hooks_dir = codex_dir.join("hooks");
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
-    let exe = cli_manager_exe().ok();
+    let exe = hook_exe_for_dir(&codex_dir).ok();
     let settings = read_json_if_exists(&hooks_path)?;
     let registered = |event: &str| {
         exe.as_deref().is_some_and(|exe| {
@@ -716,6 +716,18 @@ fn cli_manager_exe() -> Result<String, String> {
         .map_err(|e| format!("获取程序路径失败: {e}"))
 }
 
+/// 返回写入 hook 命令时应使用的 exe 路径：目标配置目录在 WSL（`\\wsl.localhost\...`）时
+/// 转成 `/mnt/<盘>/...` 形式，使 Linux shell 能执行；否则用原生 Windows 路径。
+fn hook_exe_for_dir(config_dir: &Path) -> Result<String, String> {
+    let exe = cli_manager_exe()?;
+    if crate::wsl::is_wsl_config_dir(&path_to_string(config_dir)) {
+        crate::wsl::windows_path_to_wsl(&exe)
+            .ok_or_else(|| format!("无法将程序路径转换为 WSL 形式: {exe}"))
+    } else {
+        Ok(exe)
+    }
+}
+
 /// 删除历史遗留的 PowerShell hook 脚本（若存在）；新方案不再写脚本文件。
 fn cleanup_legacy_scripts(hooks_dir: &Path, scripts: &[&str]) {
     for name in scripts {
@@ -829,5 +841,20 @@ mod tests {
         assert!(!settings.contains(".ps1"));
         assert!(settings.contains(HOOK_COMMAND_MARKER));
         assert!(!hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME).is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hook_exe_for_dir_uses_mnt_form_for_wsl_target() {
+        let native = cli_manager_exe().unwrap();
+        // WSL/UNC 目标：exe 转 /mnt 形式
+        let wsl_exe =
+            hook_exe_for_dir(Path::new(r"\\wsl.localhost\Ubuntu-22.04\home\me\.claude")).unwrap();
+        assert!(wsl_exe.starts_with("/mnt/"), "got {wsl_exe}");
+        // 普通 Windows 目标：保持原生路径
+        assert_eq!(
+            hook_exe_for_dir(Path::new(r"C:\Users\me\.claude")).unwrap(),
+            native
+        );
     }
 }

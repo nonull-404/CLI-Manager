@@ -1,5 +1,14 @@
 # Changelog
 
+## [V1.1.6] - 2026-06-18
+
+### WSL Hook 与历史会话支持
+
+- WSL 终端启动时自动通过 `WSLENV` 转发 `CLI_MANAGER_TAB_ID`、`CLI_MANAGER_NOTIFY_PORT` 与 `CLI_MANAGER_NOTIFY_TOKEN`，修复 Claude/Codex 在 WSL 内运行时 Hook 回调环境变量丢失、实时状态无法回传的问题。
+- Hook 安装逻辑支持 WSL 配置目录：当 Claude/Codex 配置目录位于 `\\wsl.localhost\...` 或 `\\wsl$\...` 时，写入的 CLI-Manager 可执行路径会转换为 `/mnt/<drive>/...` 形式，避免 Linux shell 执行 Windows 路径失败。
+- Hook 设置页新增 Claude/Codex 配置目录手动输入框，可直接粘贴 WSL UNC 路径，作为系统选目录弹窗无法顺畅选择 WSL 目录时的兜底。
+- 历史会话项目匹配支持 Windows 路径与 WSL `/mnt/<drive>/...` 路径互通，修复同一项目在 WSL 内产生的 Claude 会话无法归入对应 Windows 项目历史/统计的问题。
+
 ## [V1.1.5] - 2026-06-18
 
 ### Git 变更面板：推送 / 拉取与暂存模型重构

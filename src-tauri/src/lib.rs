@@ -8,6 +8,7 @@ mod pty;
 mod shell_resolver;
 mod sync;
 mod webdav;
+mod wsl;
 
 use log::LevelFilter;
 use tauri::{

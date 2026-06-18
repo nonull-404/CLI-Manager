@@ -98,6 +98,50 @@ impl PtyManager {
             .unwrap_or(false)
     }
 
+    /// 让 hook 回调环境变量跨进 WSL：把它们追加进 WSLENV（无 flag = Win↔WSL 双向共享），
+    /// 既进 Linux shell，又能在 claude 经 interop 调 Windows 端 cli-manager.exe 时回传。
+    /// 合并已有 WSLENV（注入批次或进程环境），不覆盖用户原有项。
+    fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>) {
+        const FORWARD: [&str; 3] = [
+            "CLI_MANAGER_TAB_ID",
+            "CLI_MANAGER_NOTIFY_PORT",
+            "CLI_MANAGER_NOTIFY_TOKEN",
+        ];
+        let present: Vec<&str> = FORWARD
+            .iter()
+            .copied()
+            .filter(|key| env_vars.contains_key(*key))
+            .collect();
+        if present.is_empty() {
+            return;
+        }
+
+        let mut entries: Vec<String> = env_vars
+            .get("WSLENV")
+            .cloned()
+            .or_else(|| std::env::var("WSLENV").ok())
+            .map(|existing| {
+                existing
+                    .split(':')
+                    .filter(|item| !item.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for key in present {
+            // WSLENV 项可能带 /u /w 等 flag，比对名字部分去重
+            let already = entries
+                .iter()
+                .any(|entry| entry.split('/').next() == Some(key));
+            if !already {
+                entries.push(key.to_string());
+            }
+        }
+
+        env_vars.insert("WSLENV".to_string(), entries.join(":"));
+    }
+
     fn powershell_runtime_monitor_args() -> Vec<String> {
         // 标准 FinalTerm OSC 133 shell integration（前端 XTermTerminal 原始流解析）：
         //   D[;exit] = 命令结束（无 exit 表示没跑命令：空回车 / prompt 处 Ctrl+C）
@@ -250,6 +294,13 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         let mut env_vars = env_vars;
         if shell_key == "cmd" && Self::shell_runtime_monitoring_enabled(env_vars.as_ref()) {
             Self::apply_cmd_prompt_integration(env_vars.get_or_insert_with(HashMap::new));
+        }
+        // WSL：wsl.exe 把 cwd 自动映射到 /mnt，但 cmd.env 设的是 Windows 进程环境，
+        // 不经 WSLENV 不会进 Linux shell，导致 hook 回调变量丢失。
+        if shell_key == "wsl" {
+            if let Some(vars) = env_vars.as_mut() {
+                Self::apply_wsl_env_forwarding(vars);
+            }
         }
         let (exe, args) = Self::build_shell_args(shell_key, env_vars.as_ref()).map_err(|e| {
             error!(
@@ -522,3 +573,45 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         self.statuses.lock().unwrap().clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wsl_env_forwarding_adds_callback_vars_and_keeps_existing() {
+        let mut vars = HashMap::new();
+        vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
+        vars.insert("CLI_MANAGER_NOTIFY_PORT".to_string(), "1".to_string());
+        vars.insert("CLI_MANAGER_NOTIFY_TOKEN".to_string(), "x".to_string());
+        // 预置 WSLENV，函数应合并而非覆盖（也避免读到进程环境，保证确定性）
+        vars.insert("WSLENV".to_string(), "FOO/u".to_string());
+
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+
+        let wslenv = vars.get("WSLENV").unwrap();
+        assert!(wslenv.contains("FOO/u"));
+        assert!(wslenv.contains("CLI_MANAGER_TAB_ID"));
+        assert!(wslenv.contains("CLI_MANAGER_NOTIFY_PORT"));
+        assert!(wslenv.contains("CLI_MANAGER_NOTIFY_TOKEN"));
+    }
+
+    #[test]
+    fn wsl_env_forwarding_is_noop_without_callback_vars() {
+        let mut vars = HashMap::new();
+        vars.insert("WSLENV".to_string(), "FOO/u".to_string());
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        // 无回调变量时不应改动 WSLENV
+        assert_eq!(vars.get("WSLENV").unwrap(), "FOO/u");
+    }
+
+    #[test]
+    fn wsl_env_forwarding_no_duplicate_when_already_listed() {
+        let mut vars = HashMap::new();
+        vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
+        vars.insert("WSLENV".to_string(), "CLI_MANAGER_TAB_ID".to_string());
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        assert_eq!(vars.get("WSLENV").unwrap(), "CLI_MANAGER_TAB_ID");
+    }
+}
+

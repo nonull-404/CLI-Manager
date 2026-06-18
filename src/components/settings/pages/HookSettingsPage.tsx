@@ -278,6 +278,22 @@ export function HookSettingsPage() {
     }
   };
 
+  // 手动粘贴配置目录（支持 WSL UNC，如 \\wsl.localhost\Ubuntu-22.04\home\<用户名>\.claude）。
+  // 原生选目录弹窗进 WSL 路径体验差，故提供文本输入兜底。
+  const handleManualClaudeDirCommit = async (raw: string) => {
+    const dir = raw.trim() || null;
+    setSelectedDir(dir);
+    await updateSetting("claudeHookConfigDir", dir);
+    await refreshStatus(dir ?? undefined, codexSelectedDirArg);
+  };
+
+  const handleManualCodexDirCommit = async (raw: string) => {
+    const dir = raw.trim() || null;
+    setCodexSelectedDir(dir);
+    await updateSetting("codexHookConfigDir", dir);
+    await refreshStatus(selectedDirArg, dir ?? undefined);
+  };
+
   const handleClaudeInstall = async () => {
     setClaudeWorking(true);
     try {
@@ -439,7 +455,7 @@ export function HookSettingsPage() {
                 Claude Code Hook 桥接
               </Text>
               <Text mt={4} size="xs" c="var(--on-surface-variant)">
-                Claude Code 的运行中、待审批、完成和异常退出状态通过 Hook 脚本上报；普通 shell 命令由通用 Shell 运行监控补充。
+                Claude Code 的运行中、待审批、完成和异常退出状态通过 Hook 上报；普通 shell 命令由通用 Shell 运行监控补充。
               </Text>
             </Box>
             <StatusPill status={claudeStatus} />
@@ -514,19 +530,13 @@ export function HookSettingsPage() {
                       <Group gap="xs">
                         <FileCode size={12} style={{ color: "var(--text-muted)" }} />
                         <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          notify-cli-manager-approval.ps1
-                        </Text>
-                      </Group>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          notify-cli-manager-finished.ps1
+                          settings.json 注册 __hook 命令
                         </Text>
                       </Group>
                       <Group gap="xs">
                         <FileCode size={12} style={{ color: "var(--text-muted)" }} />
                         <Text size="xs" c="var(--on-surface-variant)">
-                          合并修改 settings.json
+                          指向本程序，跨平台无需脚本
                         </Text>
                       </Group>
                     </Stack>
@@ -545,8 +555,8 @@ export function HookSettingsPage() {
                       <Text size="xs" c="var(--on-surface-variant)">
                         • 用户自己的 hooks
                       </Text>
-                      <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                        • notify.ps1 (旧版)
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        • 其它工具注册的 hook 命令
                       </Text>
 
                     </Stack>
@@ -555,6 +565,19 @@ export function HookSettingsPage() {
               </Stack>
             </Card>
           )}
+
+          <TextInput
+            size="xs"
+            label="Claude 配置目录（可手动粘贴，支持 WSL UNC）"
+            placeholder="\\wsl.localhost\Ubuntu-22.04\home\用户名\.claude"
+            value={selectedDir ?? ""}
+            onChange={(e) => setSelectedDir(e.currentTarget.value || null)}
+            onBlur={(e) => void handleManualClaudeDirCommit(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handleManualClaudeDirCommit(e.currentTarget.value);
+            }}
+            disabled={loading || claudeWorking || codexWorking}
+          />
 
           <Group gap="xs">
             <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking}>
@@ -581,7 +604,7 @@ export function HookSettingsPage() {
                 Codex CLI Hook 桥接
               </Text>
               <Text mt={4} size="xs" c="var(--on-surface-variant)">
-                Codex 的运行中、待审批和完成状态通过 Hook 脚本上报；普通 shell 命令由通用 Shell 运行监控补充。
+                Codex 的运行中、待审批和完成状态通过 Hook 上报；普通 shell 命令由通用 Shell 运行监控补充。
               </Text>
             </Box>
             <StatusPill status={codexStatus} />
@@ -662,13 +685,13 @@ export function HookSettingsPage() {
                       <Group gap="xs">
                         <FileCode size={12} style={{ color: "var(--text-muted)" }} />
                         <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          ~/.codex/hooks.json
+                          hooks.json 注册 __hook 命令
                         </Text>
                       </Group>
                       <Group gap="xs">
-                        <Folder size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          ~/.codex/hooks/ 下的 CLI-Manager 脚本
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)">
+                          指向本程序，跨平台无需脚本
                         </Text>
                       </Group>
                       <Group gap="xs">
@@ -702,6 +725,19 @@ export function HookSettingsPage() {
               </Stack>
             </Card>
           )}
+
+          <TextInput
+            size="xs"
+            label="Codex 配置目录（可手动粘贴，支持 WSL UNC）"
+            placeholder="\\wsl.localhost\Ubuntu-22.04\home\用户名\.codex"
+            value={codexSelectedDir ?? ""}
+            onChange={(e) => setCodexSelectedDir(e.currentTarget.value || null)}
+            onBlur={(e) => void handleManualCodexDirCommit(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handleManualCodexDirCommit(e.currentTarget.value);
+            }}
+            disabled={loading || claudeWorking || codexWorking}
+          />
 
           <Group gap="xs">
             <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking}>

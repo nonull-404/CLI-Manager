@@ -2329,16 +2329,38 @@ fn claude_project_key_from_path(path: &str) -> String {
 }
 
 fn session_matches_project_path(file_ref: &SessionFileRef, target_project_path: &str) -> bool {
-    if file_ref.source == "claude" && file_ref.project_key.to_lowercase() == claude_project_key_from_path(target_project_path) {
-        return true;
+    // 目标项目路径可能是 Windows 形式（D:\..），而 claude 在 WSL 内按 Linux cwd
+    // (/mnt/d/..) 编码会话目录，故同时尝试 Windows 与 WSL 两种形式——二者指向同一物理
+    // 目录，任一命中即视为同项目。target_project_path 已被 normalize_history_path 归一化。
+    let wsl_target = crate::wsl::windows_path_to_wsl(target_project_path);
+
+    if file_ref.source == "claude" {
+        let key = file_ref.project_key.to_lowercase();
+        if key == claude_project_key_from_path(target_project_path) {
+            return true;
+        }
+        if let Some(wsl_target) = wsl_target.as_deref() {
+            if key == claude_project_key_from_path(wsl_target) {
+                return true;
+            }
+        }
     }
 
     let scan = get_or_scan_session_project(&file_ref.path);
     scan.cwd
         .as_deref()
         .map(normalize_history_path)
-        .map(|cwd| cwd == target_project_path || cwd.starts_with(&format!("{target_project_path}/")))
+        .map(|cwd| {
+            cwd_matches_target(&cwd, target_project_path)
+                || wsl_target
+                    .as_deref()
+                    .is_some_and(|target| cwd_matches_target(&cwd, target))
+        })
         .unwrap_or(false)
+}
+
+fn cwd_matches_target(cwd: &str, target: &str) -> bool {
+    cwd == target || cwd.starts_with(&format!("{target}/"))
 }
 
 fn get_or_scan_session_project(path: &Path) -> SessionProjectScan {
@@ -3634,6 +3656,29 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(err) => err,
         }
+    }
+
+    #[test]
+    fn session_matches_project_path_matches_wsl_encoded_claude_key() {
+        // CLI-Manager 项目为 Windows 路径，claude 在 WSL 内按 /mnt/d 编码出此目录名（现场真实值）
+        let file_ref = SessionFileRef {
+            source: "claude".to_string(),
+            project_key: "-mnt-d-work-pythonProject-CLI-Manager".to_string(),
+            path: PathBuf::from("dummy.jsonl"),
+        };
+        let target = normalize_history_path(r"D:\work\pythonProject\CLI-Manager");
+        assert!(session_matches_project_path(&file_ref, &target));
+    }
+
+    #[test]
+    fn session_matches_project_path_rejects_unrelated_claude_key() {
+        let file_ref = SessionFileRef {
+            source: "claude".to_string(),
+            project_key: "-mnt-d-some-other-project".to_string(),
+            path: PathBuf::from("nonexistent-xyz-key.jsonl"),
+        };
+        let target = normalize_history_path(r"D:\work\pythonProject\CLI-Manager");
+        assert!(!session_matches_project_path(&file_ref, &target));
     }
 
     #[test]
