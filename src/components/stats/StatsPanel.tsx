@@ -20,7 +20,7 @@ import { TimelineHeatmap } from "./TimelineHeatmap";
 import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
 import { Skeleton } from "../ui/Skeleton";
 import { Portal } from "../ui/Portal";
-import { ACCENT, CHART_TOOLTIP, COST_FILL, PEAK, SERIES_COLORS } from "./statsPalette";
+import { ACCENT, CHART_TOOLTIP, PEAK, SERIES_COLORS } from "./statsPalette";
 
 interface StatsPanelProps {
   open: boolean;
@@ -528,7 +528,8 @@ function DailyUsageTrendChart({
     return {
       backgroundColor: "transparent",
       animationDuration: 650,
-      color: [ACCENT, SERIES_COLORS.input, SERIES_COLORS.output, SERIES_COLORS.cacheCreation],
+      // 固定折线配色：主题语义色在部分主题里 accent≈success 会撞色（总Token 与输入同色），故写死区分。
+      color: ["#4F9DF7", "#46C06A", "#F0617A", "#E8A33D"],
       tooltip: {
         trigger: "axis",
         confine: true,
@@ -547,7 +548,7 @@ function DailyUsageTrendChart({
               return `<div style="display:flex;align-items:center;justify-content:space-between;gap:18px;line-height:22px;"><span>${marker}${name}</span><strong>${display}</strong></div>`;
             })
             .join("");
-          return `<div style="min-width:210px;"><strong>${bucketLabel}</strong>${lineRows}<div style="margin-top:6px;color:var(--text-muted);">缓存命中/写入：${formatCount(day.cache_creation_tokens + day.cache_read_tokens)} · 未定价：${formatCount(day.unpriced_tokens)}</div></div>`;
+          return `<div style="min-width:210px;"><strong>${bucketLabel}</strong>${lineRows}<div style="margin-top:6px;color:var(--text-muted);">未定价：${formatCount(day.unpriced_tokens)}</div></div>`;
         },
       },
       legend: {
@@ -596,22 +597,25 @@ function DailyUsageTrendChart({
           smooth: true,
           symbol: "circle",
           symbolSize: 5,
+          emphasis: { disabled: true },
           lineStyle: { width: 3 },
-          areaStyle: { color: `color-mix(in srgb, ${ACCENT} 16%, transparent)` },
+          areaStyle: { color: "rgba(79,157,247,0.14)" },
           data: items.map((item) =>
             peak?.day_start_utc === item.day_start_utc
-              ? { value: totalTokensOf(item), symbolSize: 12, itemStyle: { color: PEAK, borderColor: "var(--bg-secondary)", borderWidth: 2 } }
+              ? { value: totalTokensOf(item), symbolSize: 12, itemStyle: { color: "#F5C84B", borderColor: "var(--bg-secondary)", borderWidth: 2 } }
               : totalTokensOf(item)
           ),
         },
-        { name: "输入", type: "line", smooth: true, symbol: "none", lineStyle: { width: 1.8 }, data: items.map((item) => item.input_tokens) },
-        { name: "输出", type: "line", smooth: true, symbol: "none", lineStyle: { width: 1.8 }, data: items.map((item) => item.output_tokens) },
+        { name: "输入", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.input_tokens) },
+        { name: "输出", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.output_tokens) },
+        { name: "缓存", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.cache_creation_tokens + item.cache_read_tokens) },
         {
           name: "费用",
           type: "bar",
           yAxisIndex: 1,
           barMaxWidth: 12,
-          itemStyle: { color: COST_FILL, borderRadius: [5, 5, 0, 0] },
+          emphasis: { disabled: true },
+          itemStyle: { color: "rgba(148,163,184,0.32)", borderRadius: [5, 5, 0, 0] },
           data: items.map((item) => Number(item.total_cost_usd.toFixed(4))),
         },
       ],
@@ -705,9 +709,11 @@ function ModelRankingChart({ items }: { items: HistoryStatsModelItem[] }) {
   }, [models]);
 
   return (
-    <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4">
+    <section className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <SectionHeading icon={BarChart3} title="模型用量排行" hint="Top models by Token" />
-      {models.length === 0 ? <EmptyBlock text="当前过滤条件下没有模型 Token 数据。" /> : <EChart option={option} className="h-[300px] w-full" />}
+      <div className="min-h-0 flex-1">
+        {models.length === 0 ? <EmptyBlock text="当前过滤条件下没有模型 Token 数据。" /> : <EChart option={option} className="h-full w-full" />}
+      </div>
     </section>
   );
 }
@@ -721,7 +727,7 @@ function ProjectRanking({ items, selectedProjectKey, onSelectProject, onClearPro
   const topItems = items.slice(0, 8);
   const maxTokens = Math.max(1, ...topItems.map(totalTokensOf));
   return (
-    <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4">
+    <section className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <SectionHeading
         icon={Folder}
         title="项目排行"
@@ -733,40 +739,42 @@ function ProjectRanking({ items, selectedProjectKey, onSelectProject, onClearPro
           ) : undefined
         }
       />
-      {topItems.length === 0 ? (
-        <EmptyBlock text="当前过滤条件下没有项目数据。" />
-      ) : (
-        <div className="space-y-2">
-          {topItems.map((item) => {
-            const selected = item.project_key === selectedProjectKey;
-            const totalTokens = totalTokensOf(item);
-            return (
-              <button
-                key={item.project_key}
-                type="button"
-                onClick={() => onSelectProject(item.project_key)}
-                className="ui-list-row w-full rounded-lg bg-bg-primary px-3 py-2 text-left"
-                aria-pressed={selected}
-                title={`按项目过滤：${item.project_key}`}
-              >
-                <div className="flex items-center justify-between gap-3 text-[12px]">
-                  <span className="truncate font-medium text-text-primary">{item.project_key}</span>
-                  <span className="shrink-0 text-text-muted">{formatCompactCount(totalTokens)} Token · {formatCost(item.total_cost_usd)}</span>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-tertiary">
-                  <div
-                    className="h-full rounded-full"
-                    style={{
-                      width: `${Math.max(4, (totalTokens / maxTokens) * 100)}%`,
-                      backgroundColor: selected ? PEAK : ACCENT,
-                    }}
-                  />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <div className="min-h-0 flex-1 overflow-y-auto ui-thin-scroll pr-1">
+        {topItems.length === 0 ? (
+          <EmptyBlock text="当前过滤条件下没有项目数据。" />
+        ) : (
+          <div className="space-y-2">
+            {topItems.map((item) => {
+              const selected = item.project_key === selectedProjectKey;
+              const totalTokens = totalTokensOf(item);
+              return (
+                <button
+                  key={item.project_key}
+                  type="button"
+                  onClick={() => onSelectProject(item.project_key)}
+                  className="ui-list-row w-full rounded-lg bg-bg-primary px-3 py-2 text-left"
+                  aria-pressed={selected}
+                  title={`按项目过滤：${item.project_key}`}
+                >
+                  <div className="flex items-center justify-between gap-3 text-[12px]">
+                    <span className="truncate font-medium text-text-primary">{item.project_key}</span>
+                    <span className="shrink-0 text-text-muted">{formatCompactCount(totalTokens)} Token · {formatCost(item.total_cost_usd)}</span>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-tertiary">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.max(4, (totalTokens / maxTokens) * 100)}%`,
+                        backgroundColor: selected ? PEAK : ACCENT,
+                      }}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -774,31 +782,33 @@ function ProjectRanking({ items, selectedProjectKey, onSelectProject, onClearPro
 function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
   const maxTokens = Math.max(1, ...items.map(totalTokensOf));
   return (
-    <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4">
+    <section className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <SectionHeading icon={Database} title="来源对比" hint="Claude / Codex" />
-      {items.length === 0 ? (
-        <EmptyBlock text="当前过滤条件下没有来源分布数据。" />
-      ) : (
-        <div className="space-y-2">
-          {items.map((item) => {
-            const totalTokens = totalTokensOf(item);
-            return (
-              <div key={item.source} className="rounded-lg bg-bg-primary px-3 py-2">
-                <div className="flex items-center justify-between gap-3 text-[12px]">
-                  <span className="font-medium text-text-primary">{item.source}</span>
-                  <span className="text-text-muted">{formatCompactCount(totalTokens)} Token · {formatCost(item.total_cost_usd)}</span>
+      <div className="min-h-0 flex-1 overflow-y-auto ui-thin-scroll pr-1">
+        {items.length === 0 ? (
+          <EmptyBlock text="当前过滤条件下没有来源分布数据。" />
+        ) : (
+          <div className="space-y-2">
+            {items.map((item) => {
+              const totalTokens = totalTokensOf(item);
+              return (
+                <div key={item.source} className="rounded-lg bg-bg-primary px-3 py-2">
+                  <div className="flex items-center justify-between gap-3 text-[12px]">
+                    <span className="font-medium text-text-primary">{item.source}</span>
+                    <span className="text-text-muted">{formatCompactCount(totalTokens)} Token · {formatCost(item.total_cost_usd)}</span>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-tertiary">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(4, (totalTokens / maxTokens) * 100)}%`, backgroundColor: ACCENT }} />
+                  </div>
+                  <div className="mt-1 text-[10px] text-text-muted">
+                    输入 {formatCompactCount(item.input_tokens)} · 输出 {formatCompactCount(item.output_tokens)} · 缓存命中/写入 {formatCompactCount(item.cache_creation_tokens + item.cache_read_tokens)}
+                  </div>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-tertiary">
-                  <div className="h-full rounded-full" style={{ width: `${Math.max(4, (totalTokens / maxTokens) * 100)}%`, backgroundColor: ACCENT }} />
-                </div>
-                <div className="mt-1 text-[10px] text-text-muted">
-                  输入 {formatCompactCount(item.input_tokens)} · 输出 {formatCompactCount(item.output_tokens)} · 缓存命中/写入 {formatCompactCount(item.cache_creation_tokens + item.cache_read_tokens)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

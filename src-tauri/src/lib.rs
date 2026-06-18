@@ -226,6 +226,10 @@ pub fn run() {
         .setup(move |app| {
             log::set_max_level(log_level);
             app.manage(claude_hook::ClaudeHookBridge::start(app.handle().clone()));
+            // 注入 appLocalData 目录用于历史索引磁盘缓存（加速冷启动加载）。
+            if let Ok(dir) = app.path().app_local_data_dir() {
+                commands::history::set_history_index_cache_dir(dir);
+            }
             log::info!(
                 "CLI-Manager started (log_level={})",
                 if log_level == LevelFilter::Debug {
