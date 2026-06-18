@@ -352,11 +352,14 @@ export const SHELL_OPTIONS = SHELL_OPTIONS_WINDOWS;
 // Git 相关类型
 export interface GitFileChange {
   path: string;
-  status: "M" | "A" | "D" | "R" | "U" | "??";
+  status: "M" | "A" | "D" | "R" | "U" | "??" | "C";
   staged: boolean;
   added: number;
   deleted: number;
 }
+
+/** 拉取策略：合并 / 变基 / 仅快进（对应后端 git_pull strategy 入参）。 */
+export type GitPullStrategy = "merge" | "rebase" | "ff-only";
 
 export interface GitTreeNode {
   type: "file" | "directory";
@@ -364,4 +367,16 @@ export interface GitTreeNode {
   path: string;
   children?: GitTreeNode[];
   change?: GitFileChange;
+}
+
+// 当前分支与远端跟踪状态（对应后端 git_branch_status）
+export interface GitBranchStatus {
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
+  detached: boolean;
+  /** 进行中的操作："merge" / "rebase"；无则 null。驱动冲突横幅与「中止/继续」入口。 */
+  pendingOp: "merge" | "rebase" | null;
 }

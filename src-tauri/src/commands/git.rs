@@ -1,6 +1,9 @@
 use git2::{Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tauri::{AppHandle, State};
+
+use crate::git_watcher::GitWatcherBridge;
 
 /// 查询指定路径的当前 git 分支
 ///
@@ -96,6 +99,9 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
 
         log::info!("[git_get_changes] 获取到 {} 个状态条目", statuses.len());
 
+        // 一次性构造 repo 级 diff，得到所有文件的真实增删行数，避免逐文件多次 diff。
+        let stats = compute_diff_line_stats(&repo);
+
         let mut changes = Vec::new();
 
         for entry in statuses.iter() {
@@ -109,12 +115,11 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
             // 解析状态
             let (status_char, staged) = parse_git2_status(status);
 
-            // 对于已跟踪文件，尝试获取 diff 统计
-            let (added, deleted) = if status.is_wt_new() {
-                (0, 0) // 新文件暂不统计
-            } else {
-                get_diff_stats_git2(&repo, &file_path, staged)
-            };
+            // 从统计表按归一化路径取真实增删；二进制 / 纯模式变更查不到时为 (0, 0)。
+            let (added, deleted) = stats
+                .get(&normalize_path(&file_path))
+                .copied()
+                .unwrap_or((0, 0));
 
             changes.push(GitFileChange {
                 path: file_path,
@@ -137,6 +142,10 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
 }
 
 fn parse_git2_status(status: git2::Status) -> (&'static str, bool) {
+    // 冲突优先：合并/变基产生的冲突文件，独立标识 "C"，避免被当成普通修改而误提交。
+    if status.is_conflicted() {
+        return ("C", false);
+    }
     // 优先级：INDEX (staged) > WT (worktree)
     if status.is_index_new() {
         return ("A", true);
@@ -167,12 +176,65 @@ fn parse_git2_status(status: git2::Status) -> (&'static str, bool) {
     ("M", false) // 默认
 }
 
-fn get_diff_stats_git2(repo: &Repository, file_path: &str, staged: bool) -> (i32, i32) {
-    // 简化版：仅返回 0，完整实现需要 diff API
-    // 可以通过 repo.diff_tree_to_index / diff_index_to_workdir 获取详细 diff
-    // 此处为了性能和简洁，暂不实现（可后续优化）
-    let _ = (repo, file_path, staged);
-    (0, 0)
+/// 把 git 路径归一化为正斜杠分隔，统一统计表 key 与 status 条目路径（Windows 兼容）。
+fn normalize_path(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+/// 一次性计算仓库内所有变更文件的真实增删行数（相对 HEAD，合并暂存区+工作区+未跟踪）。
+///
+/// 单次 `diff_tree_to_workdir_with_index` + `foreach` 累加，避免逐文件多次 diff 的 N 次扫描。
+/// 二进制文件不进入 line callback，自然为 (0, 0)。失败时降级为空表（统计显示 0，不影响列表）。
+///
+/// # Returns
+/// 路径（正斜杠归一化）→ (新增行数, 删除行数)
+fn compute_diff_line_stats(repo: &Repository) -> std::collections::HashMap<String, (i32, i32)> {
+    use std::collections::HashMap;
+
+    let mut map: HashMap<String, (i32, i32)> = HashMap::new();
+
+    let mut opts = git2::DiffOptions::new();
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+    opts.context_lines(0); // 统计只关心 +/- 行，无需上下文
+
+    // HEAD tree 可能不存在（空仓库 / unborn 分支）：此时与 None tree 比较，全部视为新增。
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+
+    let diff = match repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts)) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[git_get_changes] 构造 diff 失败，行数统计降级为 0: {e}");
+            return map;
+        }
+    };
+
+    let mut file_cb = |_delta: git2::DiffDelta, _progress: f32| true;
+    let mut line_cb =
+        |delta: git2::DiffDelta, _hunk: Option<git2::DiffHunk>, line: git2::DiffLine| {
+            // 删除文件 new_file 可能无路径，回退到 old_file。
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| normalize_path(&p.to_string_lossy()));
+            if let Some(path) = path {
+                let entry = map.entry(path).or_insert((0, 0));
+                // 仅统计真实增删行；上下文 ' '、EOFNL 标记 '>'/'<'/'='、头部 'F'/'H' 忽略。
+                match line.origin() {
+                    '+' => entry.0 += 1,
+                    '-' => entry.1 += 1,
+                    _ => {}
+                }
+            }
+            true
+        };
+
+    if let Err(e) = diff.foreach(&mut file_cb, None, None, Some(&mut line_cb)) {
+        log::warn!("[git_get_changes] 遍历 diff 失败，部分行数可能缺失: {e}");
+    }
+
+    map
 }
 
 /// 获取指定文件的 Git diff 内容
@@ -720,6 +782,603 @@ pub async fn git_revert_lines(
     tokio::task::spawn_blocking(move || apply_patch_to_workdir(&project_path, &reverse_patch))
         .await
         .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 暂存单个文件：worktree 存在 → add_path（新增/修改/未跟踪）；已删除 → remove_path。
+#[tauri::command]
+pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(), String> {
+    validate_repo_relative_path(&file_path)?;
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+        let rel = Path::new(&file_path);
+        if path.join(&file_path).exists() {
+            index.add_path(rel).map_err(|e| format!("stage_failed: {e}"))?;
+        } else {
+            index
+                .remove_path(rel)
+                .map_err(|e| format!("stage_remove_failed: {e}"))?;
+        }
+        index.write().map_err(|e| format!("index_write_failed: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 取消暂存单个文件：有 HEAD → reset 到 HEAD；unborn 分支 → 从 index 移除。
+#[tauri::command]
+pub async fn git_unstage_file(project_path: String, file_path: String) -> Result<(), String> {
+    validate_repo_relative_path(&file_path)?;
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        match repo.head().and_then(|h| h.peel_to_commit()) {
+            Ok(commit) => {
+                repo.reset_default(Some(commit.as_object()), [file_path.as_str()])
+                    .map_err(|e| format!("unstage_failed: {e}"))?;
+            }
+            Err(_) => {
+                // 尚无提交：直接从 index 移除该路径。
+                let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+                index
+                    .remove_path(Path::new(&file_path))
+                    .map_err(|e| format!("unstage_remove_failed: {e}"))?;
+                index.write().map_err(|e| format!("index_write_failed: {e}"))?;
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 全部暂存：add_all 收新增/修改/未跟踪，update_all 补已跟踪文件的删除。
+#[tauri::command]
+pub async fn git_stage_all(project_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .map_err(|e| format!("stage_all_failed: {e}"))?;
+        index
+            .update_all(["*"], None)
+            .map_err(|e| format!("stage_all_update_failed: {e}"))?;
+        index.write().map_err(|e| format!("index_write_failed: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 全部取消暂存：有 HEAD → index 重置为 HEAD tree；unborn → 清空 index。工作区不受影响。
+#[tauri::command]
+pub async fn git_unstage_all(project_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+        match repo.head().and_then(|h| h.peel_to_tree()) {
+            Ok(tree) => {
+                index
+                    .read_tree(&tree)
+                    .map_err(|e| format!("unstage_all_failed: {e}"))?;
+            }
+            Err(_) => {
+                index.clear().map_err(|e| format!("index_clear_failed: {e}"))?;
+            }
+        }
+        index.write().map_err(|e| format!("index_write_failed: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 批量暂存多个文件（目录批量勾选用）：单次 index 写入，避免逐文件往返刷新。
+#[tauri::command]
+pub async fn git_stage_paths(project_path: String, paths: Vec<String>) -> Result<(), String> {
+    for p in &paths {
+        validate_repo_relative_path(p)?;
+    }
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+        for p in &paths {
+            let rel = Path::new(p);
+            if path.join(p).exists() {
+                index.add_path(rel).map_err(|e| format!("stage_failed: {e}"))?;
+            } else {
+                index
+                    .remove_path(rel)
+                    .map_err(|e| format!("stage_remove_failed: {e}"))?;
+            }
+        }
+        index.write().map_err(|e| format!("index_write_failed: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 批量取消暂存多个文件：有 HEAD → 一次 reset_default；unborn → 逐个从 index 移除。
+#[tauri::command]
+pub async fn git_unstage_paths(project_path: String, paths: Vec<String>) -> Result<(), String> {
+    for p in &paths {
+        validate_repo_relative_path(p)?;
+    }
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        match repo.head().and_then(|h| h.peel_to_commit()) {
+            Ok(commit) => {
+                repo.reset_default(Some(commit.as_object()), paths.iter().map(|s| s.as_str()))
+                    .map_err(|e| format!("unstage_failed: {e}"))?;
+            }
+            Err(_) => {
+                let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+                for p in &paths {
+                    index
+                        .remove_path(Path::new(p))
+                        .map_err(|e| format!("unstage_remove_failed: {e}"))?;
+                }
+                index.write().map_err(|e| format!("index_write_failed: {e}"))?;
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 提交已暂存内容。空信息 / 无暂存 / 无 git 身份返回稳定错误。成功返回短 commit id。
+#[tauri::command]
+pub async fn git_commit(project_path: String, message: String) -> Result<String, String> {
+    let msg = message.trim().to_string();
+    if msg.is_empty() {
+        return Err("empty_message".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+
+        let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
+        let tree_oid = index
+            .write_tree()
+            .map_err(|e| format!("write_tree_failed: {e}"))?;
+
+        // HEAD 当前 commit（unborn 时为 None）。
+        let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+
+        // 无暂存内容检测：暂存树与 HEAD 树一致（或 unborn 下 index 为空）→ 拒绝空提交。
+        match &head_commit {
+            Some(c) => {
+                let head_tree_oid = c.tree().map_err(|e| format!("head_tree_failed: {e}"))?.id();
+                if head_tree_oid == tree_oid {
+                    return Err("nothing_staged".to_string());
+                }
+            }
+            None => {
+                if index.is_empty() {
+                    return Err("nothing_staged".to_string());
+                }
+            }
+        }
+
+        let tree = repo
+            .find_tree(tree_oid)
+            .map_err(|e| format!("find_tree_failed: {e}"))?;
+        // 读取 user.name / user.email；缺失给出明确错误供前端引导配置。
+        let sig = repo.signature().map_err(|_| "no_git_identity".to_string())?;
+        let parents: Vec<&git2::Commit> = head_commit.as_ref().map(|c| vec![c]).unwrap_or_default();
+
+        let oid = repo
+            .commit(Some("HEAD"), &sig, &sig, &msg, &tree, &parents)
+            .map_err(|e| format!("commit_failed: {e}"))?;
+
+        Ok(oid.to_string().chars().take(7).collect::<String>())
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 仅提交指定路径（pathspec / `git commit --only -- <paths>`）。
+///
+/// 用于「选中部分文件提交」：未列入的已暂存文件（如取消勾选但保持跟踪的新增文件）
+/// 不会被提交，且保持其暂存状态不变。shell out 系统 git 以获得 --only 语义。
+#[tauri::command]
+pub async fn git_commit_paths(
+    project_path: String,
+    message: String,
+    paths: Vec<String>,
+) -> Result<String, String> {
+    let msg = message.trim().to_string();
+    if msg.is_empty() {
+        return Err("empty_message".to_string());
+    }
+    if paths.is_empty() {
+        return Err("nothing_staged".to_string());
+    }
+    for p in &paths {
+        validate_repo_relative_path(p)?;
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut args: Vec<&str> = vec!["commit", "-m", &msg, "--"];
+        for p in &paths {
+            args.push(p.as_str());
+        }
+        match run_git_cli(&project_path, &args) {
+            Ok(_) => run_git_cli(&project_path, &["rev-parse", "--short", "HEAD"]),
+            Err(e) => {
+                let low = e.to_lowercase();
+                if low.contains("who you are") || low.contains("identity") || low.contains("user.email") {
+                    Err("no_git_identity".to_string())
+                } else if low.contains("nothing to commit") || low.contains("no changes added") {
+                    Err("nothing_staged".to_string())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 当前分支与远端跟踪状态（只读，git2）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchStatus {
+    /// 分支短名（如 "main"）；detached HEAD 或 unborn 时为 None。
+    pub branch: Option<String>,
+    /// upstream 全名（如 "origin/main"）；无跟踪时为 None。
+    pub upstream: Option<String>,
+    /// 本地领先 upstream 的提交数（待推送）。
+    pub ahead: usize,
+    /// 本地落后 upstream 的提交数（待拉取）。
+    pub behind: usize,
+    /// 是否已配置 upstream 跟踪分支。
+    pub has_upstream: bool,
+    /// 是否处于 detached HEAD。
+    pub detached: bool,
+    /// 进行中的操作："merge" / "rebase"；无则 None。驱动前端冲突横幅与「中止/继续」入口。
+    pub pending_op: Option<String>,
+}
+
+/// 查询当前分支名、upstream 及 ahead/behind。全只读，不触网。
+///
+/// 边界：非仓库 → 错误；unborn（无提交）→ branch=None 全 0；
+/// detached HEAD → detached=true、branch=None；无 upstream → has_upstream=false、ahead/behind=0。
+#[tauri::command]
+pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+
+        // 进行中的合并/变基（git2 仓库状态）。变基期间 HEAD 通常 detached，
+        // 需在 detached 早返回前计算，避免漏报。
+        let pending_op = match repo.state() {
+            git2::RepositoryState::Merge => Some("merge".to_string()),
+            git2::RepositoryState::Rebase
+            | git2::RepositoryState::RebaseInteractive
+            | git2::RepositoryState::RebaseMerge => Some("rebase".to_string()),
+            _ => None,
+        };
+
+        let empty = GitBranchStatus {
+            branch: None,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            has_upstream: false,
+            detached: false,
+            pending_op: pending_op.clone(),
+        };
+
+        // HEAD 不存在 → unborn 分支（尚无提交）。
+        let head = match repo.head() {
+            Ok(h) => h,
+            Err(_) => return Ok(empty),
+        };
+
+        let detached = repo.head_detached().unwrap_or(false);
+        let branch = head.shorthand().map(|s| s.to_string());
+        let local_oid = head.target();
+
+        if detached {
+            return Ok(GitBranchStatus {
+                branch: None,
+                detached: true,
+                ..empty
+            });
+        }
+
+        // 查 upstream 与 ahead/behind。
+        let mut upstream = None;
+        let mut ahead = 0usize;
+        let mut behind = 0usize;
+        let mut has_upstream = false;
+
+        if let Some(shorthand) = head.shorthand() {
+            if let Ok(local_branch) = repo.find_branch(shorthand, git2::BranchType::Local) {
+                if let Ok(up) = local_branch.upstream() {
+                    has_upstream = true;
+                    if let Ok(Some(name)) = up.name() {
+                        upstream = Some(name.to_string());
+                    }
+                    if let (Some(local), Some(up_oid)) = (local_oid, up.get().target()) {
+                        if let Ok((a, b)) = repo.graph_ahead_behind(local, up_oid) {
+                            ahead = a;
+                            behind = b;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(GitBranchStatus {
+            branch,
+            upstream,
+            ahead,
+            behind,
+            has_upstream,
+            detached: false,
+            pending_op,
+        })
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 把 git stderr 映射为稳定错误码 + 原始片段，供前端 toast 展示。
+/// 形如 "not_fast_forward: <git 原文>"。
+fn map_git_cli_error(stderr: &str) -> String {
+    let s = stderr.to_lowercase();
+    let code = if s.contains("authentication failed")
+        || s.contains("could not read username")
+        || s.contains("could not read password")
+        || s.contains("permission denied")
+        || s.contains("invalid username or password")
+    {
+        "auth_failed"
+    } else if s.contains("non-fast-forward")
+        || s.contains("fetch first")
+        || s.contains("updates were rejected")
+        || s.contains("[rejected]")
+        || s.contains("not possible to fast-forward")
+        || s.contains("diverging")
+        || s.contains("divergent")
+    {
+        "not_fast_forward"
+    } else if s.contains("no upstream") || s.contains("has no upstream") {
+        "no_upstream"
+    } else if s.contains("could not read from remote")
+        || s.contains("does not appear to be a git repository")
+        || s.contains("no configured push destination")
+        || s.contains("no such remote")
+        || s.contains("'origin' does not appear")
+    {
+        "no_remote"
+    } else {
+        "git_failed"
+    };
+    let snippet: String = stderr.trim().chars().take(300).collect();
+    format!("{code}: {snippet}")
+}
+
+/// shell out 系统 `git` 执行网络操作，继承用户凭据管理器 / SSH / git config 代理。
+/// 用 args 数组（非 shell）避免注入；成功返回合并输出，失败返回映射错误码。
+fn run_git_cli(project_path: &str, args: &[&str]) -> Result<String, String> {
+    let path = Path::new(project_path);
+    if !path.exists() {
+        return Err("path_not_found".to_string());
+    }
+    let output = std::process::Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "git_not_found".to_string()
+            } else {
+                format!("spawn_failed: {e}")
+            }
+        })?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        Ok(format!("{stdout}{stderr}").trim().to_string())
+    } else {
+        Err(map_git_cli_error(&stderr))
+    }
+}
+
+/// 校验分支名安全：非空、不以 '-' 开头（防被当作 git flag）、无空白/控制字符。
+fn validate_branch_name(branch: &str) -> Result<(), String> {
+    if branch.is_empty() {
+        return Err("empty_branch".into());
+    }
+    if branch.starts_with('-') {
+        return Err("invalid_branch".into());
+    }
+    if branch.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("invalid_branch".into());
+    }
+    Ok(())
+}
+
+/// 推送当前分支。set_upstream=true 时 `push -u origin <branch>` 建立跟踪。
+/// shell out 系统 git；失败错误码见 map_git_cli_error。
+#[tauri::command]
+pub async fn git_push(
+    project_path: String,
+    set_upstream: bool,
+    branch: Option<String>,
+) -> Result<String, String> {
+    if set_upstream {
+        let b = branch.clone().ok_or_else(|| "empty_branch".to_string())?;
+        validate_branch_name(&b)?;
+    }
+    tokio::task::spawn_blocking(move || {
+        if set_upstream {
+            let b = branch.unwrap();
+            run_git_cli(&project_path, &["push", "-u", "origin", &b])
+        } else {
+            run_git_cli(&project_path, &["push"])
+        }
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 把拉取策略映射为 git 参数。
+/// - merge：`--no-rebase`，可快进时自动快进，分叉时生成合并提交（`--no-edit` 用默认信息免编辑器挂起）。
+/// - rebase：`--rebase`，把本地提交变基到远端之上，保持线性历史。
+/// - ff-only：仅快进，分叉则失败（保留旧行为）。
+/// merge/rebase 均加 `--autostash`：拉取前自动暂存脏工作区、完成后恢复；冲突中止时一并恢复，绝不静默丢改动。
+fn pull_args(strategy: &str) -> Result<Vec<&'static str>, String> {
+    match strategy {
+        "merge" => Ok(vec!["pull", "--no-rebase", "--no-edit", "--autostash"]),
+        "rebase" => Ok(vec!["pull", "--rebase", "--autostash"]),
+        "ff-only" => Ok(vec!["pull", "--ff-only"]),
+        _ => Err("invalid_strategy".to_string()),
+    }
+}
+
+/// 执行 git 子命令并区分「冲突」与普通失败。合并/变基的冲突提示多写到 stdout，
+/// 故合并 stdout+stderr 检测；命中 → 稳定错误码 `pull_conflict`（前端引导解决/继续/中止），
+/// 否则回退通用错误映射。成功返回合并输出。
+fn run_git_conflict_aware(project_path: &str, args: &[&str]) -> Result<String, String> {
+    let path = Path::new(project_path);
+    if !path.exists() {
+        return Err("path_not_found".to_string());
+    }
+    let output = std::process::Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "git_not_found".to_string()
+            } else {
+                format!("spawn_failed: {e}")
+            }
+        })?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        return Ok(format!("{stdout}{stderr}").trim().to_string());
+    }
+    let combined = format!("{stdout}\n{stderr}").to_lowercase();
+    if combined.contains("conflict")
+        || combined.contains("automatic merge failed")
+        || combined.contains("could not apply")
+        || combined.contains("needs merge")
+        || combined.contains("fix conflicts")
+    {
+        let snippet: String = format!("{stdout}{stderr}").trim().chars().take(300).collect();
+        return Err(format!("pull_conflict: {snippet}"));
+    }
+    Err(map_git_cli_error(&stderr))
+}
+
+/// 按策略拉取当前分支（merge / rebase / ff-only）。shell out 系统 git，继承凭据/代理/SSH。
+/// 分叉时 merge/rebase 可直接拉取，无需切终端；冲突返回 `pull_conflict`，可经 git_pull_abort 安全回退。
+#[tauri::command]
+pub async fn git_pull(project_path: String, strategy: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let args = pull_args(&strategy)?;
+        run_git_conflict_aware(&project_path, &args)
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 中止进行中的合并/变基，回到拉取前状态（`--autostash` 暂存的改动会一并恢复）。
+/// 依据 git2 仓库状态自动选择 `rebase --abort` 或 `merge --abort`。
+#[tauri::command]
+pub async fn git_pull_abort(project_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&project_path);
+        if !path.exists() {
+            return Err("path_not_found".to_string());
+        }
+        let rebasing = {
+            let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+            matches!(
+                repo.state(),
+                git2::RepositoryState::Rebase
+                    | git2::RepositoryState::RebaseInteractive
+                    | git2::RepositoryState::RebaseMerge
+            )
+        };
+        let args: &[&str] = if rebasing {
+            &["rebase", "--abort"]
+        } else {
+            &["merge", "--abort"]
+        };
+        run_git_cli(&project_path, args)
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 变基冲突解决并暂存后继续变基。`-c core.editor=true` 跳过提交信息编辑器避免挂起；
+/// 仍有未解决冲突 → `pull_conflict`，前端维持冲突态。
+#[tauri::command]
+pub async fn git_rebase_continue(project_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        run_git_conflict_aware(
+            &project_path,
+            &["-c", "core.editor=true", "rebase", "--continue"],
+        )
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 开始监听项目目录文件变化（fs-watcher）。失败返回错误，前端据此降级为慢轮询。
+#[tauri::command]
+pub async fn git_watch_start(
+    app_handle: AppHandle,
+    bridge: State<'_, GitWatcherBridge>,
+    project_path: String,
+) -> Result<(), String> {
+    bridge.start(app_handle, project_path)
+}
+
+/// 停止文件监听并释放 watcher。
+#[tauri::command]
+pub async fn git_watch_stop(bridge: State<'_, GitWatcherBridge>) -> Result<(), String> {
+    bridge.stop()
 }
 
 #[cfg(test)]

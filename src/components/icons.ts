@@ -13,6 +13,7 @@ export {
   Cloud,
   Coins,
   Copy,
+  Minus,
   Cpu,
   Database,
   Download,

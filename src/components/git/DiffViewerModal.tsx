@@ -6,6 +6,7 @@ import { parseDiff, Diff, Hunk, tokenize, Decoration, getChangeKey } from "react
 import type { ChangeData } from "react-diff-view";
 import { useGitStore } from "../../stores/gitStore";
 import { TERM } from "../stats/termStatsUi";
+import { refractor, detectLanguage } from "./diffHighlight";
 import "react-diff-view/style/index.css";
 import "./diffViewer.css";
 
@@ -66,13 +67,22 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
       const files = parseDiff(diffText);
       if (files.length > 0) {
         const file = files[0];
+        // 按文件扩展名启用语法高亮；未知语言或高亮失败时回退为无高亮 token，保证 diff 仍可渲染。
+        const language = detectLanguage(fileName);
+        if (language) {
+          try {
+            return { file, tokens: tokenize(file.hunks, { highlight: true, refractor, language }) };
+          } catch (highlightErr) {
+            console.warn("[DiffViewerModal] 语法高亮失败，回退无高亮:", highlightErr);
+          }
+        }
         return { file, tokens: tokenize(file.hunks) };
       }
     } catch (err) {
       console.error("[DiffViewerModal] 解析 diff 失败:", err);
     }
     return null;
-  }, [diffText]);
+  }, [diffText, fileName]);
 
   const parsedDiff = parsed?.file ?? null;
   const tokens = parsed?.tokens ?? null;

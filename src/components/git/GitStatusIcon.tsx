@@ -13,6 +13,7 @@ export const STATUS_CONFIG: Record<
   A: { label: "Added", color: "#9ece6a", symbol: "A" },
   D: { label: "Deleted", color: "#f7768e", symbol: "D" },
   R: { label: "Renamed", color: "#7aa2f7", symbol: "R" },
+  C: { label: "Conflict", color: "#db4b4b", symbol: "C" },
   U: { label: "Untracked", color: "#9aa5ce", symbol: "U" },
   "??": { label: "Untracked", color: "#9aa5ce", symbol: "?" },
 };

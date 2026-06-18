@@ -1,9 +1,12 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsHourlyActivityItem } from "../../lib/types";
 
 interface StatsHourlyActivityChartProps {
   items: HistoryStatsHourlyActivityItem[];
 }
+
+// 单指标固定色：会话(0-3) 与消息(上千) 量级悬殊、不是趋势关系，故只画消息柱，会话进 tooltip/摘要。
+const BAR_COLOR = "#46C06A";
 
 function formatCount(value: number): string {
   if (!Number.isFinite(value)) return "0";
@@ -18,6 +21,20 @@ export const StatsHourlyActivityChart = memo(StatsHourlyActivityChartImpl);
 
 function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) {
   const [activeHour, setActiveHour] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // 响应式宽度：用 ResizeObserver 测容器实际宽度，几何按宽度自适应，铺满容器、无横向滚动条。
+  const [width, setWidth] = useState(620);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const apply = () => setWidth(Math.max(280, el.clientWidth));
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const normalized = useMemo(() => {
     if (items.length === 24) return items;
     const byHour = new Map<number, HistoryStatsHourlyActivityItem>();
@@ -45,31 +62,28 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
   }, [items]);
 
   const chart = useMemo(() => {
-    const width = 620;
     const height = 220;
-    const paddingLeft = 22;
+    const paddingLeft = 28;
     const paddingTop = 14;
     const paddingBottom = 26;
+    const paddingRight = 8;
     const innerHeight = height - paddingTop - paddingBottom;
-    const maxValue = Math.max(
-      1,
-      ...normalized.flatMap((item) => [item.sessions, item.messages])
-    );
-    const groupGap = 2;
-    const groupWidth = 22;
-    const barWidth = Math.floor((groupWidth - groupGap) / 2);
+    const innerWidth = Math.max(0, width - paddingLeft - paddingRight);
+    const maxValue = Math.max(1, ...normalized.map((item) => item.messages));
+    const slotWidth = innerWidth / 24;
+    const barWidth = Math.max(2, slotWidth * 0.6);
     const points = normalized.map((item, index) => {
-      const x = paddingLeft + index * groupWidth;
-      const sessionsHeight = (item.sessions / maxValue) * innerHeight;
-      const messagesHeight = (item.messages / maxValue) * innerHeight;
+      const slotX = paddingLeft + index * slotWidth;
+      const center = slotX + slotWidth / 2;
+      const barHeight = (item.messages / maxValue) * innerHeight;
       return {
         item,
         index,
-        x,
-        sessionsY: paddingTop + innerHeight - sessionsHeight,
-        messagesY: paddingTop + innerHeight - messagesHeight,
-        sessionsHeight,
-        messagesHeight,
+        slotX,
+        center,
+        barX: center - barWidth / 2,
+        barY: paddingTop + innerHeight - barHeight,
+        barHeight,
       };
     });
     return {
@@ -78,24 +92,27 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
       paddingLeft,
       paddingTop,
       paddingBottom,
+      paddingRight,
       innerHeight,
       maxValue,
-      groupWidth,
+      slotWidth,
       barWidth,
       points,
     };
-  }, [normalized]);
+  }, [normalized, width]);
 
   const active = useMemo(() => {
     if (activeHour !== null) {
       const found = normalized.find((item) => item.hour === activeHour);
       if (found) return found;
     }
-    return normalized.find((item) => item.sessions > 0 || item.messages > 0) ?? normalized[0] ?? null;
+    return normalized.find((item) => item.messages > 0 || item.sessions > 0) ?? normalized[0] ?? null;
   }, [activeHour, normalized]);
 
+  const tooltipPoint = activeHour !== null ? chart.points[activeHour] : null;
+
   return (
-    <div className="rounded-xl border border-border/60 bg-bg-secondary p-3">
+    <div className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <div className="mb-2 flex items-center gap-2">
         <div className="text-xs font-semibold text-text-primary">活跃时段分布</div>
         <div className="ml-auto text-[11px] text-text-secondary">
@@ -105,121 +122,125 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
         </div>
       </div>
 
-      {normalized.length === 0 && (
-        <div className="py-8 text-center text-[11px] text-text-muted">
-          当前过滤条件下没有时段数据
-        </div>
-      )}
-
-      {normalized.length > 0 && (
-        <>
-          <div
-            className="overflow-x-auto rounded border border-border bg-bg-primary"
-            onMouseLeave={() => setActiveHour(null)}
-          >
-            <svg
-              width={chart.width}
-              height={chart.height}
-              viewBox={`0 0 ${chart.width} ${chart.height}`}
-              role="img"
-              aria-label="24 小时会话与消息分组柱状图"
-              className="block"
+      <div className="min-h-0 flex-1 overflow-y-auto ui-thin-scroll">
+        {normalized.length === 0 ? (
+          <div className="py-8 text-center text-[11px] text-text-muted">
+            当前过滤条件下没有时段数据
+          </div>
+        ) : (
+          <>
+            <div
+              ref={containerRef}
+              className="relative rounded border border-border bg-bg-primary"
+              onMouseLeave={() => setActiveHour(null)}
             >
-              {[0, 1, 2, 3].map((step) => {
-                const y = chart.paddingTop + (chart.innerHeight * step) / 3;
-                const value = Math.round(((3 - step) * chart.maxValue) / 3);
-                return (
-                  <g key={step}>
-                    <line
-                      x1={chart.paddingLeft}
-                      x2={chart.width - 8}
-                      y1={y}
-                      y2={y}
-                      stroke="var(--border)"
-                      strokeOpacity="0.45"
-                      strokeWidth="1"
+              <svg
+                width="100%"
+                height={chart.height}
+                viewBox={`0 0 ${chart.width} ${chart.height}`}
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="24 小时消息活跃分布柱状图"
+                className="block"
+              >
+                {[0, 1, 2, 3].map((step) => {
+                  const y = chart.paddingTop + (chart.innerHeight * step) / 3;
+                  const value = Math.round(((3 - step) * chart.maxValue) / 3);
+                  return (
+                    <g key={step}>
+                      <line
+                        x1={chart.paddingLeft}
+                        x2={chart.width - chart.paddingRight}
+                        y1={y}
+                        y2={y}
+                        stroke="var(--border)"
+                        strokeOpacity="0.45"
+                        strokeWidth="1"
+                      />
+                      <text x={4} y={y - 2} fill="var(--text-muted)" fontSize="9">
+                        {value}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {chart.points.map((point) => (
+                  <g key={point.item.hour}>
+                    <rect
+                      x={point.barX}
+                      y={point.barY}
+                      width={chart.barWidth}
+                      height={Math.max(1, point.barHeight)}
+                      rx={2}
+                      fill={BAR_COLOR}
+                      fillOpacity={activeHour === point.item.hour ? 1 : 0.86}
                     />
-                    <text x={4} y={y - 2} fill="var(--text-muted)" fontSize="9">
-                      {value}
-                    </text>
+                    {point.item.hour % 3 === 0 && (
+                      <text
+                        x={point.center}
+                        y={chart.height - 8}
+                        textAnchor="middle"
+                        fill="var(--text-muted)"
+                        fontSize="9"
+                      >
+                        {point.item.hour}
+                      </text>
+                    )}
+                    <rect
+                      x={point.slotX}
+                      y={chart.paddingTop}
+                      width={chart.slotWidth}
+                      height={chart.innerHeight}
+                      fill="transparent"
+                      tabIndex={0}
+                      style={{ outline: "none" }}
+                      onMouseEnter={() => setActiveHour(point.item.hour)}
+                      onFocus={() => setActiveHour(point.item.hour)}
+                      onBlur={() => setActiveHour(null)}
+                      aria-label={`${formatHour(point.item.hour)}，${point.item.sessions} 会话，${point.item.messages} 消息`}
+                      data-hour-index={point.index}
+                      onKeyDown={(event) => {
+                        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                        event.preventDefault();
+                        const nextIndex =
+                          event.key === "ArrowRight"
+                            ? Math.min(chart.points.length - 1, point.index + 1)
+                            : Math.max(0, point.index - 1);
+                        const root = event.currentTarget.ownerSVGElement;
+                        const next = root?.querySelector<SVGRectElement>(
+                          `rect[data-hour-index='${nextIndex}']`
+                        );
+                        next?.focus();
+                      }}
+                    />
                   </g>
-                );
-              })}
+                ))}
+              </svg>
 
-              {chart.points.map((point) => (
-                <g key={point.item.hour}>
-                  <rect
-                    x={point.x}
-                    y={point.sessionsY}
-                    width={chart.barWidth}
-                    height={Math.max(1, point.sessionsHeight)}
-                    rx={2}
-                    fill="var(--accent)"
-                    fillOpacity={activeHour === point.item.hour ? 1 : 0.86}
-                  />
-                  <rect
-                    x={point.x + chart.barWidth + 2}
-                    y={point.messagesY}
-                    width={chart.barWidth}
-                    height={Math.max(1, point.messagesHeight)}
-                    rx={2}
-                    fill="var(--success)"
-                    fillOpacity={activeHour === point.item.hour ? 1 : 0.86}
-                  />
-                  {point.item.hour % 3 === 0 && (
-                    <text
-                      x={point.x + chart.groupWidth / 2}
-                      y={chart.height - 8}
-                      textAnchor="middle"
-                      fill="var(--text-muted)"
-                      fontSize="9"
-                    >
-                      {point.item.hour}
-                    </text>
-                  )}
-                  <rect
-                    x={point.x}
-                    y={chart.paddingTop}
-                    width={chart.groupWidth}
-                    height={chart.innerHeight}
-                    fill="transparent"
-                    tabIndex={0}
-                    onMouseEnter={() => setActiveHour(point.item.hour)}
-                    onFocus={() => setActiveHour(point.item.hour)}
-                    onBlur={() => setActiveHour(null)}
-                    aria-label={`${formatHour(point.item.hour)}，${point.item.sessions} 会话，${point.item.messages} 消息`}
-                    data-hour-index={point.index}
-                    onKeyDown={(event) => {
-                      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-                      event.preventDefault();
-                      const nextIndex =
-                        event.key === "ArrowRight"
-                          ? Math.min(chart.points.length - 1, point.index + 1)
-                          : Math.max(0, point.index - 1);
-                      const root = event.currentTarget.ownerSVGElement;
-                      const next = root?.querySelector<SVGRectElement>(
-                        `rect[data-hour-index='${nextIndex}']`
-                      );
-                      next?.focus();
-                    }}
-                  />
-                </g>
-              ))}
-            </svg>
-          </div>
+              {tooltipPoint && (
+                <div
+                  className="pointer-events-none absolute z-10 -translate-x-1/2 rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[11px] shadow-lg"
+                  style={{
+                    left: `${(tooltipPoint.center / chart.width) * 100}%`,
+                    top: 6,
+                  }}
+                >
+                  <div className="font-semibold text-text-primary">{formatHour(tooltipPoint.item.hour)}</div>
+                  <div className="mt-0.5 text-text-secondary">会话 {formatCount(tooltipPoint.item.sessions)}</div>
+                  <div className="text-text-secondary">消息 {formatCount(tooltipPoint.item.messages)}</div>
+                </div>
+              )}
+            </div>
 
-          <div className="mt-1 flex items-center gap-3 text-[10px] text-text-muted">
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--accent)" }} />
-              会话
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--success)" }} />
-              消息
-            </span>
-          </div>
-        </>
-      )}
+            <div className="mt-1 flex items-center gap-3 text-[10px] text-text-muted">
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: BAR_COLOR }} />
+                消息
+              </span>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

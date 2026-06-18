@@ -3,6 +3,7 @@
 mod claude_hook;
 pub mod hook_client;
 mod commands;
+mod git_watcher;
 mod pty;
 mod shell_resolver;
 mod sync;
@@ -226,6 +227,10 @@ pub fn run() {
         .setup(move |app| {
             log::set_max_level(log_level);
             app.manage(claude_hook::ClaudeHookBridge::start(app.handle().clone()));
+            // 注入 appLocalData 目录用于历史索引磁盘缓存（加速冷启动加载）。
+            if let Ok(dir) = app.path().app_local_data_dir() {
+                commands::history::set_history_index_cache_dir(dir);
+            }
             log::info!(
                 "CLI-Manager started (log_level={})",
                 if log_level == LevelFilter::Debug {
@@ -289,6 +294,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(pty::manager::PtyManager::new())
+        .manage(git_watcher::GitWatcherBridge::new())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             SqlBuilder::default()
@@ -346,6 +352,21 @@ pub fn run() {
             commands::git::git_discard_file,
             commands::git::git_revert_hunk,
             commands::git::git_revert_lines,
+            commands::git::git_stage_file,
+            commands::git::git_unstage_file,
+            commands::git::git_stage_all,
+            commands::git::git_unstage_all,
+            commands::git::git_stage_paths,
+            commands::git::git_unstage_paths,
+            commands::git::git_commit,
+            commands::git::git_commit_paths,
+            commands::git::git_branch_status,
+            commands::git::git_push,
+            commands::git::git_pull,
+            commands::git::git_pull_abort,
+            commands::git::git_rebase_continue,
+            commands::git::git_watch_start,
+            commands::git::git_watch_stop,
             commands::model_pricing::model_prices_set_cache,
             commands::model_pricing::model_prices_sync,
         ])

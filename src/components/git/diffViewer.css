@@ -63,3 +63,75 @@
 .diff-viewer-container .diff-split {
   border-left: 1px solid #262626;
 }
+
+/* ── 语法高亮（refractor/Prism token 配色，深色，叠加在 +/- 行底色之上）── */
+.diff-viewer-container .token.comment,
+.diff-viewer-container .token.prolog,
+.diff-viewer-container .token.doctype,
+.diff-viewer-container .token.cdata {
+  color: #6A6A6A;
+  font-style: italic;
+}
+
+.diff-viewer-container .token.punctuation {
+  color: #9AA0A6;
+}
+
+.diff-viewer-container .token.keyword,
+.diff-viewer-container .token.atrule,
+.diff-viewer-container .token.rule {
+  color: #C792EA;
+}
+
+.diff-viewer-container .token.function,
+.diff-viewer-container .token.function-variable {
+  color: #82AAFF;
+}
+
+.diff-viewer-container .token.class-name,
+.diff-viewer-container .token.property,
+.diff-viewer-container .token.attr-name,
+.diff-viewer-container .token.builtin {
+  color: #FFCB6B;
+}
+
+.diff-viewer-container .token.tag,
+.diff-viewer-container .token.selector,
+.diff-viewer-container .token.deleted {
+  color: #F07178;
+}
+
+.diff-viewer-container .token.string,
+.diff-viewer-container .token.char,
+.diff-viewer-container .token.attr-value,
+.diff-viewer-container .token.inserted {
+  color: #C3E88D;
+}
+
+.diff-viewer-container .token.number,
+.diff-viewer-container .token.boolean,
+.diff-viewer-container .token.constant,
+.diff-viewer-container .token.symbol {
+  color: #F78C6C;
+}
+
+.diff-viewer-container .token.operator,
+.diff-viewer-container .token.entity,
+.diff-viewer-container .token.url,
+.diff-viewer-container .token.variable {
+  color: #89DDFF;
+}
+
+.diff-viewer-container .token.regex,
+.diff-viewer-container .token.important {
+  color: #F78C6C;
+}
+
+.diff-viewer-container .token.important,
+.diff-viewer-container .token.bold {
+  font-weight: 600;
+}
+
+.diff-viewer-container .token.italic {
+  font-style: italic;
+}

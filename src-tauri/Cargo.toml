@@ -1,6 +1,6 @@
 [package]
 name = "cli-manager"
-version = "1.1.4"
+version = "1.1.5"
 description = "A lightweight desktop app for managing CLI tools across multiple projects"
 authors = ["you"]
 edition = "2021"
@@ -43,6 +43,9 @@ tauri-plugin-process = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 # git 仓库查询（静默读取分支，避免文件 I/O 触发安全软件弹窗）
 git2 = "0.19"
+# 文件系统监听 + 去抖：fs-watcher 替代 Git 变更面板的定时轮询
+notify = "6"
+notify-debouncer-mini = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

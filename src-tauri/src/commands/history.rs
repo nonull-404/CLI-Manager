@@ -1,7 +1,7 @@
 use crate::commands::model_pricing::{find_cached_model_pricing, CachedModelPricingLookup};
 use log::debug;
 use memchr::memmem;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
@@ -39,7 +39,7 @@ impl HistoryRoots {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct SessionFileRef {
     source: String,
     project_key: String,
@@ -55,7 +55,7 @@ struct SessionSummaryScan {
     branch: Option<String>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct SessionStatsScan {
     input_tokens: u64,
     output_tokens: u64,
@@ -85,7 +85,7 @@ struct SessionProjectScan {
     cwd: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct CachedSessionComputation {
     created_at: i64,
     updated_at: i64,
@@ -118,14 +118,14 @@ struct CachedSessionProjectCacheEntry {
     scan: SessionProjectScan,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionFileFingerprint {
     created_at: i64,
     updated_at: i64,
     size: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct HistoryIndexEntry {
     file_ref: SessionFileRef,
     fingerprint: SessionFileFingerprint,
@@ -229,7 +229,7 @@ pub struct HistoryToolCount {
     pub count: u64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryTokenTrendPoint {
     pub input_tokens: u64,
@@ -432,7 +432,7 @@ struct DayStatsAggregate {
     session_refs: Vec<HistorySessionSummary>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 struct UsageStatsScan {
     input_tokens: u64,
     output_tokens: u64,
@@ -1571,6 +1571,132 @@ fn invalidate_history_caches() {
     if let Ok(mut index) = get_history_index().write() {
         *index = HistorySessionIndex::default();
     }
+    clear_persisted_history_index();
+}
+
+// ===== 历史索引磁盘持久化 =====
+// 内存索引（HISTORY_SESSION_INDEX）每次 App 启动后为空，首个 history_get_stats 必须
+// 全量解析所有 JSONL（可能上千个），冷启动耗时不可接受。这里把 per-file 解析结果落盘，
+// 重启后载入作为 build_history_index 的 previous，按 fingerprint 仅重解析变更文件。
+const HISTORY_INDEX_CACHE_VERSION: u32 = 1;
+const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
+
+static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+static HISTORY_INDEX_DISK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+// roots_key -> 已落盘的 generation，内容未变时跳过重复写盘。
+static HISTORY_INDEX_PERSISTED_GEN: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+
+#[derive(Serialize, Deserialize)]
+struct PersistedHistoryIndex {
+    version: u32,
+    roots_key: String,
+    generation: u64,
+    entries: Vec<HistoryIndexEntry>,
+}
+
+/// App 启动时注入 appLocalData 目录（见 lib.rs setup）。未设置时持久化静默关闭。
+pub fn set_history_index_cache_dir(dir: PathBuf) {
+    let _ = HISTORY_INDEX_CACHE_DIR.set(dir);
+}
+
+fn history_index_disk_lock() -> &'static Mutex<()> {
+    HISTORY_INDEX_DISK_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn history_index_persisted_gen() -> &'static Mutex<HashMap<String, u64>> {
+    HISTORY_INDEX_PERSISTED_GEN.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn history_index_cache_file() -> Option<PathBuf> {
+    HISTORY_INDEX_CACHE_DIR
+        .get()
+        .map(|dir| dir.join(HISTORY_INDEX_CACHE_FILE))
+}
+
+fn persisted_generation(roots_key: &str) -> Option<u64> {
+    history_index_persisted_gen()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(roots_key).copied())
+}
+
+fn set_persisted_generation(roots_key: &str, generation: u64) {
+    if let Ok(mut map) = history_index_persisted_gen().lock() {
+        map.insert(roots_key.to_string(), generation);
+    }
+}
+
+fn load_persisted_history_index(roots: &HistoryRoots) -> Option<HistorySessionIndex> {
+    let path = history_index_cache_file()?;
+    let bytes = {
+        let _guard = history_index_disk_lock().lock().ok()?;
+        std::fs::read(&path).ok()?
+    };
+    let persisted: PersistedHistoryIndex = serde_json::from_slice(&bytes).ok()?;
+    if persisted.version != HISTORY_INDEX_CACHE_VERSION {
+        return None;
+    }
+    let roots_key = roots.cache_key();
+    if persisted.roots_key != roots_key {
+        return None;
+    }
+    let entries = persisted.entries;
+    let mut by_path = HashMap::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        by_path.insert(path_to_key(&entry.file_ref.path), index);
+    }
+    set_persisted_generation(&roots_key, persisted.generation);
+    Some(HistorySessionIndex {
+        roots: roots.clone(),
+        entries,
+        by_path,
+        // refreshed_at=0 → 刷新逻辑视为已过期，会重建并按 fingerprint 复用磁盘 computed。
+        refreshed_at: 0,
+        generation: persisted.generation,
+    })
+}
+
+fn save_persisted_history_index(index: &HistorySessionIndex) {
+    let Some(path) = history_index_cache_file() else {
+        return;
+    };
+    let roots_key = index.roots.cache_key();
+    // 内容（generation）未变则跳过写盘。
+    if persisted_generation(&roots_key) == Some(index.generation) {
+        return;
+    }
+    let persisted = PersistedHistoryIndex {
+        version: HISTORY_INDEX_CACHE_VERSION,
+        roots_key: roots_key.clone(),
+        generation: index.generation,
+        entries: index.entries.clone(),
+    };
+    let Ok(bytes) = serde_json::to_vec(&persisted) else {
+        return;
+    };
+    let Ok(_guard) = history_index_disk_lock().lock() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // 临时文件 + rename，避免崩溃时残留半截损坏文件。
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+        set_persisted_generation(&roots_key, index.generation);
+    } else {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+fn clear_persisted_history_index() {
+    if let Ok(mut map) = history_index_persisted_gen().lock() {
+        map.clear();
+    }
+    if let Some(path) = history_index_cache_file() {
+        let _guard = history_index_disk_lock().lock();
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 fn refresh_history_index(roots: &HistoryRoots) -> Vec<HistoryIndexEntry> {
@@ -1590,16 +1716,22 @@ fn refresh_history_index_snapshot(roots: &HistoryRoots, force: bool) -> HistoryS
         }
     }
 
-    let previous = get_history_index()
+    let mut previous = get_history_index()
         .read()
         .ok()
         .filter(|index| index.roots.eq(roots) && index.refreshed_at > 0)
         .map(|index| index.clone());
+    // 冷启动（内存索引为空）时从磁盘载入，使 build 按 fingerprint 复用已解析结果，
+    // 仅重解析变更/新增文件，避免每次重启全量解析全部 JSONL。
+    if previous.is_none() {
+        previous = load_persisted_history_index(roots);
+    }
     let next = build_history_index(now, roots, previous, force);
 
     if let Ok(mut index) = get_history_index().write() {
         *index = next.clone();
     }
+    save_persisted_history_index(&next);
 
     next
 }

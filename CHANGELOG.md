@@ -2,6 +2,68 @@
 
 ## [V1.1.5] - 2026-06-18
 
+### Git 变更面板：推送 / 拉取与暂存模型重构
+
+#### 推送 / 拉取
+
+- **分支状态行**：提交栏顶部新增当前分支与 `↑ahead ↓behind`（待推送 / 落后数）；无 upstream 显示「未跟踪远端」，detached HEAD 单独标识。
+- **推送**：ahead>0 或无 upstream 时可点；无 upstream 自动 `push -u origin <branch>` 建立跟踪。
+- **拉取（分体按钮，JetBrains 式）**：behind>0 时出现「拉取」按钮，主按钮默认**合并**拉取（`pull --no-rebase --no-edit --autostash`，可快进时自动快进、分叉时生成合并提交）；下拉可选**变基**（`pull --rebase --autostash`）或**仅快进**（`pull --ff-only`）。`--autostash` 自动暂存脏工作区并在完成 / 中止时恢复，分叉场景不再需要切到终端手动处理。
+- **冲突处理**：合并 / 变基产生冲突时，冲突文件以独立「C」状态红色标识；面板出现「合并 / 变基进行中」横幅——合并解决后在下方提交即完成，变基解决并暂存后点「继续」（`rebase --continue`，跳过编辑器）；任意时刻可「中止」回到拉取前（依仓库状态自动 `merge --abort` / `rebase --abort`，恢复 autostash），绝不静默丢改动。
+- **分支状态扩展**：`git_branch_status` 新增 `pendingOp`（merge / rebase 进行中，变基 detached 期间亦可靠上报），刷新后冲突横幅与「继续 / 中止」入口依然准确。
+- **走系统 git**：本地只读用 libgit2，网络操作（push/pull）shell out 系统 `git`，继承用户凭据管理器、SSH 与 git config 代理；错误码映射为可读中文（认证失败 / 远端领先 / 未跟踪远端 / 未配置远端 / 找不到 git）。
+- **后端命令**：`git_branch_status`（只读分支 / ahead-behind / pendingOp）、`git_push`、`git_pull`（策略 merge/rebase/ff-only，冲突感知）、`git_pull_abort`、`git_rebase_continue`、`git_commit_paths`（按路径 pathspec 提交）。
+
+#### 暂存模型重构（区分「跟踪」与「本次提交」）
+
+- **未跟踪文件**：复选框改为前端「选中」态——勾选不再立即 `git add`，提交时才统一 add；右键菜单保留真实「加入跟踪（git add）」立即操作；文件始终留在「未跟踪」分组，勾选完全可逆。
+- **新增(A)文件**：复选框为「本次是否提交」选择态——取消勾选**不再 unstage / 退回未跟踪**，文件保持已跟踪/暂存，仅本次提交不包含（提交走 `git commit -- <paths>` 仅提交选中路径）。
+- **目录与全选**：目录级、顶部全选/全不选同步该模型——取消时 M/D/R 真实 unstage，未跟踪文件取消选中、A 文件仅取消勾选（保持跟踪），任意层级都不会把已加入跟踪的文件退回未跟踪。
+- **提交栏计数**：改为「待提交 N 个文件（含 M 未跟踪）」口径，按已暂存 − 取消勾选的 A + 选中未跟踪计算。
+
+#### 视觉
+
+- Git 变更文件列表字号整体放大（文件 / 目录名 11px→13px，增删行数与计数徽标同步上调），与 14px 文件图标比例更协调。
+
+### 历史用量分析图表交互修复与加载缓存
+
+- **图表悬浮稳定**：Token/费用趋势、模型用量排行等 ECharts 图表此前 series 颜色使用 CSS 变量（`var(--accent)` / `color-mix()`），悬浮进入 emphasis 状态时 ECharts 无法解析派生高亮色，导致折线/柱状整体消失。`EChart` 包装层新增颜色解析（隐藏探针元素 + `getComputedStyle` 把 `var()` / `color-mix()` 解析为具体 rgb），并用 `MutationObserver` 监听主题/调色板属性变更后重解析；趋势图各 series 关闭 emphasis，悬浮不再吞掉费用柱。
+- **Token/费用趋势**：新增「缓存」折线（缓存命中 + 写入合并）；总 Token / 输入 / 输出 / 缓存改用固定可区分配色（避免部分主题下 accent≈success 撞色重复），费用柱改中性灰不与缓存撞色。
+- **活跃时段分布**：改为响应式宽度（铺满容器、无横向滚动条）；改为单指标「消息」柱（会话与消息量级悬殊、非趋势关系，不再混在同一坐标轴），会话数移入光标 tooltip 与摘要；移除悬浮的选中描边框。
+- **会话热力图**：短范围（≤14 天，如近 7 天）改为横向条形（按最大值归一化铺满、按活跃强度着色），避免 GitHub 式网格在短范围下大片空旷；30/90 天保留热力网格。
+- **卡片尺寸统一**：项目排行 / 模型用量排行 / 来源对比 / 活跃时段四张卡片统一固定高度，内容溢出时内部滚动并套用全局滚动条样式。
+- **加载提速（冷启动）**：历史会话索引此前为纯内存，每次启动后首个统计请求需全量解析全部 JSONL。新增 per-file 解析结果磁盘持久化（写入 appLocalData，带版本与指纹校验、临时文件 + rename 原子写），冷启动载入后仅重解析变更文件；删除会话时一并清理磁盘缓存。
+
+### Git 变更面板增强（真实行数 / 实时监听 / 语法高亮 / 暂存提交）
+
+#### 真实 diff 行数统计
+
+- **修复每文件 +N/−M 恒为 0 的问题**：`git_get_changes` 此前对 diff 行数返回占位值 `(0, 0)`（`get_diff_stats_git2` 未实现），文件树虽已渲染增删数字却始终为 0。现以单次 `diff_tree_to_workdir_with_index`（含未跟踪、`context_lines(0)`）+ `foreach` 行回调，按路径累加真实新增/删除行数，替代原本逐文件多次 diff 的 N 次扫描。
+- **面板顶部总增删聚合**：Git 变更面板摘要区新增整仓 `+X −Y` 汇总（绿/红，与终端配色一致）。
+- **边界处理**：未跟踪文件计为 `+行数 −0`、删除文件计为 `+0 −行数`、二进制/纯模式变更为 0/0；空仓库 / unborn HEAD 与 diff 构造失败均优雅降级，不 panic。
+
+#### fs-watcher 替代定时轮询
+
+- **实时文件监听**：新增 `git_watcher` 桥接（基于 `notify` + `notify-debouncer-mini`），监听当前项目目录，去抖 400ms 后向前端发 `git-changed` 事件；面板由事件驱动刷新，去掉原 4s 固定轮询与最长 4s 延迟。
+- **精准监听范围**：监听工作区文件变化与 `.git/index`、`.git/HEAD`（覆盖编辑 / 暂存 / 提交 / 切分支），过滤 `.git/objects`、`.git/logs`、`*.lock` 等噪声。
+- **降级兜底**：watcher 初始化失败（网络盘 / WSL 等 notify 不可用）时自动降级为 15s 慢轮询；保留失焦/隐藏不刷新、重新聚焦立即刷新一次。
+- **生命周期与多窗口隔离**：单 watcher 绑定当前活动项目，切项目/关闭面板即释放；`git-changed` 事件携带 `projectPath`，各窗口按自身当前项目过滤，天然隔离。
+- 新增 Tauri 命令 `git_watch_start` / `git_watch_stop`，前端不可信路径在后端做存在性校验。
+
+#### Diff 语法高亮
+
+- **diff 弹窗按语言高亮**：`DiffViewerModal` 接入 `react-diff-view` 原生支持的 refractor(Prism) tokenize，按文件扩展名启用语法高亮，token 高亮叠加在既有 +/− 行底色之上，行号、行选择与 hunk/行级回滚交互保持不变。
+- **精选语言控体积**：`refractor/core` 按依赖顺序注册 22 种常见语言（js/jsx/ts/tsx/json/css/scss/html/md/bash/rust/python/yaml/toml/sql/go/java/c/cpp/ruby/diff 等）；未知语言或高亮失败时回退无高亮渲染，diff 始终可读。
+- 新增 `src/components/git/diffHighlight.ts`（refractor 实例与语言探测），新增 Prism token 深色配色到 `diffViewer.css`，scoped 到 `.diff-viewer-container`。
+
+#### 文件级暂存与面板内提交
+
+- **暂存 / 取消暂存**：变更文件行新增暂存复选框（勾选 = `git add` 进暂存区，取消 = 移出），目录行三态复选框可批量暂存/取消整个目录；头部单个三态全选框（全选/部分/未选）一键全部暂存或取消。
+- **面板内提交**：底部新增提交栏，填写信息后「提交 (N)」提交已暂存内容（支持 Ctrl/Cmd+Enter）；空信息或无暂存时禁用；空信息 / 无暂存 / 未配置 git 身份均有明确错误提示；支持仓库首个提交（unborn HEAD）。
+- **未跟踪文件单独成组**：仿 JetBrains 将未跟踪（Unversioned）文件独立为「未跟踪文件」分组，已跟踪变更归入「改动」分组；两组折叠状态相互隔离（修复同名目录折叠串联）。
+- **右键 Git 管控**：文件 / 目录行右键菜单新增「暂存（git add）/ 取消暂存」，与复选框等价；复选框 hover 提示明确标注 git add / 移出暂存区。
+- **后端**：新增 `git_stage_file` / `git_unstage_file` / `git_stage_paths` / `git_unstage_paths` / `git_stage_all` / `git_unstage_all` / `git_commit` 命令（纯 libgit2，前端路径不可信校验，批量操作单次 index 写入避免刷新闪烁）。
+
 ### 历史用量分析 UI
 
 - 历史用量分析面板按更轻量的 Apple 风格重构：KPI 改为图标化指标块，趋势、项目排行、模型排行、来源对比、热力图与会话列表统一为更克制的圆角区块与标题样式。
