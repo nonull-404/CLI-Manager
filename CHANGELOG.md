@@ -1,5 +1,15 @@
 # Changelog
 
+## [V1.1.7] - 2026-06-20
+
+### UI 修复
+
+- **修复项目列表空态横向滚动条**：项目侧边栏在空态（无项目/加载中/折叠态）时出现不必要的横向滚动条。原因是 `overflow-y: auto` 让浏览器将 `overflow-x` 隐式计算为 `auto`，空态组件宽度略微溢出即触发滚动条。给 3 处滚动容器统一添加 `overflow-x-hidden`，锁定只允许纵向滚动。
+
+### 文档
+
+- **重写 CLAUDE.md**：原文件为自动生成的模块索引文档，已出现漂移（声称 migrations v1-v7，实际到 v11；缺失 git/ccusage/ccswitch/claude_hook/shell_resolver/wsl 等后端模块）。新版聚焦命令使用与大图景架构，补充关键约束（前端仅 `tsc --noEmit` 一项静态校验、`npm run dev` 复用机制、调试日志开关）与非显而易见的架构设计（IPC 边界、Tab 状态双数据源合并、CLI Hook 桥接、启动时序不恢复终端原因、capability/asset scope 约定）。保留末尾 GitNexus 区块。
+
 ## [V1.1.6] - 2026-06-18
 
 ### WSL Hook 与历史会话支持
