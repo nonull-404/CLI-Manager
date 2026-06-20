@@ -542,7 +542,11 @@ function PaneTabBar({
     }
 
     const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
-    const clampedScrollLeft = Math.min(maxScrollLeft, Math.max(0, nextScrollLeft));
+    const isLastTab = pane.sessionIds[pane.sessionIds.length - 1] === activeSessionId;
+    // 末尾标签吸附到最右，避免容器 padding / 标签 margin 残留导致右滚按钮仍可点
+    const clampedScrollLeft = isLastTab
+      ? maxScrollLeft
+      : Math.min(maxScrollLeft, Math.max(0, nextScrollLeft));
     if (Math.abs(clampedScrollLeft - element.scrollLeft) > 0.5) {
       element.scrollTo({ left: clampedScrollLeft, behavior: "smooth" });
     }
@@ -553,7 +557,7 @@ function PaneTabBar({
       tabScrollUpdateTimeoutRef.current = null;
       updateTabScrollState();
     }, 220);
-  }, [pane.activeSessionId, updateTabScrollState]);
+  }, [pane.activeSessionId, pane.sessionIds, updateTabScrollState]);
 
   const activatePaneSessionAt = useCallback((index: number) => {
     const session = paneSessions[index];
@@ -607,12 +611,27 @@ function PaneTabBar({
       if (frameId !== null) window.cancelAnimationFrame(frameId);
     };
 
+    const handleWheel = (wheelEvent: WheelEvent) => {
+      const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
+      if (maxScrollLeft <= 0) return;
+      // 取绝对值较大的轴：触控板横向滚动用 deltaX，鼠标滚轮用 deltaY
+      const delta = Math.abs(wheelEvent.deltaX) >= Math.abs(wheelEvent.deltaY)
+        ? wheelEvent.deltaX
+        : wheelEvent.deltaY;
+      if (delta === 0) return;
+      wheelEvent.preventDefault();
+      element.scrollLeft += delta;
+      scheduleUpdate();
+    };
+
     element.addEventListener("scroll", scheduleUpdate, { passive: true });
+    element.addEventListener("wheel", handleWheel, { passive: false });
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
     observer?.observe(element);
 
     return () => {
       element.removeEventListener("scroll", scheduleUpdate);
+      element.removeEventListener("wheel", handleWheel);
       observer?.disconnect();
       if (frameId !== null) window.cancelAnimationFrame(frameId);
       if (tabScrollUpdateTimeoutRef.current !== null) {

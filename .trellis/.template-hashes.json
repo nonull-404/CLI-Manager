@@ -140,6 +140,12 @@
     ".trellis/scripts/common/__pycache__/types.cpython-314.pyc": "56d843a2b0adfe70e6e8c5ace89f5197439511418df74547193f83eeab138424",
     ".trellis/scripts/common/__pycache__/workflow_phase.cpython-314.pyc": "d88e96a4a582515ff4a2a7207e79ac7aa756f04cfaae2ec0ad1dd7a34cbe1e7e",
     ".trellis/scripts/common/__pycache__/__init__.cpython-314.pyc": "f8ea0aaeec1e07b1b8eba064c1b513751f4ec8a4109071283fab16fc46af8249",
-    ".trellis/scripts/create_bootstrap.py": "33b40df671ba7828fd8d3ba8c019823a8b03e938797b1cae218c55d6c7ebe57a"
+    ".trellis/scripts/create_bootstrap.py": "33b40df671ba7828fd8d3ba8c019823a8b03e938797b1cae218c55d6c7ebe57a",
+    ".trellis/diagnostics/ime-cursor-position-issue.md": "4af9506d68a2ad8823066f2f44168b2fec44359fa6db6ef6bf1fcb3dc0397ad2",
+    ".trellis/docs/codex-scrollback-solution.md": "1f0e91bf343925f876cd4f6b1d0886f262117d39670a539175523bffa9414c83",
+    ".trellis/scripts/common/__pycache__/active_task.cpython-312.pyc": "a244c76a0b768a66277aa23490c5340626a809d8f8b179d9f72eec11ffaaf0b5",
+    ".trellis/scripts/common/__pycache__/developer.cpython-312.pyc": "45b8e84ad939347a4e930dd342b7aa7c2b8280561e08d1b753bcd53957e50abe",
+    ".trellis/scripts/common/__pycache__/paths.cpython-312.pyc": "515b3264625daec006362619909652d8e06e675133ef7389527e58c70fd9fc03",
+    ".trellis/scripts/common/__pycache__/__init__.cpython-312.pyc": "1d634acd721780838c7f9830bb3d239bb8968216cfe8cfc7562f1505da43d3a7"
   }
 }

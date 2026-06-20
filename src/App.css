@@ -919,11 +919,11 @@ samp,
 }
 
 .ui-terminal-tab-scroll[data-can-scroll-left="true"] {
-  --tab-scroll-left-fade: 18px;
+  --tab-scroll-left-fade: 36px;
 }
 
 .ui-terminal-tab-scroll[data-can-scroll-right="true"] {
-  --tab-scroll-right-fade: 18px;
+  --tab-scroll-right-fade: 36px;
 }
 
 .ui-terminal-tab-scroll::-webkit-scrollbar {
