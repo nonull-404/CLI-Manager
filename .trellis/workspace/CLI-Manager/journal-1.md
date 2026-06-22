@@ -132,3 +132,36 @@ Filled the frontend Trellis spec files, verified build, and captured current UI/
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 终端选区右键直接复制
+
+**Date**: 2026-06-22
+**Task**: 终端选区右键直接复制
+**Branch**: `master`
+
+### Summary
+
+终端有选区时右键直接复制并关闭菜单，无选区时保留原右键菜单；提交 a5d339d。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a5d339d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

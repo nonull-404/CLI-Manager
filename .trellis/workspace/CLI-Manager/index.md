@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
-- **Last Active**: 2026-06-18
+- **Total Sessions**: 4
+- **Last Active**: 2026-06-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~134 | Active |
+| `journal-1.md` | ~167 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-06-22 | 终端选区右键直接复制 | `a5d339d` | `master` |
 | 3 | 2026-06-18 | V1.1.4 统计计费口径与界面一致性收口 | `271509d` | `master` |
 | 2 | 2026-05-26 | 全项目性能优化 MVP | `256549b` | `feat/compact-mode-launcher` |
 | 1 | 2026-04-23 | Bootstrap frontend spec guidelines | `c7b2bd5` | `feat/compact-mode-launcher` |
