@@ -13,6 +13,29 @@ function collectFileChanges(node: GitTreeNode): GitFileChange[] {
   return (node.children ?? []).flatMap(collectFileChanges);
 }
 
+// 压缩连续单子目录链：只改变显示层级，不改变原始树与真实文件路径。
+// JetBrains 风格：当前目录独立成行，从它的唯一子目录开始向下收集连续单子目录链作为下一行的压缩后缀。
+function collectCompactDirectoryChain(node: GitTreeNode): { suffixParts: string[]; leaf: GitTreeNode } {
+  const suffixParts: string[] = [];
+  let leaf = node;
+
+  // 如果当前目录只有一个子目录（不是文件），开始收集压缩链
+  if (leaf.type === "directory" && leaf.children?.length === 1 && leaf.children[0].type === "directory") {
+    let current = leaf.children[0];
+    suffixParts.push(current.name);
+    leaf = current;
+
+    // 继续向下收集，直到遇到分叉或文件
+    while (leaf.children?.length === 1 && leaf.children[0].type === "directory") {
+      const next = leaf.children[0];
+      suffixParts.push(next.name);
+      leaf = next;
+    }
+  }
+
+  return { suffixParts, leaf };
+}
+
 interface GitTreeNodeProps {
   node: GitTreeNode;
   depth: number;
@@ -26,8 +49,6 @@ interface GitTreeNodeProps {
 export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onRequestDiscard, onToggleStage, onToggleStagePaths }: GitTreeNodeProps) {
   const { collapsedDirs, toggleDir, selectedUntracked, toggleUntrackedSelection, deselectedAdded, toggleAddedDeselection, setAddedDeselection } = useGitStore();
   // 折叠 key 按分区前缀隔离：已跟踪树与未跟踪树同名目录互不影响。
-  const collapseKey = `${treeId}:${node.path}`;
-  const isCollapsed = collapsedDirs.has(collapseKey);
   const indentPx = depth * 12 + 4;
 
   if (node.type === "file") {
@@ -192,10 +213,17 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
     );
   }
 
-  // 目录节点 - 使用 Material Design 文件夹图标
-  const hasChildren = node.children && node.children.length > 0;
-  const folderIconDataUri = getMaterialFolderIcon(node.name, !isCollapsed);
-  const dirFiles = collectFileChanges(node);
+  // 目录节点 - 使用 Material Design 文件夹图标。连续单子目录链在渲染层压缩，行为仍以链尾目录为准。
+  // 模块根节点不压缩后缀（单独显示模块名），只压缩其内部的子目录链。
+  const isModuleRoot = node.isModuleRoot === true;
+  const { suffixParts, leaf: displayNode } = isModuleRoot
+    ? { suffixParts: [], leaf: node } // 模块根不压缩
+    : collectCompactDirectoryChain(node);
+  const displayCollapseKey = `${treeId}:${displayNode.path}`;
+  const displayCollapsed = collapsedDirs.has(displayCollapseKey);
+  const hasChildren = displayNode.children && displayNode.children.length > 0;
+  const folderIconDataUri = getMaterialFolderIcon(node.name, !displayCollapsed);
+  const dirFiles = collectFileChanges(displayNode);
   // 目录下全部为未跟踪文件时，复选框走「选中」态（与文件行一致）。
   const dirAllUntracked =
     dirFiles.length > 0 && dirFiles.every((f) => f.status === "U" || f.status === "??");
@@ -237,16 +265,20 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className="flex items-center gap-1.5 rounded py-0.5 px-1 hover:bg-opacity-10 cursor-pointer font-medium text-[13px]"
-            style={{ paddingLeft: indentPx, backgroundColor: "transparent" }}
-            onClick={() => toggleDir(collapseKey)}
+            className="flex items-center gap-1.5 rounded py-0.5 px-1 hover:bg-opacity-10 cursor-pointer text-[13px]"
+            style={{
+              paddingLeft: indentPx,
+              backgroundColor: "transparent",
+              fontWeight: isModuleRoot ? 600 : 500,
+            }}
+            onClick={() => toggleDir(displayCollapseKey)}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${TERM.cyan}20`)}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
           >
             <span
               className="inline-flex items-center justify-center shrink-0 transition-transform"
               style={{
-                transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)",
+                transform: displayCollapsed ? "rotate(0deg)" : "rotate(90deg)",
                 color: TERM.dim,
               }}
             >
@@ -267,10 +299,17 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               className="shrink-0"
               style={{ objectFit: "contain" }}
             />
-            <span className="flex-1 truncate" style={{ color: TERM.fg }}>{node.name}</span>
+            <span className="flex min-w-0 flex-1 items-baseline gap-1 truncate">
+              <span className="truncate" style={{ color: TERM.fg }}>{node.name}</span>
+              {suffixParts.length > 0 && (
+                <span className="truncate text-[12px] font-normal" style={{ color: TERM.dim }}>
+                  {suffixParts.join("\\")}
+                </span>
+              )}
+            </span>
             {hasChildren && (
               <span className="text-[11px] rounded px-1 py-0" style={{ color: TERM.dim, backgroundColor: `${TERM.dim}20` }}>
-                {node.children!.length}
+                {displayNode.children!.length}
               </span>
             )}
           </div>
@@ -305,9 +344,9 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
         </ContextMenuContent>
       </ContextMenu>
 
-      {!isCollapsed && hasChildren && (
+      {!displayCollapsed && hasChildren && (
         <div>
-          {node.children!.map((child) => (
+          {displayNode.children!.map((child) => (
             <GitTreeNodeComponent key={child.path} node={child} depth={depth + 1} treeId={treeId} onFileClick={onFileClick} onRequestDiscard={onRequestDiscard} onToggleStage={onToggleStage} onToggleStagePaths={onToggleStagePaths} />
           ))}
         </div>

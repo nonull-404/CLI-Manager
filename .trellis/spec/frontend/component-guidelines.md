@@ -90,6 +90,59 @@ const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
 
 **Tests**: For terminal drag UI changes, run `npx tsc --noEmit` and manually verify same-pane reorder, pane-center move, and left/right/top/bottom edge split previews in the Tauri desktop app.
 
+### Convention: Git tree compresses consecutive single-child directory chains at render time
+
+**What**: In `GitTreeNodeComponent`, when rendering a directory node, walk consecutive single-child directory chains and compress them into a single display row showing the top directory name plus a weakened path suffix (JetBrains style).
+
+**Why**: Deep directory structures such as Java package paths (`src/main/java/com/example/service/impl`) consume excessive vertical space when rendered one level per row. Compression reduces scrolling and makes file changes more visible without altering the underlying tree data or behavior.
+
+**Example**:
+
+```tsx
+// Helper: collect consecutive single-child directory chain
+function collectCompactDirectoryChain(node: GitTreeNode): { suffixParts: string[]; leaf: GitTreeNode } {
+  const suffixParts: string[] = [];
+  let leaf = node;
+
+  while (leaf.type === "directory" && leaf.children?.length === 1 && leaf.children[0].type === "directory") {
+    const next = leaf.children[0];
+    suffixParts.push(next.name);
+    leaf = next;
+  }
+
+  return { suffixParts, leaf };
+}
+
+// Render: top directory keeps icon, suffix parts shown in dimmed text
+const { suffixParts, leaf: displayNode } = collectCompactDirectoryChain(node);
+
+<span className="flex min-w-0 flex-1 items-baseline gap-1 truncate">
+  <span className="truncate" style={{ color: TERM.fg }}>{node.name}</span>
+  {suffixParts.length > 0 && (
+    <span className="truncate text-[12px] font-normal" style={{ color: TERM.dim }}>
+      {suffixParts.join("\\")}
+    </span>
+  )}
+</span>
+```
+
+**Contracts**:
+
+- Compression stops when a directory has multiple children or a child is a file (branch point).
+- Collapse/expand behavior uses the leaf node's path as the collapse key, not the top node's.
+- Directory-level checkbox and file collection apply to the leaf node's subtree.
+- Original tree structure from `gitStore` is unchanged; compression is render-only.
+
+**Why render-layer instead of data-layer**: Keeping the original tree structure unchanged preserves collapse state, file collection logic, and diff display paths. Render-layer compression only affects display label composition.
+
+**Tests**: After changing Git tree rendering, run `npx tsc --noEmit` and manually verify in the desktop app:
+
+- [ ] Deep directory chains compress into single rows with primary name + dimmed suffix.
+- [ ] Clicking a compressed directory row expands/collapses the chain's leaf children.
+- [ ] Directory checkbox state correctly reflects all files under the compressed chain.
+- [ ] File paths in diff viewer still match the full repository path.
+- [ ] Compression applies to both tracked and untracked trees.
+
 ---
 
 ## Props Conventions

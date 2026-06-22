@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy } from "../lib/types";
+import { useSettingsStore } from "./settingsStore";
 
 type GitStatusFilter = "all" | "M" | "A" | "D" | "U";
 
@@ -115,14 +116,54 @@ function buildTree(changes: GitFileChange[]): GitTreeNode[] {
   return root;
 }
 
+// 按模块分组构建树：第一级目录视为模块，每个模块是顶层节点。
+function buildTreeByModule(changes: GitFileChange[]): GitTreeNode[] {
+  const moduleMap = new Map<string, GitFileChange[]>();
+
+  // 按第一级目录分组
+  for (const change of changes) {
+    const parts = change.path.split(/[/\\]/);
+    const moduleName = parts[0];
+    if (!moduleMap.has(moduleName)) {
+      moduleMap.set(moduleName, []);
+    }
+    moduleMap.get(moduleName)!.push(change);
+  }
+
+  // 为每个模块构建子树
+  const modules: GitTreeNode[] = [];
+  for (const [moduleName, moduleChanges] of Array.from(moduleMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    const moduleSubtree = buildTree(moduleChanges);
+
+    // 如果模块内只有一个顶层节点且就是该模块名本身，直接用它并标记为模块根
+    if (moduleSubtree.length === 1 && moduleSubtree[0].name === moduleName) {
+      modules.push({ ...moduleSubtree[0], isModuleRoot: true });
+    } else {
+      // 否则创建一个模块根节点包裹子树
+      modules.push({
+        type: "directory",
+        name: moduleName,
+        path: moduleName,
+        children: moduleSubtree,
+        isModuleRoot: true,
+      });
+    }
+  }
+
+  return modules;
+}
+
 // 构建「已跟踪变更树」与「未跟踪文件树」。未跟踪文件单独成组（仿 JetBrains Unversioned Files）。
 function rebuildTrees(
   changes: GitFileChange[],
-  filter: GitStatusFilter
+  filter: GitStatusFilter,
+  groupBy: "directory" | "module" = "directory"
 ): { tree: GitTreeNode[]; untrackedTree: GitTreeNode[] } {
   const tracked = changes.filter((c) => !isUntracked(c.status) && matchTrackedFilter(c.status, filter));
   const untracked = changes.filter((c) => isUntracked(c.status));
-  return { tree: buildTree(tracked), untrackedTree: buildTree(untracked) };
+
+  const buildFn = groupBy === "module" ? buildTreeByModule : buildTree;
+  return { tree: buildFn(tracked), untrackedTree: buildFn(untracked) };
 }
 
 function collectDirectoryPaths(nodes: GitTreeNode[], treeId: string): string[] {
@@ -169,9 +210,10 @@ export const useGitStore = create<GitStore>((set, get) => ({
     try {
       const changes = await invoke<GitFileChange[]>("git_get_changes", { projectPath });
 
-      // 应用筛选并拆分已跟踪 / 未跟踪两棵树
+      // 应用筛选并拆分已跟踪 / 未跟踪两棵树，使用当前分组模式
       const { statusFilter } = get();
-      const { tree, untrackedTree } = rebuildTrees(changes, statusFilter);
+      const groupBy = useSettingsStore.getState().gitGroupBy;
+      const { tree, untrackedTree } = rebuildTrees(changes, statusFilter, groupBy);
       // 选中集合按当前未跟踪文件裁剪：已被 add/删除的路径不再保留，避免悬挂选中。
       const untrackedNow = new Set(changes.filter((c) => isUntracked(c.status)).map((c) => c.path));
       const prevSelected = get().selectedUntracked;
@@ -577,7 +619,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   setStatusFilter: (filter: GitStatusFilter) => {
     set((state) => {
-      const { tree, untrackedTree } = rebuildTrees(state.changes, filter);
+      const groupBy = useSettingsStore.getState().gitGroupBy;
+      const { tree, untrackedTree } = rebuildTrees(state.changes, filter, groupBy);
       return { statusFilter: filter, tree, untrackedTree };
     });
   },

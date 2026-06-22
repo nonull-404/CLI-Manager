@@ -367,7 +367,12 @@ export interface GitTreeNode {
   path: string;
   children?: GitTreeNode[];
   change?: GitFileChange;
+  /** 标识该节点是否为模块根节点（Group By Module 模式下使用） */
+  isModuleRoot?: boolean;
 }
+
+/** Git 变更树分组模式 */
+export type GitGroupByMode = "directory" | "module";
 
 // 当前分支与远端跟踪状态（对应后端 git_branch_status）
 export interface GitBranchStatus {

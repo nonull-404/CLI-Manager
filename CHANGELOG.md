@@ -2,6 +2,16 @@
 
 ## [V1.1.7] - 2026-06-20
 
+### Git 变更树分组展示
+
+- **Group By Directory / Module 切换**：Git 变更面板顶部新增分组模式切换下拉（图标：Directory=文件夹树、Module=分层），支持两种分组方式：
+  - **Directory 模式**（默认）：按目录树展示变更，连续单子目录链压缩成两层显示（顶层目录独立一行，后续包路径压缩成第二行），减少深层 Java/package 路径的纵向占用。
+  - **Module 模式**：按第一级目录（视为模块）分组，每个顶层目录作为独立的模块根节点（加粗显示），模块内部继续应用 Directory 压缩逻辑。
+- **目录链压缩算法**：`collectCompactDirectoryChain()` 从当前目录的唯一子目录开始向下收集连续单子目录链，仅改变显示层级，保留原始树结构、折叠状态、文件路径与暂存操作语义。模块根节点不参与压缩，单独显示模块名。
+- **持久化**：分组模式存入 `settingsStore.gitGroupBy`，重启应用后恢复上次选择。
+- **数据层**：`gitStore` 新增 `buildTreeByModule()` 函数，按文件路径第一级目录分组构建树；`rebuildTrees()` 根据 `gitGroupBy` 设置动态选择 `buildTree()` 或 `buildTreeByModule()`。
+- **类型扩展**：`GitTreeNode` 新增 `isModuleRoot?: boolean` 标识模块根节点，`GitGroupByMode` 类型定义分组模式。
+
 ### UI 修复
 
 - **修复项目列表空态横向滚动条**：项目侧边栏在空态（无项目/加载中/折叠态）时出现不必要的横向滚动条。原因是 `overflow-y: auto` 让浏览器将 `overflow-x` 隐式计算为 `auto`，空态组件宽度略微溢出即触发滚动条。给 3 处滚动容器统一添加 `overflow-x-hidden`，锁定只允许纵向滚动。

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { RefreshCw, GitBranch, Undo2, Files, FilePen, FilePlus, FileMinus, GitCommitHorizontal, ArrowUp, ArrowDown, Upload, Download, ChevronDown, GitMerge, Check, X } from "lucide-react";
+import { RefreshCw, GitBranch, Undo2, Files, FilePen, FilePlus, FileMinus, GitCommitHorizontal, ArrowUp, ArrowDown, Upload, Download, ChevronDown, GitMerge, Check, X, FolderTree, Layers } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { GitChangesTree } from "./GitChangesTree";
 import { StageCheckbox, type StageState } from "./StageCheckbox";
 import { STATUS_CONFIG } from "./GitStatusIcon";
@@ -84,12 +85,14 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     deselectedAdded,
     setAddedDeselection,
   } = useGitStore();
+  const { gitGroupBy, update: updateSettings } = useSettingsStore();
   const [diffModalOpen, setDiffModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ path: string; name: string; status: string } | null>(null);
   const [confirmAllOpen, setConfirmAllOpen] = useState(false);
   const [discardTarget, setDiscardTarget] = useState<{ path: string; name: string; status: string } | null>(null);
   const [commitMsg, setCommitMsg] = useState("");
   const [pullMenuOpen, setPullMenuOpen] = useState(false);
+  const [groupByMenuOpen, setGroupByMenuOpen] = useState(false);
   const panelActive = open && visible;
 
   useEffect(() => {
@@ -171,6 +174,13 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     if (projectPath) {
       fetchChanges(projectPath);
     }
+  };
+
+  const handleGroupByChange = async (mode: "directory" | "module") => {
+    setGroupByMenuOpen(false);
+    await updateSettings("gitGroupBy", mode);
+    // 切换后立即刷新树（gitStore 会自动读取新的 gitGroupBy）
+    if (projectPath) void fetchChanges(projectPath, false);
   };
 
   const handleFileClick = (filePath: string) => {
@@ -355,6 +365,72 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
           Git 变更
         </span>
         <span className="flex items-center gap-1.5">
+          {/* Group By 切换下拉 */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setGroupByMenuOpen(!groupByMenuOpen)}
+              className="ui-focus-ring flex items-center gap-1 rounded px-1 py-0.5 text-[10px] transition-colors"
+              style={{ color: TERM.cyan, backgroundColor: `${TERM.cyan}12` }}
+              title="切换分组模式"
+              aria-label="切换分组模式"
+            >
+              {gitGroupBy === "module" ? <Layers size={10} /> : <FolderTree size={10} />}
+              <ChevronDown size={8} />
+            </button>
+            {groupByMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setGroupByMenuOpen(false)}
+                  aria-hidden="true"
+                />
+                <div
+                  className="absolute right-0 top-full z-20 mt-1 flex min-w-[120px] flex-col rounded border py-1 shadow-lg"
+                  style={{ backgroundColor: TERM.bg, borderColor: TERM.dim }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleGroupByChange("directory")}
+                    className="flex items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors"
+                    style={{
+                      color: gitGroupBy === "directory" ? TERM.cyan : TERM.fg,
+                      backgroundColor: gitGroupBy === "directory" ? `${TERM.cyan}20` : "transparent",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (gitGroupBy !== "directory") e.currentTarget.style.backgroundColor = `${TERM.cyan}10`;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (gitGroupBy !== "directory") e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    <FolderTree size={12} />
+                    <span>Directory</span>
+                    {gitGroupBy === "directory" && <Check size={11} style={{ marginLeft: "auto" }} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleGroupByChange("module")}
+                    className="flex items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors"
+                    style={{
+                      color: gitGroupBy === "module" ? TERM.cyan : TERM.fg,
+                      backgroundColor: gitGroupBy === "module" ? `${TERM.cyan}20` : "transparent",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (gitGroupBy !== "module") e.currentTarget.style.backgroundColor = `${TERM.cyan}10`;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (gitGroupBy !== "module") e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    <Layers size={12} />
+                    <span>Module</span>
+                    {gitGroupBy === "module" && <Check size={11} style={{ marginLeft: "auto" }} />}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           {changes.length > 0 && (
             <StageCheckbox
               state={selectAllState}
