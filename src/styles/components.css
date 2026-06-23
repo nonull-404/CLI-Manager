@@ -2615,13 +2615,7 @@
 }
 
 [data-sonner-toaster][data-x-position="right"]:has(.claude-hook-toast) {
-  right: 24px;
-}
-
-@media (min-width: 1360px) {
-  [data-sonner-toaster][data-x-position="right"]:has(.claude-hook-toast) {
-    right: min(420px, calc(100vw - 1040px));
-  }
+  right: 64px;
 }
 
 [data-sonner-toaster][data-y-position="top"]:has(.claude-hook-toast) {
