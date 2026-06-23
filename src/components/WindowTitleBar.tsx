@@ -54,9 +54,9 @@ export function WindowTitleBar() {
   };
 
   return (
-    <header className="window-titlebar flex h-9 shrink-0 items-center bg-surface-container-low">
+    <header className="window-titlebar flex h-[26px] shrink-0 items-center bg-surface-container-low">
       <div
-        className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]"
+        className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-[13px]"
         data-tauri-drag-region
         onDoubleClick={() => runWindowAction(() => getCurrentWindow().toggleMaximize())}
       >

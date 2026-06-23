@@ -313,8 +313,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 40px;
+  width: 28px;
+  height: 38px;
   flex-shrink: 0;
   border: 0;
   border-radius: 0;
@@ -829,8 +829,8 @@
 }
 
 .titlebar-btn {
-  width: 44px;
-  height: 32px;
+  width: 40px;
+  height: 26px;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -2187,20 +2187,37 @@
 .ui-terminal-chrome {
   display: flex;
   align-items: center;
-  min-height: 44px;
+  height: 38px;
+  min-height: 38px;
   background-color: color-mix(in srgb, var(--surface-container-low) 82%, var(--surface) 18%);
   color: var(--on-surface);
   border-radius: 8px;
-  margin: 6px 6px 0;
+  margin: 4px 6px 0;
   overflow: hidden;
   outline: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-container-lowest) 44%, transparent);
 }
 
+.ui-terminal-chrome .ui-tab-trigger {
+  height: 26px;
+  gap: 6px;
+  padding-inline: 10px;
+}
+
+.ui-terminal-chrome .ui-terminal-tab-close {
+  height: 20px;
+  width: 20px;
+}
+
+.ui-terminal-drag-overlay-tab {
+  height: 26px;
+}
+
 .ui-terminal-pane-chrome {
   --terminal-tab-accent: color-mix(in srgb, var(--terminal-theme-accent, #60a5fa) 64%, var(--terminal-theme-foreground, #f8fafc) 36%);
   --terminal-tab-accent-muted: color-mix(in srgb, var(--terminal-tab-accent) 42%, var(--terminal-theme-muted, #64748b) 58%);
-  min-height: 40px;
+  height: 38px;
+  min-height: 38px;
   margin: 0;
   border-radius: 0;
   background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 82%, var(--terminal-theme-foreground, #f8fafc) 10%);
@@ -2269,8 +2286,8 @@
   z-index: 1;
   isolation: isolate;
   width: 38px;
-  padding: 7px 4px;
-  border-left: 1px solid color-mix(in srgb, var(--terminal-tab-accent-muted) 24%, transparent);
+  padding: 6px 4px;
+  border-left: 1px solid color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 7%, transparent);
   background-color: transparent;
   color: var(--terminal-theme-foreground, #f8fafc);
 }
@@ -2281,8 +2298,8 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--terminal-tab-accent) 9%, transparent), transparent 46%),
-    color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 86%, #000 14%);
+    linear-gradient(180deg, color-mix(in srgb, var(--terminal-tab-accent) 5%, transparent), transparent 42%),
+    color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 91%, #000 9%);
   z-index: -1;
 }
 
@@ -2315,7 +2332,7 @@
 
 .ui-terminal-action-sidebar .ui-toolbar-button {
   width: 100%;
-  min-height: 32px;
+  min-height: 30px;
   justify-content: flex-start;
   padding-inline: 8px;
 }
@@ -2323,7 +2340,7 @@
 .ui-terminal-action-sidebar .ui-icon-action {
   width: 30px;
   height: 30px;
-  border-radius: 10px;
+  border-radius: 9px;
 }
 
 .ui-terminal-action-sidebar .ui-toolbar-button:hover:not(:disabled),
@@ -2331,17 +2348,17 @@
 .ui-terminal-action-drag-overlay .ui-toolbar-button:hover:not(:disabled),
 .ui-terminal-action-drag-overlay .ui-icon-action:hover:not(:disabled) {
   transform: none;
-  border-color: transparent;
-  background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 12%, transparent);
-  color: var(--terminal-action-color, currentColor);
+  border-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 18%, transparent);
+  background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 9%, transparent);
+  color: color-mix(in srgb, var(--terminal-action-color, currentColor) 92%, var(--terminal-theme-foreground, #f8fafc) 8%);
 }
 
 .ui-terminal-action-sidebar .ui-primary-action,
 .ui-terminal-action-sidebar .ui-icon-action[data-active="true"],
 .ui-terminal-action-drag-overlay .ui-primary-action,
 .ui-terminal-action-drag-overlay .ui-icon-action[data-active="true"] {
-  border-color: transparent;
-  background-color: transparent;
+  border-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 22%, transparent);
+  background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 10%, transparent);
   background-image: none;
   color: var(--terminal-action-color, currentColor);
 }
@@ -2389,6 +2406,33 @@
 .ui-terminal-global-chrome {
   background-color: var(--surface-container-low);
   color: var(--on-surface);
+}
+
+.ui-terminal-well > aside,
+.ui-terminal-well > .flex-1 + aside {
+  border-left-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 7%, transparent);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, #000 18%, transparent);
+}
+
+.ui-terminal-well > aside > .border-b:first-child,
+.ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] > .border-b:first-child {
+  border-bottom-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 9%, transparent) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 5%, transparent), transparent);
+}
+
+.ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] > .min-h-0.flex-1 {
+  padding: 7px;
+}
+
+.ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] > .border-b:not(:first-child),
+.ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] > .border-t,
+.ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] .border-t {
+  border-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 8%, transparent) !important;
+}
+
+.ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] button:hover:not(:disabled) {
+  opacity: 1;
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 7%, transparent);
 }
 
 .ui-terminal-drag-overlay-tab {
@@ -2571,7 +2615,13 @@
 }
 
 [data-sonner-toaster][data-x-position="right"]:has(.claude-hook-toast) {
-  right: 28px;
+  right: 24px;
+}
+
+@media (min-width: 1360px) {
+  [data-sonner-toaster][data-x-position="right"]:has(.claude-hook-toast) {
+    right: min(420px, calc(100vw - 1040px));
+  }
 }
 
 [data-sonner-toaster][data-y-position="top"]:has(.claude-hook-toast) {
@@ -2595,17 +2645,17 @@
   --claude-hook-toast-muted: rgba(226, 232, 240, 0.76);
   position: relative;
   display: flex;
-  width: min(340px, calc(100vw - 56px));
-  gap: 9px;
+  width: min(316px, calc(100vw - 48px));
+  gap: 8px;
   overflow: hidden;
   border: 0;
-  border-radius: 12px;
-  padding: 9px 42px 9px 11px;
+  border-radius: 11px;
+  padding: 8px 36px 8px 10px;
   background: var(--claude-hook-toast-surface-strong);
   color: var(--claude-hook-toast-text);
   box-shadow:
-    0 14px 34px rgba(0, 0, 0, 0.38),
-    0 4px 14px color-mix(in srgb, var(--claude-hook-toast-accent) 10%, transparent);
+    0 12px 28px rgba(0, 0, 0, 0.34),
+    0 3px 12px color-mix(in srgb, var(--claude-hook-toast-accent) 9%, transparent);
 }
 
 .claude-hook-toast[data-variant="finished"] {
@@ -2622,13 +2672,13 @@
 
 .claude-hook-toast__icon {
   display: inline-flex;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--claude-hook-toast-accent-soft);
   color: var(--claude-hook-toast-accent);
 }
@@ -2680,8 +2730,8 @@
 .claude-hook-toast__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 7px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .claude-hook-toast__action,
@@ -2689,11 +2739,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
+  min-height: 23px;
   border: 0;
   border-radius: 999px;
-  padding: 0 11px;
-  font-size: 12px;
+  padding: 0 10px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
   transition:
@@ -2730,11 +2780,11 @@
 
 .claude-hook-toast__close {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 5px;
+  right: 5px;
   display: inline-flex;
-  width: 29px;
-  height: 29px;
+  width: 27px;
+  height: 27px;
   align-items: center;
   justify-content: center;
   border: 0;
