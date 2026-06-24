@@ -3,7 +3,7 @@ import { useTerminalStore } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useCommandPaletteStore } from "../components/CommandPalette";
 import { useHistoryStore } from "../stores/historyStore";
-import { confirmTerminalTabClose } from "../lib/terminalCloseConfirm";
+import { TERMINAL_TAB_CLOSE_REQUEST_EVENT, type TerminalTabCloseRequestDetail } from "../lib/terminalCloseConfirm";
 
 /** Convert a KeyboardEvent to a combo string like "Ctrl+Shift+T" */
 export function eventToCombo(e: KeyboardEvent): string {
@@ -91,7 +91,7 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
       }
 
       const terminalState = useTerminalStore.getState();
-      const { sessions, activeSessionId, setActive, closeSession, createSession } = terminalState;
+      const { sessions, activeSessionId, setActive, createSession } = terminalState;
       const activeSession = activeSessionId ? sessions.find((session) => session.id === activeSessionId) : null;
       const newTerminalCwd = activeSession?.kind === "subagent-transcript" ? undefined : activeSession?.cwd;
       const newTerminalTitle = activeSession?.kind === "subagent-transcript" ? "Terminal" : activeSession?.title ?? "Terminal";
@@ -121,7 +121,11 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
       if (isShortcutMatch(combo, shortcuts.closeTerminal)) {
         if (viewMode === "compact") return;
         e.preventDefault();
-        if (activeSessionId && confirmTerminalTabClose()) closeSession(activeSessionId);
+        if (activeSessionId) {
+          window.dispatchEvent(new CustomEvent<TerminalTabCloseRequestDetail>(TERMINAL_TAB_CLOSE_REQUEST_EVENT, {
+            detail: { sessionIds: [activeSessionId] },
+          }));
+        }
         return;
       }
     };

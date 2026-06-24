@@ -28,16 +28,18 @@ Add an optional confirmation prompt when closing terminal tabs so users can avoi
 
 - Add a persisted boolean setting for terminal tab close confirmation.
 - Add a Settings switch for the user to enable/disable the prompt.
-- When enabled, closing terminal tabs should require confirmation before `closeSession` is called.
+- When enabled, closing terminal tabs should show an in-app bubble/popover confirmation before `closeSession` is called.
+- The prompt must appear before any terminal session is closed, including tab close buttons, terminal context menu close actions, and the close-terminal keyboard shortcut.
 - When disabled, existing close behavior should stay unchanged.
 
 ## Acceptance Criteria (evolving)
 
 - [ ] Settings has a switch for terminal tab close confirmation.
 - [ ] Existing installs default to no prompt unless the switch is enabled.
-- [ ] Clicking a terminal tab close button prompts before closing when enabled.
-- [ ] Terminal tab context menu close actions prompt before closing when enabled.
-- [ ] Keyboard shortcut close action prompts before closing when enabled.
+- [ ] Clicking a terminal tab close button shows an app-styled bubble confirmation before closing when enabled.
+- [ ] Terminal tab context menu close actions show one app-styled bubble confirmation before closing when enabled.
+- [ ] Keyboard shortcut close action shows an app-styled bubble confirmation before closing when enabled.
+- [ ] No terminal session is closed until the user clicks the bubble confirm action.
 - [ ] `npx tsc --noEmit` passes.
 - [ ] Manual desktop UI verification checklist is provided instead of auto-starting the Tauri app.
 

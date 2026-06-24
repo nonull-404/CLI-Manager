@@ -41,11 +41,15 @@ import {
 import { SubagentTranscriptView } from "./terminal/SubagentTranscriptView";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
-import { Terminal, Plus, ListClockIcon, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder } from "./icons";
+import { Terminal, Plus, ListClockIcon, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check } from "./icons";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
-import { confirmTerminalTabClose } from "../lib/terminalCloseConfirm";
+import {
+  shouldConfirmTerminalTabClose,
+  TERMINAL_TAB_CLOSE_REQUEST_EVENT,
+  type TerminalTabCloseRequestDetail,
+} from "../lib/terminalCloseConfirm";
 import type { HistorySourceFilter, Project, TerminalSession, TreeNode } from "../lib/types";
 import {
   ContextMenu,
@@ -58,6 +62,7 @@ import {
   ContextMenuSubContent,
 } from "./ui/context-menu";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Button } from "./ui/button";
 import { getTerminalTheme } from "../lib/terminalThemes";
 
 const HistoryWorkspace = lazy(() =>
@@ -110,6 +115,13 @@ type SplitPickerAlign = "start" | "end";
 type SplitPickerState = {
   sessionId: string;
   direction: TerminalPaneSplitDirection;
+  x: number;
+  y: number;
+  align: SplitPickerAlign;
+} | null;
+
+type TerminalCloseConfirmState = {
+  sessionIds: string[];
   x: number;
   y: number;
   align: SplitPickerAlign;
@@ -206,7 +218,7 @@ interface SortableTabProps {
   notification: TabNotificationState;
   vendor?: VendorKey | null;
   onActivate: () => void;
-  onClose: () => void;
+  onClose: (anchor?: SplitPickerAnchor) => void;
   onStartEdit: () => void;
   onSubmitEdit: (title: string) => void;
   onCancelEdit: () => void;
@@ -344,7 +356,7 @@ function SortableTab({
             <span className="min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
           )}
           <button
-            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            onClick={(e) => { e.stopPropagation(); onClose(e.currentTarget.getBoundingClientRect()); }}
             onPointerDown={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
             className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
@@ -567,26 +579,26 @@ function PaneTabBar({
     onActivateSession(session.id);
   }, [onActivateSession, paneSessions]);
 
-  const closePaneSessions = useCallback((sessionIds: string[]) => {
-    onCloseSessions(sessionIds);
+  const closePaneSessions = useCallback((sessionIds: string[], anchor?: SplitPickerAnchor) => {
+    onCloseSessions(sessionIds, anchor);
   }, [onCloseSessions]);
 
-  const closeOtherPaneSessions = useCallback((sessionId: string) => {
+  const closeOtherPaneSessions = useCallback((sessionId: string, anchor?: SplitPickerAnchor) => {
     const index = pane.sessionIds.indexOf(sessionId);
     if (index < 0) return;
-    closePaneSessions(pane.sessionIds.filter((id) => id !== sessionId));
+    closePaneSessions(pane.sessionIds.filter((id) => id !== sessionId), anchor);
   }, [closePaneSessions, pane.sessionIds]);
 
-  const closePaneSessionsToLeft = useCallback((sessionId: string) => {
+  const closePaneSessionsToLeft = useCallback((sessionId: string, anchor?: SplitPickerAnchor) => {
     const index = pane.sessionIds.indexOf(sessionId);
     if (index <= 0) return;
-    closePaneSessions(pane.sessionIds.slice(0, index));
+    closePaneSessions(pane.sessionIds.slice(0, index), anchor);
   }, [closePaneSessions, pane.sessionIds]);
 
-  const closePaneSessionsToRight = useCallback((sessionId: string) => {
+  const closePaneSessionsToRight = useCallback((sessionId: string, anchor?: SplitPickerAnchor) => {
     const index = pane.sessionIds.indexOf(sessionId);
     if (index < 0) return;
-    closePaneSessions(pane.sessionIds.slice(index + 1));
+    closePaneSessions(pane.sessionIds.slice(index + 1), anchor);
   }, [closePaneSessions, pane.sessionIds]);
 
   useEffect(() => {
@@ -684,7 +696,7 @@ function PaneTabBar({
               notification={tabNotifications[session.id] ?? "none"}
               vendor={inferSessionVendor(session)}
               onActivate={() => onActivateSession(session.id)}
-              onClose={() => closePaneSessions([session.id])}
+              onClose={(anchor) => closePaneSessions([session.id], anchor)}
               onStartEdit={() => onStartEdit(session.id)}
               onSubmitEdit={(title) => onSubmitEdit(session.id, title)}
               onCancelEdit={onCancelEdit}
@@ -692,10 +704,10 @@ function PaneTabBar({
               menuStyle={tabMenuStyle}
               menuContent={(getAnchor) => (
                 <>
-                  <ContextMenuItem onSelect={() => closePaneSessions([session.id])}>关闭终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => closeOtherPaneSessions(session.id)}>关闭其它终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => closePaneSessionsToLeft(session.id)}>关闭左侧终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id)}>关闭右侧终端</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closePaneSessions([session.id], getAnchor())}>关闭终端</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closeOtherPaneSessions(session.id, getAnchor())}>关闭其它终端</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closePaneSessionsToLeft(session.id, getAnchor())}>关闭左侧终端</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id, getAnchor())}>关闭右侧终端</ContextMenuItem>
                   <ContextMenuItem onSelect={onNewTab}>新建终端</ContextMenuItem>
                   <ContextMenuItem onSelect={() => onDuplicateSession(session)}>复制</ContextMenuItem>
                   {terminalBackgroundEnabled && terminalBackgroundImagePath && (
@@ -976,7 +988,7 @@ interface SplitProjectPickerProps {
   menuStyle: CSSProperties;
   onSelectEmpty: () => void;
   onSelectProject: (project: Project) => void;
-  onClose: () => void;
+  onClose: (anchor?: SplitPickerAnchor) => void;
   shouldIgnoreOutsideInteraction: () => boolean;
 }
 
@@ -1088,6 +1100,54 @@ function SplitProjectPicker({ picker, tree, menuStyle, onSelectEmpty, onSelectPr
   );
 }
 
+function TerminalCloseConfirmBubble({
+  confirm,
+  menuStyle,
+  onConfirm,
+  onClose,
+}: {
+  confirm: TerminalCloseConfirmState;
+  menuStyle: CSSProperties;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const anchorStyle: CSSProperties = confirm
+    ? { position: "fixed", left: confirm.x, top: confirm.y, width: 1, height: 1 }
+    : { position: "fixed", left: 0, top: 0, width: 1, height: 1 };
+
+  return (
+    <Popover open={confirm !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <PopoverAnchor asChild>
+        <span className="pointer-events-none" style={anchorStyle} aria-hidden="true" />
+      </PopoverAnchor>
+      <PopoverContent
+        align={confirm?.align ?? "end"}
+        className="terminal-skin w-auto p-1.5"
+        style={menuStyle}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
+        <div className="flex items-center gap-1">
+          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onClose} aria-label="取消关闭终端" title="取消关闭终端">
+            <X size={13} strokeWidth={2.2} aria-hidden="true" />
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-6 px-1.5 text-[11px]"
+            onClick={onConfirm}
+            aria-label="确认关闭终端"
+            title="确认关闭终端"
+          >
+            <Check size={12} strokeWidth={2.2} aria-hidden="true" />
+            <span>关闭</span>
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function SortableToolbarButton({
   id,
   isDragging,
@@ -1167,6 +1227,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"terminal" | "history">("terminal");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
+  const [closeConfirm, setCloseConfirm] = useState<TerminalCloseConfirmState>(null);
   const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null);
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
@@ -1291,11 +1352,71 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     setActive(sessionId);
   }, [setActive]);
 
-  const handleCloseSessions = useCallback((sessionIds: string[]) => {
+  const resolveCloseConfirmAnchor = useCallback((anchor?: SplitPickerAnchor) => {
+    const rawX = anchor ? ("right" in anchor ? anchor.right : anchor.x) : window.innerWidth - 72;
+    const rawY = anchor ? ("bottom" in anchor ? anchor.bottom : anchor.y) : 56;
+    const align: SplitPickerAlign = anchor && "right" in anchor ? "end" : "start";
+
+    return {
+      x: Math.min(Math.max(rawX, 16), window.innerWidth - 16),
+      y: Math.min(Math.max(rawY, 44), window.innerHeight - 16),
+      align,
+    };
+  }, []);
+
+  const findCloseConfirmAnchor = useCallback((sessionIds: string[]): SplitPickerAnchor | undefined => {
+    const targetIds = new Set(sessionIds);
+    const tab = Array.from(document.querySelectorAll<HTMLElement>("[data-terminal-tab-id]"))
+      .find((node) => targetIds.has(node.dataset.terminalTabId ?? ""));
+    return tab?.getBoundingClientRect();
+  }, []);
+
+  const closeSessionIds = useCallback((sessionIds: string[]) => {
+    sessionIds.forEach((sessionId) => void closeSession(sessionId));
+  }, [closeSession]);
+
+  const handleCloseSessions = useCallback((sessionIds: string[], anchor?: SplitPickerAnchor) => {
     const uniqueSessionIds = Array.from(new Set(sessionIds)).filter((sessionId) => sessions.some((session) => session.id === sessionId));
-    if (!confirmTerminalTabClose(uniqueSessionIds.length)) return;
-    uniqueSessionIds.forEach((sessionId) => void closeSession(sessionId));
-  }, [closeSession, sessions]);
+    if (uniqueSessionIds.length === 0) return;
+
+    if (!shouldConfirmTerminalTabClose(uniqueSessionIds.length)) {
+      closeSessionIds(uniqueSessionIds);
+      return;
+    }
+
+    const position = resolveCloseConfirmAnchor(anchor ?? findCloseConfirmAnchor(uniqueSessionIds));
+    setCloseConfirm({
+      sessionIds: uniqueSessionIds,
+      ...position,
+    });
+  }, [closeSessionIds, findCloseConfirmAnchor, resolveCloseConfirmAnchor, sessions]);
+
+  const confirmCloseSessions = useCallback(() => {
+    if (!closeConfirm) return;
+    const sessionIds = closeConfirm.sessionIds;
+    setCloseConfirm(null);
+    closeSessionIds(sessionIds);
+  }, [closeConfirm, closeSessionIds]);
+
+  const cancelCloseSessions = useCallback(() => {
+    setCloseConfirm(null);
+  }, []);
+
+  useEffect(() => {
+    const handleCloseRequest = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalTabCloseRequestDetail>).detail;
+      const requestedSessionIds = detail?.sessionIds?.length
+        ? detail.sessionIds
+        : activeSessionId
+          ? [activeSessionId]
+          : [];
+      if (requestedSessionIds.length === 0) return;
+      handleCloseSessions(requestedSessionIds, findCloseConfirmAnchor(requestedSessionIds));
+    };
+
+    window.addEventListener(TERMINAL_TAB_CLOSE_REQUEST_EVENT, handleCloseRequest);
+    return () => window.removeEventListener(TERMINAL_TAB_CLOSE_REQUEST_EVENT, handleCloseRequest);
+  }, [activeSessionId, findCloseConfirmAnchor, handleCloseSessions]);
 
   const ensureStatsPanelAllowed = useCallback(async () => {
     try {
@@ -1722,6 +1843,12 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
         onSelectProject={handleSplitProject}
         onClose={handleCloseSplitPicker}
         shouldIgnoreOutsideInteraction={shouldIgnoreSplitPickerOutsideInteraction}
+      />
+      <TerminalCloseConfirmBubble
+        confirm={closeConfirm}
+        menuStyle={splitPickerMenuStyle}
+        onConfirm={confirmCloseSessions}
+        onClose={cancelCloseSessions}
       />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
