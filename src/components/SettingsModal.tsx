@@ -13,6 +13,7 @@ import { ProviderSettingsPage } from "./settings/pages/ProviderSettingsPage";
 import { ModelPricingSettingsPage } from "./settings/pages/ModelPricingSettingsPage";
 import { AboutSettingsPage } from "./settings/pages/AboutSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useI18n, type TranslationKey } from "../lib/i18n";
 
 export type SettingsTab =
   | "general"
@@ -26,10 +27,10 @@ export type SettingsTab =
   | "about";
 
 interface SettingsTabConfig {
-  label: string;
-  title: string;
-  description: string;
-  searchPlaceholder?: string;
+  label: TranslationKey;
+  title: TranslationKey;
+  description: TranslationKey;
+  searchPlaceholder?: TranslationKey;
 }
 
 const SETTINGS_TAB_ORDER: SettingsTab[] = [
@@ -46,53 +47,53 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
 
 const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   general: {
-    label: "通用",
-    title: "通用设置",
-    description: "配置应用主题、配色、界面字体、侧栏与行为偏好。",
+    label: "settings.tabs.general.label",
+    title: "settings.tabs.general.title",
+    description: "settings.tabs.general.description",
   },
   "terminal-theme": {
-    label: "终端设置",
-    title: "终端设置",
-    description: "配置终端行为、主题、字体、Shell、背景与实时预览。",
+    label: "settings.tabs.terminal.label",
+    title: "settings.tabs.terminal.title",
+    description: "settings.tabs.terminal.description",
   },
   shortcuts: {
-    label: "快捷键",
-    title: "快捷键",
-    description: "录制、取消和恢复默认快捷键绑定。",
-    searchPlaceholder: "搜索快捷键",
+    label: "settings.tabs.shortcuts.label",
+    title: "settings.tabs.shortcuts.title",
+    description: "settings.tabs.shortcuts.description",
+    searchPlaceholder: "settings.tabs.shortcuts.search",
   },
   templates: {
-    label: "命令模板",
-    title: "命令模板",
-    description: "管理全局模板与项目模板的新增、编辑与删除。",
-    searchPlaceholder: "搜索命令模板",
+    label: "settings.tabs.templates.label",
+    title: "settings.tabs.templates.title",
+    description: "settings.tabs.templates.description",
+    searchPlaceholder: "settings.tabs.templates.search",
   },
   providers: {
-    label: "供应商",
-    title: "供应商 (cc-switch)",
-    description: "只读解析 cc-switch 数据库，查看各 CLI 的 API 供应商配置。",
-    searchPlaceholder: "搜索供应商",
+    label: "settings.tabs.providers.label",
+    title: "settings.tabs.providers.title",
+    description: "settings.tabs.providers.description",
+    searchPlaceholder: "settings.tabs.providers.search",
   },
   "model-pricing": {
-    label: "模型价格",
-    title: "模型价格",
-    description: "管理本地模型定价、识别历史模型，并从 LiteLLM / OpenRouter 同步候选价格。",
-    searchPlaceholder: "搜索模型价格",
+    label: "settings.tabs.modelPricing.label",
+    title: "settings.tabs.modelPricing.title",
+    description: "settings.tabs.modelPricing.description",
+    searchPlaceholder: "settings.tabs.modelPricing.search",
   },
   sync: {
-    label: "同步",
-    title: "同步",
-    description: "选择云端（WebDAV）或本地目录方式同步配置。",
+    label: "settings.tabs.sync.label",
+    title: "settings.tabs.sync.title",
+    description: "settings.tabs.sync.description",
   },
   hooks: {
-    label: "Hook 设置",
-    title: "Hook 设置",
-    description: "安装或移除 Claude Code 到 CLI-Manager 标签通知的桥接脚本。",
+    label: "settings.tabs.hooks.label",
+    title: "settings.tabs.hooks.title",
+    description: "settings.tabs.hooks.description",
   },
   about: {
-    label: "关于",
-    title: "关于 CLI-Manager",
-    description: "查看应用更新、项目介绍、开源地址、操作手册与作者信息。",
+    label: "settings.tabs.about.label",
+    title: "settings.tabs.about.title",
+    description: "settings.tabs.about.description",
   },
 };
 
@@ -109,6 +110,7 @@ export function SettingsModal({ open, onClose, initialTab }: Props) {
   const [closing, setClosing] = useState(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
+  const { t } = useI18n();
   useFocusTrap(dialogRef, mounted && !closing);
 
   useEffect(() => {
@@ -144,7 +146,7 @@ export function SettingsModal({ open, onClose, initialTab }: Props) {
 
   if (!mounted) return null;
 
-  const tabs = SETTINGS_TAB_ORDER.map((id) => ({ id, label: SETTINGS_TAB_CONFIG[id].label }));
+  const tabs = SETTINGS_TAB_ORDER.map((id) => ({ id, label: t(SETTINGS_TAB_CONFIG[id].label) }));
   const activeConfig = SETTINGS_TAB_CONFIG[activeTab];
   const activeContent = (() => {
     if (activeTab === "general") return <GeneralSettingsPage />;
@@ -176,16 +178,16 @@ export function SettingsModal({ open, onClose, initialTab }: Props) {
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
-          aria-label="设置窗口"
+          aria-label={t("settings.dialogLabel")}
         >
           <SettingsLayout
             tabs={tabs}
             activeTab={activeTab}
             onTabChange={setActiveTab}
-            title={activeConfig.title}
-            description={activeConfig.description}
+            title={t(activeConfig.title)}
+            description={t(activeConfig.description)}
             searchValue={searchValue}
-            searchPlaceholder={activeConfig.searchPlaceholder}
+            searchPlaceholder={activeConfig.searchPlaceholder ? t(activeConfig.searchPlaceholder) : undefined}
             onSearchChange={setSearchValue}
             onClose={onClose}
           >

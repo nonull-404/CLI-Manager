@@ -4,10 +4,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { logWarn } from "../lib/logger";
 import appIcon32 from "../assets/app-icon-32.png";
+import { useI18n } from "../lib/i18n";
 
 const IN_TAURI = isTauri();
 
 export function WindowTitleBar() {
+  const { t } = useI18n();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -73,8 +75,8 @@ export function WindowTitleBar() {
           <button
             type="button"
             className="titlebar-btn"
-            aria-label="最小化"
-            title="最小化"
+            aria-label={t("window.minimize")}
+            title={t("window.minimize")}
             onClick={() => runWindowAction(() => getCurrentWindow().minimize())}
           >
             <Minus size={14} />
@@ -82,8 +84,8 @@ export function WindowTitleBar() {
           <button
             type="button"
             className="titlebar-btn"
-            aria-label={maximized ? "还原" : "最大化"}
-            title={maximized ? "还原" : "最大化"}
+            aria-label={maximized ? t("window.restore") : t("window.maximize")}
+            title={maximized ? t("window.restore") : t("window.maximize")}
             onClick={() => runWindowAction(() => getCurrentWindow().toggleMaximize())}
           >
             {maximized ? <Copy size={12} /> : <Square size={12} />}
@@ -91,8 +93,8 @@ export function WindowTitleBar() {
           <button
             type="button"
             className="titlebar-btn titlebar-btn-close"
-            aria-label="关闭"
-            title="关闭"
+            aria-label={t("window.close")}
+            title={t("window.close")}
             onClick={() => runWindowAction(() => getCurrentWindow().close())}
           >
             <X size={14} />

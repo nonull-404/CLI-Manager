@@ -6,6 +6,7 @@ import type { TreeNode as TNode } from "../../lib/types";
 import { useTreeActions } from "./TreeContext";
 import { Folder, Terminal, Play, ChevronRight, AlertTriangle } from "../icons";
 import { VendorIcon, inferVendor } from "../VendorIcon";
+import { useI18n } from "../../lib/i18n";
 
 function InlineRename({ initial, onConfirm, onCancel }: { initial: string; onConfirm: (name: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState(initial);
@@ -47,6 +48,7 @@ interface TreeNodeItemProps {
 }
 
 function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }: TreeNodeItemProps) {
+  const { t } = useI18n();
   const actions = useTreeActions();
   const itemId = node.type === "project" ? node.project.id : node.group.id;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: itemId });
@@ -102,8 +104,8 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
             {pathInvalid && (
               <span
                 className="ui-tree-warning-chip inline-flex shrink-0 items-center justify-center rounded-full"
-                title="路径不存在"
-                aria-label="路径不存在"
+                title={t("sidebar.tree.pathMissing")}
+                aria-label={t("sidebar.tree.pathMissing")}
               >
                 <AlertTriangle size={12} strokeWidth={1.5} />
               </span>
@@ -113,7 +115,7 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
             className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/item:flex group-focus-within/item:flex"
             onDoubleClick={(e) => e.stopPropagation()}
           >
-            <button onClick={(e) => { e.stopPropagation(); actions.onOpenProject(p); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="Open terminal">
+            <button onClick={(e) => { e.stopPropagation(); actions.onOpenProject(p); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title={t("sidebar.tree.openTerminal")}>
               <Play size={14} strokeWidth={1.5} />
             </button>
           </span>
@@ -182,7 +184,7 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
           <span className="ui-tree-leading-icon"><Folder size={16} strokeWidth={1.5} /></span>
           <span className="flex-1 text-left truncate">{g.name}</span>
           <span className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/grp:flex group-focus-within/grp:flex">
-            <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="启动本目录"><Play size={14} strokeWidth={1.5} /></button>
+            <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title={t("sidebar.tree.startDirectory")}><Play size={14} strokeWidth={1.5} /></button>
           </span>
         </div>
 

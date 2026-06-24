@@ -5,6 +5,7 @@ import { BarChart3, Settings } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../SettingsModal";
 import { useSettingsStore, type SidebarToolbarVisibilitySettings } from "../../stores/settingsStore";
+import { useI18n } from "../../lib/i18n";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
 type HookLightStatus = "missing" | "partial" | "installed";
@@ -52,6 +53,7 @@ function getHookLightStatus(status: HookSettingsStatus | null): HookLightStatus 
 }
 
 function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTab) => void }) {
+  const { t } = useI18n();
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const [status, setStatus] = useState<HookSettingsStatus | null>(null);
@@ -72,7 +74,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
         })
       );
     } catch (error) {
-      toast.error("刷新 Hook 状态失败", { description: getErrorMessage(error) });
+      toast.error(t("sidebar.hook.refreshFailed"), { description: getErrorMessage(error) });
     } finally {
       setLoading(false);
     }
@@ -85,7 +87,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   const reinstallHooks = async () => {
     const tools = getApplicableTools(status);
     if (tools.length === 0) {
-      toast.info("请先选择 Hook 配置目录");
+      toast.info(t("sidebar.hook.chooseConfigDir"));
       onOpenSettings("hooks");
       return;
     }
@@ -101,9 +103,9 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
         await invoke<HookSettingsStatus>("hook_settings_install_codex", { selectedDir, codexSelectedDir });
       }
       await refreshStatus();
-      toast.success("Hook 已重新安装");
+      toast.success(t("sidebar.hook.reinstalled"));
     } catch (error) {
-      toast.error("重新安装 Hook 失败", { description: getErrorMessage(error) });
+      toast.error(t("sidebar.hook.reinstallFailed"), { description: getErrorMessage(error) });
       await refreshStatus();
     } finally {
       setWorking(false);
@@ -120,10 +122,10 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
 
   const title =
     lightStatus === "installed"
-      ? "Hook 正常，点击打开 Hook 设置"
+      ? t("sidebar.hook.ok")
       : lightStatus === "partial"
-        ? "Hook 部分安装，点击重新安装"
-        : "Hook 未安装，点击安装";
+        ? t("sidebar.hook.partial")
+        : t("sidebar.hook.missing");
 
   return (
     <button
@@ -132,7 +134,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       disabled={loading || working}
       className="ui-focus-ring ui-icon-action ui-sidebar-action-hook"
       data-hook-status={lightStatus}
-      title={working ? "Hook 处理中..." : title}
+      title={working ? t("sidebar.hook.working") : title}
       aria-label={title}
     >
       <span className="ui-sidebar-hook-light" aria-hidden="true" />
@@ -141,12 +143,13 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
 }
 
 export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarVisibility }: SidebarFooterProps) {
+  const { t } = useI18n();
   const statsButton = toolbarVisibility.stats ? (
     <button
       onClick={onOpenStats}
       className="ui-focus-ring ui-icon-action ui-sidebar-action-stats"
-      title="历史用量统计"
-      aria-label="打开历史用量统计看板"
+      title={t("sidebar.stats")}
+      aria-label={t("sidebar.openStats")}
     >
       <BarChart3 size={14} strokeWidth={1.5} />
     </button>
@@ -156,8 +159,8 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
     <button
       onClick={() => onOpenSettings()}
       className="ui-focus-ring ui-icon-action ui-sidebar-action-settings"
-      title="设置"
-      aria-label="打开设置"
+      title={t("sidebar.settings")}
+      aria-label={t("sidebar.openSettings")}
     >
       <Settings size={14} strokeWidth={1.5} />
     </button>

@@ -31,6 +31,7 @@ import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
 import { useModelPricingStore } from "./stores/modelPricingStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
 import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contrast";
+import { useI18n } from "./lib/i18n";
 import "./App.css";
 
 const appStartAt =
@@ -308,6 +309,7 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
 }
 
 function App() {
+  const { language, t } = useI18n();
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
@@ -498,7 +500,8 @@ function App() {
     document.documentElement.setAttribute("data-theme", resolvedTheme);
     document.documentElement.setAttribute("data-light-palette", lightThemePalette);
     document.documentElement.setAttribute("data-dark-palette", darkThemePalette);
-  }, [resolvedTheme, lightThemePalette, darkThemePalette]);
+    document.documentElement.setAttribute("lang", language);
+  }, [resolvedTheme, lightThemePalette, darkThemePalette, language]);
 
   useEffect(() => {
     const root = document.documentElement.style;
@@ -773,7 +776,7 @@ function App() {
   return (
     <div className="ui-workspace-shell flex h-screen flex-col">
       <a href="#main-content" className="skip-link">
-        跳转到主内容
+        {t("app.skipToMain")}
       </a>
       {(!terminalFullscreen || viewMode === "compact") && <WindowTitleBar />}
       {viewMode === "compact" ? (

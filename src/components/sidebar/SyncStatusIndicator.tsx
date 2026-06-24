@@ -1,6 +1,7 @@
 import { useSyncStore } from "../../stores/syncStore";
 import { Cloud } from "../icons";
 import type { SettingsTab } from "../SettingsModal";
+import { useI18n } from "../../lib/i18n";
 
 interface SyncStatusIndicatorProps {
   collapsed?: boolean;
@@ -8,6 +9,7 @@ interface SyncStatusIndicatorProps {
 }
 
 export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusIndicatorProps) {
+  const { language, t } = useI18n();
   const { status, lastSyncAt, hasPassword } = useSyncStore();
 
   const openSyncSettings = () => onOpenSettings?.("sync");
@@ -29,18 +31,18 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
   };
 
   const getStatusText = () => {
-    if (!hasPassword) return "未配置";
+    if (!hasPassword) return t("sidebar.sync.notConfigured");
     switch (status) {
       case "syncing":
-        return "同步中...";
+        return t("sidebar.sync.syncing");
       case "success":
-        return "已同步";
+        return t("sidebar.sync.success");
       case "error":
-        return "同步失败";
+        return t("sidebar.sync.error");
       case "conflict":
-        return "冲突";
+        return t("sidebar.sync.conflict");
       default:
-        return lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "--";
+        return lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" }) : "--";
     }
   };
 
@@ -49,8 +51,8 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
       <button
         onClick={openSyncSettings}
         className={`ui-focus-ring ui-icon-action ${getStatusColor()}`}
-        title={hasPassword ? `云同步: ${getStatusText()}` : "云同步未配置 (点击设置)"}
-        aria-label={hasPassword ? "打开同步设置" : "配置云同步"}
+        title={hasPassword ? t("sidebar.sync.configuredTitle", { status: getStatusText() }) : t("sidebar.sync.unconfiguredTitle")}
+        aria-label={hasPassword ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
         <Cloud size={14} strokeWidth={1.5} />
       </button>
@@ -62,8 +64,8 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
       <button
         onClick={openSyncSettings}
         className={`ui-sidebar-sync-link ${getStatusColor()}`}
-        title={hasPassword ? "点击打开同步设置" : "点击配置云同步"}
-        aria-label={hasPassword ? "打开同步设置" : "配置云同步"}
+        title={hasPassword ? t("sidebar.sync.openTitle") : t("sidebar.sync.configureTitle")}
+        aria-label={hasPassword ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
         <Cloud size={12} strokeWidth={1.5} />
         <span className="text-xs">{getStatusText()}</span>

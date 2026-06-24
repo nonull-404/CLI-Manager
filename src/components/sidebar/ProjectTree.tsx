@@ -10,6 +10,7 @@ import { Folder, Plus, Terminal } from "../icons";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { TreeNodeItem } from "./TreeNodeItem";
 import { useTreeActions, type TreeActions } from "./TreeContext";
+import { useI18n } from "../../lib/i18n";
 
 interface ProjectTreeProps {
   tree: TNode[];
@@ -149,6 +150,7 @@ export function ProjectTree({
   onRetry,
   onExpandSidebar,
 }: ProjectTreeProps) {
+  const { t } = useI18n();
   const actions = useTreeActions();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [focusedNodeKey, setFocusedNodeKey] = useState<string | null>(null);
@@ -315,8 +317,8 @@ export function ProjectTree({
             <button
               onClick={onQuickAddProject}
               className={`ui-flat-action ui-primary-action px-0 ${buttonSize}`}
-              title="快速添加项目"
-              aria-label="快速添加项目"
+              title={t("sidebar.tree.quickAddProject")}
+              aria-label={t("sidebar.tree.quickAddProject")}
             >
               <Plus size={12} strokeWidth={2} />
             </button>
@@ -387,7 +389,7 @@ export function ProjectTree({
         >
           <div
             role="tree"
-            aria-label="项目树（上下键导航，回车打开，空格选中）"
+            aria-label={t("sidebar.tree.aria")}
             aria-multiselectable="true"
             onKeyDown={handleTreeKeyDown}
           >
@@ -411,18 +413,18 @@ export function ProjectTree({
       {tree.length === 0 && loadError && (
         <EmptyState
           icon={<Terminal size={40} strokeWidth={1} />}
-          title="项目加载失败"
+          title={t("sidebar.tree.loadFailed")}
           description={loadError}
-          action={{ label: "重试", onClick: onRetry }}
+          action={{ label: t("sidebar.tree.retry"), onClick: onRetry }}
         />
       )}
 
       {tree.length === 0 && !loadError && (
         <EmptyState
           icon={<Terminal size={40} strokeWidth={1} />}
-          title="欢迎使用 CLI-Manager"
-          description="集中管理你的开发项目终端。添加项目后即可快速启动 CLI 工具。"
-          action={{ label: "快速添加项目", onClick: onQuickAddProject }}
+          title={t("sidebar.tree.welcome")}
+          description={t("sidebar.tree.welcomeDescription")}
+          action={{ label: t("sidebar.tree.quickAddProject"), onClick: onQuickAddProject }}
         />
       )}
     </div>
@@ -430,6 +432,7 @@ export function ProjectTree({
 }
 
 function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: string }) {
+  const { t } = useI18n();
   const actions = useTreeActions();
   if (node.type !== "project") return null;
   const p = node.project;
@@ -441,7 +444,7 @@ function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: s
       className={`ui-tree-collapsed-item my-0.5 flex ${sizeClass} items-center justify-center rounded-xl transition-colors`}
       data-selected={selected ? "true" : "false"}
       title={p.name}
-      aria-label={`打开项目 ${p.name}`}
+      aria-label={t("sidebar.tree.openProject", { name: p.name })}
       onClick={() => actions.onOpenProject(p)}
       onContextMenu={(e) => actions.onContextMenuProject(e, p)}
     >
@@ -466,6 +469,7 @@ function CollapsedGroupButton({
   onExpandSidebar: () => void;
 }) {
   const actions = useTreeActions();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
   const count = useMemo(() => countProjects(node), [node]);
@@ -506,7 +510,7 @@ function CollapsedGroupButton({
         <button
           className={`ui-flat-action ui-tree-collapsed-item relative my-0.5 px-0 text-primary ${sizeClass}`}
           title={g.name}
-          aria-label={`目录 ${g.name}（${count} 个项目）`}
+          aria-label={t("sidebar.tree.directoryProjectCount", { name: g.name, count })}
           onMouseEnter={openNow}
           onMouseLeave={scheduleClose}
           onClick={handleClick}
@@ -532,13 +536,14 @@ function CollapsedGroupButton({
 }
 
 function GroupFlyout({ node, onPick }: { node: TNode; onPick: () => void }) {
+  const { t } = useI18n();
   const actions = useTreeActions();
   if (node.type !== "group") return null;
   return (
     <div className="flex max-h-[60vh] min-w-[176px] max-w-[280px] flex-col overflow-y-auto">
       <div className="truncate px-2 py-1 text-[11px] font-semibold text-on-surface-variant">{node.group.name}</div>
       {node.children.length === 0 ? (
-        <div className="px-2 py-1 text-[11px] text-text-muted">空目录</div>
+        <div className="px-2 py-1 text-[11px] text-text-muted">{t("sidebar.tree.emptyDirectory")}</div>
       ) : (
         renderFlyoutNodes(node.children, 0, actions, onPick)
       )}

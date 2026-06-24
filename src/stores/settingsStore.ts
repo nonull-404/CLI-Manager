@@ -50,6 +50,7 @@ export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 export type TerminalNewlineShortcut = "Shift+Enter" | "Ctrl+Enter" | "Alt+Enter";
 export type UnsplitBehavior = "merge" | "close";
 export type FileExplorerIgnoredPaths = Record<string, string[]>;
+export type LanguagePreference = "auto" | "zh-CN" | "en-US";
 export type BatchLaunchPaneDirection = "vertical" | "horizontal";
 
 export type HookEventType =
@@ -140,6 +141,7 @@ const TERMINAL_BACKGROUND_POSITIONS: readonly TerminalBackgroundPosition[] = [
 ] as const;
 
 interface Settings {
+  language: LanguagePreference;
   theme: ThemeMode;
   lightThemePalette: LightThemePalette;
   darkThemePalette: DarkThemePalette;
@@ -204,6 +206,7 @@ interface SettingsStore extends Settings {
 }
 
 const DEFAULTS: Settings = {
+  language: "auto",
   theme: "system",
   lightThemePalette: "warm-paper",
   darkThemePalette: "night-indigo",
@@ -405,6 +408,10 @@ function migrateUnsplitBehavior(value: unknown): UnsplitBehavior {
   return value === "close" || value === "merge" ? value : DEFAULTS.unsplitBehavior;
 }
 
+function migrateLanguagePreference(value: unknown): LanguagePreference {
+  return value === "auto" || value === "zh-CN" || value === "en-US" ? value : DEFAULTS.language;
+}
+
 function migrateFileExplorerIgnoredPaths(value: unknown): FileExplorerIgnoredPaths {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
@@ -495,6 +502,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
 
     const theme = (entries.theme as ThemeMode) ?? DEFAULTS.theme;
+    entries.language = migrateLanguagePreference(entries.language);
     const debugMode = (entries.debugMode as boolean) ?? DEFAULTS.debugMode;
     const storedTerminalThemeMode = entries.terminalThemeMode as TerminalThemeMode | undefined;
     const resolvedTheme = resolveTheme(theme);

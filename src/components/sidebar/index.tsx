@@ -39,6 +39,7 @@ import {
 } from "../icons";
 import { openPath } from "@tauri-apps/plugin-opener";
 import type { SettingsTab } from "../SettingsModal";
+import { useI18n } from "../../lib/i18n";
 
 interface SidebarProps {
   onOpenSettings: (tab?: SettingsTab) => void;
@@ -92,6 +93,7 @@ function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
 }
 
 export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: SidebarProps) {
+  const { t } = useI18n();
   const {
     tree,
     projects,
@@ -439,12 +441,12 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     } catch (err) {
       const description = String(err);
       setLoadError(description);
-      toast.error("项目加载失败", { description });
+      toast.error(t("sidebar.toast.projectLoadFailed"), { description });
       logError("Failed to fetch sidebar projects", err);
     } finally {
       setInitialLoading(false);
     }
-  }, [fetchAll]);
+  }, [fetchAll, t]);
 
   useEffect(() => {
     void loadProjects();
@@ -624,22 +626,22 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       await openPath(project.path);
     } catch (err) {
       logError("Failed to open project directory", err);
-      toast.error("打开目录失败", { description: String(err) });
+      toast.error(t("sidebar.toast.openDirectoryFailed"), { description: String(err) });
     }
-  }, []);
+  }, [t]);
 
   const handleOpenProjectFiles = useCallback(async (project: Project) => {
     try {
       if (fileProject?.id !== project.id && isProjectFileDirty()) {
-        const confirmed = window.confirm("当前文件有未保存修改，切换项目会丢弃这些修改。是否继续？");
+        const confirmed = window.confirm(t("sidebar.toast.unsavedFileConfirm"));
         if (!confirmed) return;
       }
       await openFileProject(project);
     } catch (err) {
       logError("Failed to open project file browser", err);
-      toast.error("打开项目文件失败", { description: String(err) });
+      toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
     }
-  }, [fileProject?.id, openFileProject]);
+  }, [fileProject?.id, openFileProject, t]);
 
   const handleOpenProjectHistory = useCallback(
     (project: Project) => {
@@ -863,14 +865,14 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     if (!confirmAction) return null;
     if (confirmAction.kind === "delete-project") {
       return {
-        title: "确认删除终端？",
-        message: `将删除 "${confirmAction.project.name}"。此操作不可撤销。`,
-        confirmText: "删除",
+        title: t("sidebar.confirm.deleteTerminalTitle"),
+        message: t("sidebar.confirm.deleteTerminalMessage", { name: confirmAction.project.name }),
+        confirmText: t("sidebar.menu.delete"),
         danger: true,
         onConfirm: async () => {
           try {
             await deleteProject(confirmAction.project.id);
-            toast.success("终端删除成功");
+            toast.success(t("sidebar.toast.terminalDeleteSuccess"));
             setConfirmAction(null);
             if (selectedId === confirmAction.project.id) setSelectedId(null);
             setSelectedProjectIds((prev) => {
@@ -879,24 +881,24 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
               return next;
             });
           } catch (err) {
-            toast.error("终端删除失败", { description: String(err) });
+            toast.error(t("sidebar.toast.terminalDeleteFailed"), { description: String(err) });
           }
         },
       };
     }
 
     return {
-      title: "确认删除目录？",
-      message: `将删除目录 "${confirmAction.groupName}"。`,
-      confirmText: "删除",
+      title: t("sidebar.confirm.deleteGroupTitle"),
+      message: t("sidebar.confirm.deleteGroupMessage", { name: confirmAction.groupName }),
+      confirmText: t("sidebar.menu.delete"),
       danger: true,
       onConfirm: async () => {
         try {
           await deleteGroup(confirmAction.groupId);
-          toast.success("目录删除成功");
+          toast.success(t("sidebar.toast.groupDeleteSuccess"));
           setConfirmAction(null);
         } catch (err) {
-          toast.error("目录删除失败", { description: String(err) });
+          toast.error(t("sidebar.toast.groupDeleteFailed"), { description: String(err) });
         }
       },
     };
@@ -996,7 +998,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Play size={14} strokeWidth={1.5} />
-                  {compactMode ? "打开外部终端" : "打开终端"}
+                  {compactMode ? t("sidebar.menu.openExternalTerminal") : t("sidebar.menu.openTerminal")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1008,7 +1010,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <SquareSplitHorizontal size={14} strokeWidth={1.5} />
-                  向右分屏
+                  {t("sidebar.menu.splitRight")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1020,7 +1022,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <SquareSplitVertical size={14} strokeWidth={1.5} />
-                  向下分屏
+                  {t("sidebar.menu.splitDown")}
                 </button>
                 <div className="context-menu-separator" role="separator" />
                 <button
@@ -1032,7 +1034,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Copy size={14} strokeWidth={1.5} />
-                  克隆
+                  {t("sidebar.menu.clone")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1043,7 +1045,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Check size={14} strokeWidth={1.5} />
-                  {selectedProjectIds.has(contextMenu.project.id) ? "取消选中" : "加入已选"}
+                  {selectedProjectIds.has(contextMenu.project.id) ? t("sidebar.menu.deselect") : t("sidebar.menu.addToSelection")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1055,7 +1057,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   disabled={selectedProjects.length === 0}
                 >
                   <TerminalSquare size={14} strokeWidth={1.5} />
-                  启动已选 ({selectedProjects.length})
+                  {t("sidebar.menu.launchSelected", { count: selectedProjects.length })}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1066,7 +1068,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <FolderOpen size={14} strokeWidth={1.5} />
-                  打开所在目录
+                  {t("sidebar.menu.openDirectory")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1077,7 +1079,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <FileCode size={14} strokeWidth={1.5} />
-                  浏览文件
+                  {t("sidebar.menu.browseFiles")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1100,7 +1102,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                     }}
                   >
                     <ArrowLeftRight size={14} strokeWidth={1.5} />
-                    切换供应商
+                    {t("sidebar.menu.switchProvider")}
                   </button>
                 )}
                 <button
@@ -1112,7 +1114,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Pencil size={14} strokeWidth={1.5} />
-                  修改
+                  {t("sidebar.menu.edit")}
                 </button>
                 <div className="context-menu-separator" role="separator" />
                 <button
@@ -1123,7 +1125,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Trash2 size={14} strokeWidth={1.5} />
-                  删除
+                  {t("sidebar.menu.delete")}
                 </button>
               </>
             )}
@@ -1138,7 +1140,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Play size={14} strokeWidth={1.5} />
-                  {compactMode ? "打开本目录到外部终端" : "启动本目录"}
+                  {compactMode ? t("sidebar.menu.openGroupExternal") : t("sidebar.menu.startGroup")}
                 </button>
                 <div className="context-menu-separator" role="separator" />
                 <button
@@ -1151,7 +1153,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <FolderPlus size={14} strokeWidth={1.5} />
-                  新增子目录
+                  {t("sidebar.menu.newChildGroup")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1163,7 +1165,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Plus size={14} strokeWidth={1.5} />
-                  新增终端
+                  {t("sidebar.menu.newTerminal")}
                 </button>
                 <button
                   className="context-menu-item"
@@ -1175,7 +1177,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Pencil size={14} strokeWidth={1.5} />
-                  修改名称
+                  {t("sidebar.menu.rename")}
                 </button>
                 <div className="context-menu-separator" role="separator" />
                 <button
@@ -1186,7 +1188,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   }}
                 >
                   <Trash2 size={14} strokeWidth={1.5} />
-                  删除目录
+                  {t("sidebar.menu.delete")}
                 </button>
               </>
             )}

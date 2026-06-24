@@ -22,12 +22,14 @@ import {
   UI_FONT_SIZE_MIN,
   type CloseBehavior,
   type DarkThemePalette,
+  type LanguagePreference,
   type LightThemePalette,
   type SidebarDensity,
   type SidebarToolbarVisibilitySettings,
   type TerminalToolbarVisibilitySettings,
   type ThemeMode,
 } from "../../../stores/settingsStore";
+import { LANGUAGE_OPTIONS, useI18n } from "../../../lib/i18n";
 import {
   getContrastRatioFromHex,
   MIN_APPLY_CONTRAST_RATIO,
@@ -39,12 +41,6 @@ import {
   type SystemFontFamily,
 } from "../../../lib/systemFonts";
 import { FontFamilySelect } from "../FontFamilySelect";
-
-const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
-  { value: "light", label: "浅色" },
-  { value: "dark", label: "深色" },
-  { value: "system", label: "跟随系统" },
-];
 
 const LIGHT_PALETTE_OPTIONS: {
   value: LightThemePalette;
@@ -168,17 +164,6 @@ const DARK_PALETTE_OPTIONS: {
     description: "近黑碳色，高对比蓝紫强调，适合沉浸工作",
     swatches: ["#161616", "#f2f4f8", "#78a9ff"],
   },
-];
-
-const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; label: string; description: string }[] = [
-  { value: "comfortable", label: "舒适", description: "默认间距，强调可读性" },
-  { value: "compact", label: "紧凑", description: "减少行高与缩进，显示更多条目" },
-];
-
-const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
-  { value: "ask", label: "每次询问" },
-  { value: "minimize", label: "最小化到托盘" },
-  { value: "exit", label: "直接退出" },
 ];
 
 const TERMINAL_TOOLBAR_OPTIONS: { key: TerminalToolbarOptionKey; label: string }[] = [
@@ -414,6 +399,8 @@ function PaletteCard({
 }
 
 export function GeneralSettingsPage() {
+  const { t } = useI18n();
+  const language = useSettingsStore((s) => s.language);
   const theme = useSettingsStore((s) => s.theme);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
@@ -437,6 +424,37 @@ export function GeneralSettingsPage() {
   const [systemFonts, setSystemFonts] = useState<SystemFontFamily[]>([]);
   const [systemFontsLoading, setSystemFontsLoading] = useState(false);
   const [systemFontsError, setSystemFontsError] = useState<string | null>(null);
+  const themeOptions = useMemo<{ value: ThemeMode; label: string }[]>(
+    () => [
+      { value: "light", label: t("settings.options.theme.light") },
+      { value: "dark", label: t("settings.options.theme.dark") },
+      { value: "system", label: t("settings.options.theme.system") },
+    ],
+    [t]
+  );
+  const sidebarDensityOptions = useMemo<{ value: SidebarDensity; label: string; description: string }[]>(
+    () => [
+      {
+        value: "comfortable",
+        label: t("settings.options.sidebarDensity.comfortable"),
+        description: t("settings.options.sidebarDensity.comfortableDescription"),
+      },
+      {
+        value: "compact",
+        label: t("settings.options.sidebarDensity.compact"),
+        description: t("settings.options.sidebarDensity.compactDescription"),
+      },
+    ],
+    [t]
+  );
+  const closeBehaviorOptions = useMemo<{ value: CloseBehavior; label: string }[]>(
+    () => [
+      { value: "ask", label: t("settings.options.close.ask") },
+      { value: "minimize", label: t("settings.options.close.minimize") },
+      { value: "exit", label: t("settings.options.close.exit") },
+    ],
+    [t]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -449,7 +467,7 @@ export function GeneralSettingsPage() {
       })
       .catch((err) => {
         console.warn("Failed to list system fonts:", err);
-        if (!cancelled) setSystemFontsError("系统字体读取失败，已使用内置字体选项。");
+        if (!cancelled) setSystemFontsError(t("settings.general.uiFontError"));
       })
       .finally(() => {
         if (!cancelled) setSystemFontsLoading(false);
@@ -458,7 +476,7 @@ export function GeneralSettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     setUiFontSizeDraft(uiFontSize);
@@ -490,16 +508,16 @@ export function GeneralSettingsPage() {
   // 给出可见反馈（消除“静默未应用”）；计算量极小，无需 memo。
   const uiBackgroundColor = getDefaultUiBgColor(resolvedTheme, lightThemePalette, darkThemePalette);
   const uiTextColorContrastRatio = uiTextColor ? getContrastRatioFromHex(uiTextColor, uiBackgroundColor) : null;
-  let uiTextColorHint = "仅影响除终端外的应用主文字颜色；留空时跟随当前主题。";
+  let uiTextColorHint = t("settings.general.uiTextColorDefaultHint");
   let uiTextColorHintColor = "var(--text-muted)";
   if (uiTextColorDraftInvalid) {
-    uiTextColorHint = "请输入 #RRGGBB 格式，例如 #c0caf5。";
+    uiTextColorHint = t("settings.general.uiTextColorInvalid");
     uiTextColorHintColor = "var(--danger)";
   } else if (uiTextColorContrastRatio !== null && uiTextColorContrastRatio < MIN_APPLY_CONTRAST_RATIO) {
-    uiTextColorHint = "颜色与背景过于接近，未应用。";
+    uiTextColorHint = t("settings.general.uiTextColorTooClose");
     uiTextColorHintColor = "var(--danger)";
   } else if (uiTextColorContrastRatio !== null && uiTextColorContrastRatio < MIN_READABLE_CONTRAST_RATIO) {
-    uiTextColorHint = "对比度较低，可能影响可读性。";
+    uiTextColorHint = t("settings.general.uiTextColorLowContrast");
     uiTextColorHintColor = "var(--warning)";
   }
   const uiFontFamilyOptions = useMemo(
@@ -519,26 +537,39 @@ export function GeneralSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="md">
             <Text size="sm" fw={600} c="var(--on-surface)">
-              外观
+              {t("settings.general.appearance")}
             </Text>
+
+            <Select<LanguagePreference>
+              label={t("settings.general.language")}
+              value={language}
+              onChange={(value) => {
+                if (value) void update("language", value);
+              }}
+              data={LANGUAGE_OPTIONS}
+              allowDeselect={false}
+              size="xs"
+              aria-label={t("settings.general.language")}
+              description={t("settings.general.languageDescription")}
+            />
 
             <Stack gap={6}>
               <Text size="xs" c="var(--on-surface-variant)">
-                应用主题
+                {t("settings.general.theme")}
               </Text>
               <SegmentedControl<ThemeMode>
                 value={theme}
                 onChange={(value) => void setTheme(value)}
-                data={THEME_OPTIONS}
+                data={themeOptions}
                 color="cliPrimary"
                 fullWidth
-                aria-label="应用主题"
+                aria-label={t("settings.general.theme")}
               />
             </Stack>
 
             <Stack gap="xs">
               <Text size="xs" c="var(--on-surface-variant)">
-                浅色配色
+                {t("settings.general.lightTheme")}
               </Text>
               <SimpleGrid cols={{ base: 1, md: 3 }} spacing="xs">
                 {LIGHT_PALETTE_OPTIONS.map((option) => (
@@ -556,7 +587,7 @@ export function GeneralSettingsPage() {
 
             <Stack gap="xs">
               <Text size="xs" c="var(--on-surface-variant)">
-                暗色配色
+                {t("settings.general.darkTheme")}
               </Text>
               <SimpleGrid cols={{ base: 1, md: 3 }} spacing="xs">
                 {DARK_PALETTE_OPTIONS.map((option) => (
@@ -573,26 +604,26 @@ export function GeneralSettingsPage() {
             </Stack>
 
             <FontFamilySelect
-              label="应用字体"
+              label={t("settings.general.uiFont")}
               value={uiFontFamily}
               onChange={(value) => {
                 if (value) void update("uiFontFamily", value);
               }}
               data={uiFontFamilyOptions}
               maxDropdownHeight={320}
-              nothingFoundMessage={systemFontsLoading ? "正在读取系统字体..." : "未找到匹配字体"}
+              nothingFoundMessage={systemFontsLoading ? t("settings.general.uiFontLoading") : t("settings.general.uiFontEmpty")}
               size="xs"
-              aria-label="应用字体"
+              aria-label={t("settings.general.uiFont")}
               description={
                 systemFontsError ??
-                `影响除终端外的应用整体界面字体；已读取 ${systemFonts.length} 个系统字体。终端字体在「终端设置」中单独配置。`
+                t("settings.general.uiFontDescription", { count: systemFonts.length })
               }
             />
 
             <Stack gap={6}>
               <Group justify="space-between" align="center">
                 <Text size="xs" c="var(--on-surface-variant)">
-                  应用字体大小
+                  {t("settings.general.uiFontSize")}
                 </Text>
                 <NumberInput
                   min={UI_FONT_SIZE_MIN}
@@ -605,7 +636,7 @@ export function GeneralSettingsPage() {
                   }}
                   size="xs"
                   w={84}
-                  aria-label="应用字体大小数值"
+                  aria-label={t("settings.general.uiFontSizeValue")}
                 />
               </Group>
               <Slider
@@ -616,16 +647,16 @@ export function GeneralSettingsPage() {
                 onChange={setUiFontSizeDraft}
                 onChangeEnd={(value) => commitUiFontSize(value)}
                 color="cliPrimary"
-                aria-label="应用字体大小滑杆"
+                aria-label={t("settings.general.uiFontSizeSlider")}
               />
               <Text size="xs" c="var(--text-muted)">
-                影响除内置终端外的应用界面；终端字号仍在「终端设置」中单独配置。
+                {t("settings.general.uiFontSizeDescription")}
               </Text>
             </Stack>
 
             <Stack gap={6}>
               <Text size="xs" c="var(--on-surface-variant)">
-                应用字体颜色
+                {t("settings.general.uiTextColor")}
               </Text>
               <Group gap="xs" align="flex-start" wrap="nowrap">
                 <TextInput
@@ -641,7 +672,7 @@ export function GeneralSettingsPage() {
                   onBlur={() => commitUiTextColor()}
                   w={52}
                   size="xs"
-                  aria-label="应用字体颜色选择器"
+                  aria-label={t("settings.general.uiTextColorPicker")}
                   styles={{ input: { cursor: "pointer", padding: 4 } }}
                 />
                 <TextInput
@@ -658,7 +689,7 @@ export function GeneralSettingsPage() {
                   placeholder={defaultUiTextColor}
                   size="xs"
                   w={120}
-                  aria-label="应用字体颜色十六进制值"
+                  aria-label={t("settings.general.uiTextColorHex")}
                   aria-invalid={uiTextColorDraftInvalid}
                   styles={{ input: { fontFamily: "var(--font-ui-mono)", fontSize: 12 } }}
                 />
@@ -677,9 +708,9 @@ export function GeneralSettingsPage() {
                       backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
                       border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
                       color: "var(--primary)",
-                    }}
-                  >
-                    恢复跟随主题
+                  }}
+                >
+                    {t("settings.general.restoreThemeColor")}
                   </Button>
                 )}
               </Group>
@@ -694,7 +725,9 @@ export function GeneralSettingsPage() {
                   }}
                 />
                 <Text size="xs">
-                  {uiTextColor ? `当前自定义 ${uiTextColor}` : `当前跟随主题 ${defaultUiTextColor}`}
+                  {uiTextColor
+                    ? t("settings.general.currentCustomColor", { color: uiTextColor })
+                    : t("settings.general.currentThemeColor", { color: defaultUiTextColor })}
                 </Text>
               </Group>
               <Text size="xs" c={uiTextColorHintColor}>
@@ -707,16 +740,16 @@ export function GeneralSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="md">
             <Text size="sm" fw={600} c="var(--on-surface)">
-              侧栏与行为
+              {t("settings.general.sidebarBehavior")}
             </Text>
             <Card className="border border-primary bg-surface-container-low" p="md" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="sm" fw={600} c="var(--on-surface)">
-                    精简模式
+                    {t("settings.general.compactMode")}
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    隐藏内嵌终端，把项目列表作为启动器。
+                    {t("settings.general.compactModeDescription")}
                   </Text>
                 </Box>
                 <Switch
@@ -725,17 +758,17 @@ export function GeneralSettingsPage() {
                   onChange={(event) =>
                     void update("viewMode", event.currentTarget.checked ? "compact" : "standard")
                   }
-                  aria-label={viewMode === "compact" ? "关闭精简模式" : "开启精简模式"}
+                  aria-label={viewMode === "compact" ? t("settings.general.closeCompactMode") : t("settings.general.openCompactMode")}
                 />
               </Group>
             </Card>
 
             <Stack gap="xs">
               <Text size="xs" c="var(--on-surface-variant)">
-                侧栏密度
+                {t("settings.general.sidebarDensity")}
               </Text>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                {SIDEBAR_DENSITY_OPTIONS.map((opt) => {
+                {sidebarDensityOptions.map((opt) => {
                   const active = sidebarDensity === opt.value;
                   return (
                     <UnstyledButton
@@ -784,10 +817,10 @@ export function GeneralSettingsPage() {
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    合并实时统计与 Git 变更面板
+                    {t("settings.general.mergePanels")}
                   </Text>
                   <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    默认开启：两者合并为一个可切换 Tab 的侧边面板。关闭后实时统计与 Git 变更各自独立，可同时并排显示。
+                    {t("settings.general.mergePanelsDescription")}
                   </Text>
                 </Box>
                 <Switch
@@ -800,46 +833,50 @@ export function GeneralSettingsPage() {
             </Card>
 
             <Select<CloseBehavior>
-              label="关闭按钮行为"
+              label={t("settings.general.closeBehavior")}
               value={closeBehavior}
               onChange={(value) => {
                 if (value) void update("closeBehavior", value);
               }}
-              data={CLOSE_BEHAVIOR_OPTIONS}
+              data={closeBehaviorOptions}
               allowDeselect={false}
               size="xs"
-              aria-label="关闭按钮行为"
-              description="控制点击窗口关闭按钮时的动作。"
+              aria-label={t("settings.general.closeBehavior")}
+              description={t("settings.general.closeBehaviorDescription")}
             />
 
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    关闭终端标签页前确认
+                    {t("settings.general.confirmCloseTab")}
                   </Text>
                   <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    开启后，点击标签页关闭按钮或使用关闭终端快捷键时会先弹窗确认，避免误关。
+                    {t("settings.general.confirmCloseTabDescription")}
                   </Text>
                 </Box>
                 <Switch
                   color="cliPrimary"
                   checked={confirmBeforeClosingTerminalTab}
                   onChange={(event) => void update("confirmBeforeClosingTerminalTab", event.currentTarget.checked)}
-                  aria-label={confirmBeforeClosingTerminalTab ? "关闭终端标签页关闭确认" : "开启终端标签页关闭确认"}
+                  aria-label={
+                    confirmBeforeClosingTerminalTab
+                      ? t("settings.general.disableCloseTabConfirm")
+                      : t("settings.general.enableCloseTabConfirm")
+                  }
                 />
               </Group>
             </Card>
 
             <Group justify="space-between" align="center" gap="md" wrap="nowrap">
               <Text size="xs" c="var(--on-surface-variant)">
-                调试模式
+                {t("settings.general.debugMode")}
               </Text>
               <Switch
                 color="cliPrimary"
                 checked={debugMode}
                 onChange={(event) => void update("debugMode", event.currentTarget.checked)}
-                aria-label={debugMode ? "关闭调试模式" : "开启调试模式"}
+                aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
               />
             </Group>
         </Stack>
@@ -849,11 +886,11 @@ export function GeneralSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">
             <Text size="sm" fw={600} c="var(--on-surface)">
-              工具栏
+              {t("settings.general.toolbar")}
             </Text>
 
             <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="xs">
-              终端工具栏
+              {t("settings.general.terminalToolbar")}
             </Text>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               {TERMINAL_TOOLBAR_OPTIONS.map((option) => (
@@ -873,16 +910,16 @@ export function GeneralSettingsPage() {
               ))}
             </SimpleGrid>
             <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="md">
-              侧边栏工具栏
+              {t("settings.general.sidebarToolbar")}
             </Text>
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    显示用量分析按钮
+                    {t("settings.general.showStatsButton")}
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    在侧边栏底部显示历史用量统计按钮
+                    {t("settings.general.showStatsButtonDescription")}
                   </Text>
                 </Box>
                 <Switch
@@ -899,17 +936,16 @@ export function GeneralSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">
             <Text size="sm" fw={600} c="var(--on-surface)">
-              用量分析
+              {t("settings.general.usageAnalysis")}
             </Text>
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    使用 ccusage 看板
+                    {t("settings.general.ccusageDashboard")}
                   </Text>
                   <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    默认关闭。开启后侧栏分析入口切换到独立 ccusage 看板，支持 Claude / Codex /
-                    全部来源；缺少 Bun/bunx 时会先二次确认再安装。
+                    {t("settings.general.ccusageDashboardDescription")}
                   </Text>
                 </Box>
                 <Switch
