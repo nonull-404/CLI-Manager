@@ -9,6 +9,12 @@
 - **Hook 设置页状态反馈**：在系统通知设置上方新增单一 cc-switch 保护状态卡片，展示同步、未检测到、路径无效、WSL 环境不匹配等结果；安装完成后返回重新检测状态，避免写入成功后 UI 仍显示未检测到。
 - **Claude Hook 自动修复**：记录用户已安装过 Claude Hook 后，启动/刷新状态时可检测外部覆盖并自动恢复 CLI-Manager 全局 Hook，只显示一次系统内提示。
 
+### 历史会话
+
+- **补回历史会话关闭入口**：在历史会话侧栏顶部新增固定关闭按钮，并在新建、激活、分屏终端以及从项目树打开终端时自动退出历史界面，避免进入历史会话后找不到返回终端的路径。([#48](https://github.com/dark-hxx/CLI-Manager/issues/48))
+- **修复无会话空态加载循环**：历史会话列表为空时不再反复自动加载；按搜索、项目和来源筛选展示明确空态提示，当前项目没有 Claude/Codex 会话时正确显示为空。([#49](https://github.com/dark-hxx/CLI-Manager/issues/49))
+- **项目右键直达会话历史**：项目右键菜单新增「会话历史」入口，打开时默认匹配当前项目路径与当前 CLI 来源；项目来源筛选下拉默认折叠分组，并支持按项目名、路径或 CLI 输入检索。([#52](https://github.com/dark-hxx/CLI-Manager/issues/52))
+
 ### 删除项目树徽章
 
 - **移除项目树徽章功能**：从通用设置中删除「项目树徽章」开关及关联逻辑。项目树不再显示供应商徽标、路径异常警告和分组数量标记，简化侧边栏视觉。([#47](https://github.com/dark-hxx/CLI-Manager/issues/47))
@@ -18,6 +24,14 @@
 - **新增「批量启动分组 Pane」开关**：在终端设置-终端行为中新增开关，默认关闭。启用后，点击分组启动按钮时，同一分组的终端将放在同一个 Pane 中（多标签），不同分组创建到不同 Pane；嵌套分组按根目录区分。([#38](https://github.com/dark-hxx/CLI-Manager/issues/38))
 - **新建 `splitPaneEmpty` 工具函数**：用于在批量启动时按根分组创建新 Pane；终端状态管理库新增同名 store action 封装。
 - **分屏方向可配置**：新增 `batchLaunchPaneDirection` 设置（默认左右），在批量启动开关下方提供「上下」/「左右」选项，用户可自定义分屏方向。
+
+### 设置
+
+- **关于模块独立成页**：将原本集成在「通用」页底部的「关于」抽取为独立设置模块，集中展示应用更新、项目介绍、Git 开源地址、操作手册和作者信息。
+
+### 终端 Tab
+
+- **终端 Tab 悬浮信息卡**：Tab 悬停时展示名称、CLI、Shell、项目、路径和短 Session ID；悬浮卡支持从 Tab 移入后保持显示，并提供完整 Session ID 复制按钮，不读取历史、数据库或后端数据，避免影响终端启动速度。
 
 ## [V1.1.8] - 2026-06-22
 
@@ -50,6 +64,10 @@
 - **修复分屏后原 Tab 历史输出丢失**：重构 `SplitTerminalView` 为扁平绝对定位布局，所有终端面板作为稳定 keyed 子节点渲染；分屏操作仅改变布局位置与尺寸，不改变 React 组件父路径，从而避免 `XTermTerminal` 卸载并丢失 xterm.js 内存 scrollback buffer。手动分屏与 sub-agent hook 自动分屏均已修复。
 - **修复并发 sub-agent 转录 Tab 重复与丢失**：并发场景下 `AgentToolStart`（仅含 `toolUseId`）与 `SubagentStart`（仅含 `agentId`）无共同 ID，原逻辑导致 2 个子 Agent 产生 4 个 Tab，其中半数空白、半数被自动关闭后整体消失。现改为 `AgentToolStart` / `AgentToolStop` 仅触发 subagents 目录扫描、不创建 UI；真实 Tab 由携带 `agentId` + `agentType` 的 `SubagentStart` 创建，目录扫描负责将内容源升级为 child JSONL。`findSubagentSessionId` 的兜底匹配收紧为「仅当 payload 既无 `agentId` 也无 `toolUseId` 时才按 `parentTabId` 推断」，避免并发误匹配；子 Agent Tab 标题改为 `{agentType} (父Tab名)`，多个同父子 Agent 追加 `#N` 序号。
 - **修复 Codex 子 Agent 分屏空输出**：Codex `SubagentStart` 仅提供父 transcript、`SubagentStop` 才带独立 `agentTranscriptPath` 时，前端会先升级既有 pane 到 child JSONL、同步回填订阅前已写入的完整内容，再标记结束；Stop 后延长晚到 transcript pane 可见时间，避免自动分屏成功但输出为空。
+
+### 修复
+
+- **WSL 实时统计读取不到会话**：WSL 环境下扫描 Claude 会话文件时，`find /path -name '*.jsonl'` 的 glob 模式被 zsh 的 `nomatch` 选项拦截——zsh 将未加引号的 `*.jsonl` 当作 glob 展开，若无匹配文件直接报错退出，导致 `find` 无法执行、始终返回 0 个文件。已转义 glob 通配符（`\*`）避免 shell 展开。
 
 ### 字体设置
 
