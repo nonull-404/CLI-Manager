@@ -5,6 +5,9 @@ use tauri::{AppHandle, State};
 
 use crate::git_watcher::GitWatcherBridge;
 
+const GIT_DIFF_LINE_STATS_STATUS_LIMIT: usize = 500;
+const GIT_DIFF_LINE_STATS_LINE_LIMIT: usize = 200_000;
+
 /// 打开 Git 仓库的统一入口，兼容 WSL UNC 路径。
 ///
 /// libgit2 在 Windows 上会校验仓库路径所有权，WSL UNC 路径（`\\wsl.localhost\...`）
@@ -109,6 +112,7 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
     );
 
     tokio::task::spawn_blocking(move || {
+        let started_at = std::time::Instant::now();
         let path = Path::new(&project_path);
 
         if !path.exists() {
@@ -133,16 +137,30 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
         opts.include_untracked(true);
         opts.recurse_untracked_dirs(true);
 
+        let status_started_at = std::time::Instant::now();
         let statuses = repo.statuses(Some(&mut opts)).map_err(|e| {
             let err_msg = format!("获取 Git 状态失败: {}", e);
             log::error!("[git_get_changes] {}", err_msg);
             err_msg
         })?;
 
-        log::info!("[git_get_changes] 获取到 {} 个状态条目", statuses.len());
+        log::info!(
+            "[git_get_changes] 获取到 {} 个状态条目 status_elapsed_ms={}",
+            statuses.len(),
+            status_started_at.elapsed().as_millis()
+        );
 
-        // 一次性构造 repo 级 diff，得到所有文件的真实增删行数，避免逐文件多次 diff。
-        let stats = compute_diff_line_stats(&repo);
+        // 大仓库 / 大 diff 优先保证文件列表可见；行数统计超限时降级为 0。
+        let skipped_line_stats = should_skip_diff_line_stats(statuses.len());
+        let stats = if skipped_line_stats {
+            log::warn!(
+                "[git_get_changes] 状态条目过多({}), 跳过行数统计以避免面板长时间 loading",
+                statuses.len()
+            );
+            std::collections::HashMap::new()
+        } else {
+            compute_diff_line_stats(&repo)
+        };
 
         let mut changes = Vec::new();
 
@@ -173,8 +191,10 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
         }
 
         log::info!(
-            "[git_get_changes] 查询完成，返回 {} 个变更文件",
-            changes.len()
+            "[git_get_changes] 查询完成，返回 {} 个变更文件 line_stats={} elapsed_ms={}",
+            changes.len(),
+            if skipped_line_stats { "skipped" } else { "computed" },
+            started_at.elapsed().as_millis()
         );
         Ok(changes)
     })
@@ -226,6 +246,10 @@ fn normalize_path(p: &str) -> String {
     p.replace('\\', "/")
 }
 
+fn should_skip_diff_line_stats(status_count: usize) -> bool {
+    status_count > GIT_DIFF_LINE_STATS_STATUS_LIMIT
+}
+
 /// 一次性计算仓库内所有变更文件的真实增删行数（相对 HEAD，合并暂存区+工作区+未跟踪）。
 ///
 /// 单次 `diff_tree_to_workdir_with_index` + `foreach` 累加，避免逐文件多次 diff 的 N 次扫描。
@@ -236,7 +260,10 @@ fn normalize_path(p: &str) -> String {
 fn compute_diff_line_stats(repo: &Repository) -> std::collections::HashMap<String, (i32, i32)> {
     use std::collections::HashMap;
 
+    let started_at = std::time::Instant::now();
     let mut map: HashMap<String, (i32, i32)> = HashMap::new();
+    let mut seen_lines = 0usize;
+    let mut truncated = false;
 
     let mut opts = git2::DiffOptions::new();
     opts.include_untracked(true);
@@ -257,6 +284,11 @@ fn compute_diff_line_stats(repo: &Repository) -> std::collections::HashMap<Strin
     let mut file_cb = |_delta: git2::DiffDelta, _progress: f32| true;
     let mut line_cb =
         |delta: git2::DiffDelta, _hunk: Option<git2::DiffHunk>, line: git2::DiffLine| {
+            seen_lines = seen_lines.saturating_add(1);
+            if seen_lines > GIT_DIFF_LINE_STATS_LINE_LIMIT {
+                truncated = true;
+                return false;
+            }
             // 删除文件 new_file 可能无路径，回退到 old_file。
             let path = delta
                 .new_file()
@@ -278,6 +310,19 @@ fn compute_diff_line_stats(repo: &Repository) -> std::collections::HashMap<Strin
     if let Err(e) = diff.foreach(&mut file_cb, None, None, Some(&mut line_cb)) {
         log::warn!("[git_get_changes] 遍历 diff 失败，部分行数可能缺失: {e}");
     }
+    if truncated {
+        log::warn!(
+            "[git_get_changes] diff 行数超过上限({GIT_DIFF_LINE_STATS_LINE_LIMIT}), 行数统计降级为 0"
+        );
+        map.clear();
+    }
+    log::info!(
+        "[git_get_changes] diff 行数统计完成 files={} lines_seen={} truncated={} elapsed_ms={}",
+        map.len(),
+        seen_lines,
+        truncated,
+        started_at.elapsed().as_millis()
+    );
 
     map
 }
@@ -1473,12 +1518,23 @@ pub async fn git_watch_stop(bridge: State<'_, GitWatcherBridge>) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{build_reverse_hunk_patch, build_reverse_lines_patch, validate_repo_relative_path};
+    use super::{
+        build_reverse_hunk_patch, build_reverse_lines_patch, should_skip_diff_line_stats,
+        validate_repo_relative_path, GIT_DIFF_LINE_STATS_STATUS_LIMIT,
+    };
 
     #[test]
     fn accepts_normal_relative_path() {
         assert!(validate_repo_relative_path("src/main.rs").is_ok());
         assert!(validate_repo_relative_path("a/b/c.txt").is_ok());
+    }
+
+    #[test]
+    fn skips_diff_line_stats_only_after_status_limit() {
+        assert!(!should_skip_diff_line_stats(GIT_DIFF_LINE_STATS_STATUS_LIMIT));
+        assert!(should_skip_diff_line_stats(
+            GIT_DIFF_LINE_STATS_STATUS_LIMIT + 1
+        ));
     }
 
     #[test]

@@ -127,6 +127,21 @@ struct SessionFileFingerprint {
     size: u64,
 }
 
+#[derive(Clone)]
+struct WslSessionFileHit {
+    linux_path: String,
+    project_key: String,
+    fingerprint: SessionFileFingerprint,
+}
+
+#[derive(Clone)]
+struct CachedWslSessionFingerprint {
+    fingerprint: SessionFileFingerprint,
+    cached_at: i64,
+}
+
+type WslSessionFingerprintCache = HashMap<String, CachedWslSessionFingerprint>;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct HistoryIndexEntry {
     file_ref: SessionFileRef,
@@ -194,6 +209,8 @@ const HISTORY_STATS_DAILY_INDEX_CACHE_MAX: usize = 16;
 static SESSION_STATS_CACHE: OnceLock<Mutex<SessionStatsCache>> = OnceLock::new();
 static SESSION_PROJECT_CACHE: OnceLock<Mutex<SessionProjectCache>> = OnceLock::new();
 static SESSION_FILES_CACHE: OnceLock<Mutex<SessionFilesCache>> = OnceLock::new();
+static WSL_SESSION_FINGERPRINT_CACHE: OnceLock<Mutex<WslSessionFingerprintCache>> =
+    OnceLock::new();
 static HISTORY_STATS_AGGREGATION_CACHE: OnceLock<Mutex<HistoryStatsAggregationCache>> =
     OnceLock::new();
 static HISTORY_STATS_DAILY_INDEX_CACHE: OnceLock<Mutex<HistoryStatsDailyIndexCache>> =
@@ -1675,6 +1692,10 @@ fn get_files_cache() -> &'static Mutex<SessionFilesCache> {
     SESSION_FILES_CACHE.get_or_init(|| Mutex::new(SessionFilesCache::default()))
 }
 
+fn get_wsl_session_fingerprint_cache() -> &'static Mutex<WslSessionFingerprintCache> {
+    WSL_SESSION_FINGERPRINT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn get_history_index() -> &'static RwLock<HistorySessionIndex> {
     HISTORY_SESSION_INDEX.get_or_init(|| RwLock::new(HistorySessionIndex::default()))
 }
@@ -1694,6 +1715,9 @@ fn invalidate_history_caches() {
     }
     if let Ok(mut cache) = get_stats_daily_index_cache().lock() {
         cache.entries.clear();
+    }
+    if let Ok(mut cache) = get_wsl_session_fingerprint_cache().lock() {
+        cache.clear();
     }
     if let Ok(mut index) = get_history_index().write() {
         *index = HistorySessionIndex::default();
@@ -2036,6 +2060,18 @@ fn can_reuse_session_scan(
 fn session_file_fingerprint(path: &Path) -> SessionFileFingerprint {
     let path_str = path.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&path_str) {
+        if let Ok(cache) = get_wsl_session_fingerprint_cache().lock() {
+            if let Some(entry) = cache.get(&path_to_key(path)) {
+                if now_millis() - entry.cached_at < SESSION_FILES_TTL_MS {
+                    debug!(
+                        "[wsl] fingerprint cache hit: path={} age_ms={}",
+                        path_str,
+                        now_millis().saturating_sub(entry.cached_at)
+                    );
+                    return entry.fingerprint;
+                }
+            }
+        }
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&path_str) {
             debug!("[wsl] fingerprint 使用 wsl stat: distro={distro} path={linux_path}");
             return wsl_session_fingerprint(&linux_path, &distro);
@@ -2353,13 +2389,13 @@ fn wsl_command_text(program: &str, args: &[&str]) -> Result<(String, String), St
 }
 
 /// 通过 `wsl.exe find` 在 WSL 内递归列出 JSONL 会话文件，
-/// 返回 `(linux_path, project_key)`。
+/// 返回路径与 find 一次性带出的基础元数据，避免后续对每个文件再 shell out `stat`。
 fn wsl_find_session_files(
     linux_dir: &str,
     distro: &str,
     name_pattern: &str,
     project_key_from_path: &dyn Fn(&str) -> String,
-) -> Vec<(String, String)> {
+) -> Vec<WslSessionFileHit> {
     let wsl_exe = crate::wsl::find_wsl_exe();
     let wsl_exe_str = wsl_exe
         .as_deref()
@@ -2375,27 +2411,34 @@ fn wsl_find_session_files(
         "find", linux_dir,
         "-name", &escaped_pattern,
         "-type", "f",
+        "-printf", "%p\t%s\t%T@\n",
     ];
     info!(
         "[wsl] 枚举会话文件: wsl.exe -d {distro} find {linux_dir} -name '{name_pattern}' -type f"
     );
+    let started_at = now_millis();
     let result = wsl_command_text(&wsl_exe_str, &args);
 
     match result {
         Ok((stdout, stderr)) => {
-            let files: Vec<_> = stdout
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty() && line.ends_with(".jsonl"))
-                .map(|linux_path| {
-                    let key = project_key_from_path(linux_path);
-                    (linux_path.to_string(), key)
-                })
-                .collect();
+            let mut total_lines = 0usize;
+            let mut skipped_lines = 0usize;
+            let mut files = Vec::new();
+            for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
+                total_lines += 1;
+                if let Some(hit) = parse_wsl_find_session_file_line(line, project_key_from_path) {
+                    files.push(hit);
+                } else {
+                    skipped_lines += 1;
+                }
+            }
 
             info!(
-                "[wsl] 枚举完成: distro={distro} dir={linux_dir} pattern={name_pattern} files={}",
-                files.len()
+                "[wsl] 枚举完成: distro={distro} dir={linux_dir} pattern={name_pattern} files={} skipped={} raw_lines={} elapsed_ms={}",
+                files.len(),
+                skipped_lines,
+                total_lines,
+                now_millis().saturating_sub(started_at)
             );
             if !stderr.trim().is_empty() {
                 warn!("[wsl] find stderr: {}", stderr.trim());
@@ -2409,11 +2452,60 @@ fn wsl_find_session_files(
         }
         Err(err) => {
             warn!(
-                "[wsl] find 执行失败: distro={distro} dir={linux_dir} error={}",
+                "[wsl] find 执行失败: distro={distro} dir={linux_dir} elapsed_ms={} error={}",
+                now_millis().saturating_sub(started_at),
                 err.trim()
             );
             Vec::new()
         }
+    }
+}
+
+fn parse_wsl_find_timestamp_millis(raw: &str) -> i64 {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .map(|seconds| (seconds * 1000.0).round() as i64)
+        .filter(|millis| *millis > 0)
+        .unwrap_or(0)
+}
+
+fn parse_wsl_find_session_file_line(
+    line: &str,
+    project_key_from_path: &dyn Fn(&str) -> String,
+) -> Option<WslSessionFileHit> {
+    let mut parts = line.rsplitn(3, '\t');
+    let mtime_raw = parts.next()?;
+    let size_raw = parts.next()?;
+    let linux_path = parts.next()?.trim();
+    if linux_path.is_empty() || !linux_path.ends_with(".jsonl") {
+        return None;
+    }
+
+    let size = size_raw.trim().parse::<u64>().unwrap_or(0);
+    let updated_at = parse_wsl_find_timestamp_millis(mtime_raw);
+    let fingerprint = SessionFileFingerprint {
+        created_at: updated_at,
+        updated_at,
+        size,
+    };
+
+    Some(WslSessionFileHit {
+        linux_path: linux_path.to_string(),
+        project_key: project_key_from_path(linux_path),
+        fingerprint,
+    })
+}
+
+fn remember_wsl_session_fingerprint(unc_path: &str, fingerprint: SessionFileFingerprint) {
+    if let Ok(mut cache) = get_wsl_session_fingerprint_cache().lock() {
+        cache.insert(
+            path_to_key(Path::new(unc_path)),
+            CachedWslSessionFingerprint {
+                fingerprint,
+                cached_at: now_millis(),
+            },
+        );
     }
 }
 
@@ -2503,12 +2595,14 @@ fn collect_wsl_claude_session_files(linux_projects_dir: &str, distro: &str) -> V
 
     let files: Vec<_> = results
         .into_iter()
-        .map(|(linux_path, project_key)| {
+        .map(|hit| {
+            let linux_path = hit.linux_path;
             let unc = crate::wsl::linux_to_unc_wsl_path(&linux_path, distro);
-            debug!("[wsl] Claude session: project_key={project_key} path={unc}");
+            remember_wsl_session_fingerprint(&unc, hit.fingerprint);
+            debug!("[wsl] Claude session: project_key={} path={unc}", hit.project_key);
             SessionFileRef {
                 source: "claude".to_string(),
-                project_key,
+                project_key: hit.project_key,
                 path: PathBuf::from(unc),
             }
         })
@@ -2528,12 +2622,14 @@ fn collect_wsl_codex_session_files(linux_sessions_dir: &str, distro: &str) -> Ve
 
     let files: Vec<_> = results
         .into_iter()
-        .map(|(linux_path, project_key)| {
+        .map(|hit| {
+            let linux_path = hit.linux_path;
             let unc = crate::wsl::linux_to_unc_wsl_path(&linux_path, distro);
-            debug!("[wsl] Codex session: project_key={project_key} path={unc}");
+            remember_wsl_session_fingerprint(&unc, hit.fingerprint);
+            debug!("[wsl] Codex session: project_key={} path={unc}", hit.project_key);
             SessionFileRef {
                 source: "codex".to_string(),
-                project_key,
+                project_key: hit.project_key,
                 path: PathBuf::from(unc),
             }
         })
@@ -4324,6 +4420,21 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(err) => err,
         }
+    }
+
+    #[test]
+    fn parse_wsl_find_session_file_line_extracts_path_metadata_and_project() {
+        let hit = parse_wsl_find_session_file_line(
+            "/home/me/.claude/projects/proj/session.jsonl\t42\t1719234567.2500000000",
+            &|path| claude_project_key_from_wsl_linux_path(path),
+        )
+        .unwrap();
+
+        assert_eq!(hit.linux_path, "/home/me/.claude/projects/proj/session.jsonl");
+        assert_eq!(hit.project_key, "proj");
+        assert_eq!(hit.fingerprint.size, 42);
+        assert_eq!(hit.fingerprint.updated_at, 1_719_234_567_250);
+        assert_eq!(hit.fingerprint.created_at, 1_719_234_567_250);
     }
 
     #[test]

@@ -55,6 +55,24 @@ pub fn silent_command(program: &str) -> Command
 | libgit2 打开仓库 | `git2::Repository::open` | **Owner (-36) 错误** | 临时关闭 `set_verify_owner_validation` |
 | 文件存在检查 | `Path::exists()` / `Path::is_dir()` | **基本可用**但可能误报 | 仅作前置检查，不依赖其精确结果 |
 
+### Batch metadata during WSL history enumeration
+
+When scanning many session files under WSL, do not run `wsl.exe stat` once per file. Batch basic metadata during the `find` pass:
+
+```rust
+// Good: one WSL process returns path + size + mtime for every matched file.
+wsl.exe -d <distro> find <root> -name "*.jsonl" -type f -printf "%p\t%s\t%T@\n"
+```
+
+Cache the parsed fingerprint by the UNC path for the same TTL as the file-list cache. Per-file `wsl.exe stat` is only a fallback when a caller asks for a WSL fingerprint and no fresh batch fingerprint exists.
+
+```rust
+// Bad: thousands of session files -> thousands of Windows/WSL process launches.
+for path in session_files {
+    wsl.exe -d <distro> stat -c "%s %Y %W" path
+}
+```
+
 ### WSL 命令环境变量
 
 ```rust
@@ -125,7 +143,7 @@ fn read_dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
 
 - `parse_wsl_unc_path` 正常解析、`\\wsl$\` 变体、非 WSL 路径拒绝
 - `linux_to_unc_wsl_path` 往返一致性、尾部斜杠处理
-- `wsl_find_session_files` 的 find 输出解析（需要 WSL 环境，作为集成测试）
+- `wsl_find_session_files` 的 find 输出解析（纯解析单测覆盖 path/size/mtime；真实 WSL find 作为集成测试）
 - `open_git_repo` 在 WSL UNC 路径下成功打开仓库（需要 WSL 环境）
 - `session_matches_project_path` 同时匹配 Windows 盘符 + WSL /mnt + WSL UNC→Linux 三种 project_key
 
