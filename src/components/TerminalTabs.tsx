@@ -21,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useTerminalStore, type SplitTerminalOptions, type TabNotificationState } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
+import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
 import type { TerminalPaneDropEdge, TerminalPaneLeaf, TerminalPaneSplitDirection } from "../stores/terminalPaneTree";
 import { collectPaneLeaves } from "../stores/terminalPaneTree";
@@ -97,12 +98,12 @@ const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
   failed: "#f7768e",
 };
 
-const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, string> = {
-  none: "无运行状态",
-  running: "运行中",
-  attention: "待审批",
-  done: "已完成",
-  failed: "异常退出",
+const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, TranslationKey> = {
+  none: "terminal.status.none",
+  running: "terminal.status.running",
+  attention: "terminal.status.attention",
+  done: "terminal.status.done",
+  failed: "terminal.status.failed",
 };
 
 const PULSING_TAB_STATES = new Set<TabNotificationState>(["running", "attention"]);
@@ -320,13 +321,14 @@ function SortableTab({
   menuClassName,
   menuStyle,
 }: SortableTabProps) {
+  const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, data: { paneId } });
   const tabElementRef = useRef<HTMLDivElement | null>(null);
   const contextMenuPointRef = useRef<SplitPickerAnchor | null>(null);
   const [editValue, setEditValue] = useState(title);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const skipNextBlurSubmitRef = useRef(false);
-  const statusLabel = TAB_NOTIFICATION_LABELS[notification];
+  const statusLabel = t(TAB_NOTIFICATION_LABELS[notification]);
   const tabMinWidthClass = "min-w-[92px]";
   const [hoverCardPosition, setHoverCardPosition] = useState<{ left: number; top: number } | null>(null);
   const hoverOpenTimerRef = useRef<number | null>(null);
@@ -502,7 +504,7 @@ function SortableTab({
                 submitEdit();
               }}
               className="ui-input h-5 min-w-0 flex-1 rounded-md px-1.5 py-0 text-[12px] text-on-surface outline-none"
-              aria-label={`重命名终端 ${title}`}
+              aria-label={t("terminal.tab.rename", { title })}
             />
           ) : (
             <span className="min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
@@ -512,8 +514,8 @@ function SortableTab({
             onPointerDown={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
             className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
-            aria-label={`关闭终端 ${title}`}
-            title={`关闭终端 ${title}`}
+            aria-label={t("terminal.tab.close", { title })}
+            title={t("terminal.tab.close", { title })}
           >
             <X size={13} strokeWidth={2.2} aria-hidden="true" />
           </button>
@@ -543,11 +545,12 @@ function TerminalTabHoverCard({
   onPointerLeave: () => void;
   onCopySessionId: () => void;
 }) {
+  const { t } = useI18n();
   const rows = [
     { label: "CLI", value: info.cli },
     { label: "Shell", value: info.shell },
-    { label: "\u9879\u76ee", value: info.project },
-    { label: "\u8def\u5f84", value: info.path },
+    { label: t("termStats.project"), value: info.project },
+    { label: t("termStats.path"), value: info.path },
   ];
   const sessionIdPreview = formatSessionIdPreview(info.sessionId);
 
@@ -578,8 +581,8 @@ function TerminalTabHoverCard({
               event.stopPropagation();
               onCopySessionId();
             }}
-            aria-label="Copy Session ID"
-            title="Copy Session ID"
+            aria-label={t("terminal.tab.copySessionId")}
+            title={t("terminal.tab.copySessionId")}
           >
             <Copy size={12} strokeWidth={2} aria-hidden="true" />
           </button>
@@ -683,6 +686,7 @@ function PaneTabBar({
   lightThemePalette,
   darkThemePalette,
 }: PaneTabBarProps) {
+  const { t } = useI18n();
   const { setNodeRef, isOver } = useDroppable({ id: `${PANE_DROP_PREFIX}${pane.id}` });
   const tabMenuTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
   const tabMenuForeground = normalizeTabMenuHex(tabMenuTheme.foreground, resolvedTheme === "dark" ? "#d8dee9" : "#1e293b");
@@ -710,7 +714,9 @@ function PaneTabBar({
     .map((id) => sessions.find((session) => session.id === id))
     .filter((session): session is TerminalSession => Boolean(session));
   const otherPanes = allPanes.filter((item) => item.id !== pane.id && item.sessionIds.length > 0);
-  const paneFullscreenLabel = isPaneFullscreen ? "退出沉浸式全屏" : "进入沉浸式全屏";
+  const paneFullscreenLabel = isPaneFullscreen
+    ? t("terminal.toolbar.exitImmersiveFullscreen")
+    : t("terminal.toolbar.enterImmersiveFullscreen");
   const tabScrollSignature = paneSessions
     .map((session) => `${session.id}:${session.title}:${tabNotifications[session.id] ?? "none"}`)
     .join("|");
@@ -900,8 +906,8 @@ function PaneTabBar({
           className="ui-terminal-tab-scroll-button ui-terminal-tab-scroll-button-left"
           onClick={() => scrollPaneTabs(-1)}
           disabled={!tabScrollState.canScrollLeft}
-          aria-label="向左滚动终端标签"
-          title="向左滚动终端标签"
+          aria-label={t("terminal.tab.scrollLeft")}
+          title={t("terminal.tab.scrollLeft")}
         >
           <ChevronRight size={14} strokeWidth={1.8} className="rotate-180" aria-hidden="true" />
         </button>
@@ -934,34 +940,34 @@ function PaneTabBar({
               menuStyle={tabMenuStyle}
               menuContent={(getAnchor) => (
                 <>
-                  <ContextMenuItem onSelect={() => closePaneSessions([session.id], getAnchor())}>关闭终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => closeOtherPaneSessions(session.id, getAnchor())}>关闭其它终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => closePaneSessionsToLeft(session.id, getAnchor())}>关闭左侧终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id, getAnchor())}>关闭右侧终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={onNewTab}>新建终端</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => onDuplicateSession(session)}>复制</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closePaneSessions([session.id], getAnchor())}>{t("terminal.tab.closeCurrent")}</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closeOtherPaneSessions(session.id, getAnchor())}>{t("terminal.tab.closeOthers")}</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closePaneSessionsToLeft(session.id, getAnchor())}>{t("terminal.tab.closeLeft")}</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id, getAnchor())}>{t("terminal.tab.closeRight")}</ContextMenuItem>
+                  <ContextMenuItem onSelect={onNewTab}>{t("terminal.toolbar.newTerminal")}</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onDuplicateSession(session)}>{t("terminal.tab.duplicate")}</ContextMenuItem>
                   {terminalBackgroundEnabled && terminalBackgroundImagePath && (
                     hiddenBackgroundSessionIds.has(session.id) ? (
-                      <ContextMenuItem onSelect={() => onShowBackground(session.id)}>显示背景图</ContextMenuItem>
+                      <ContextMenuItem onSelect={() => onShowBackground(session.id)}>{t("terminal.tab.showBackground")}</ContextMenuItem>
                     ) : (
-                      <ContextMenuItem onSelect={() => onHideBackground(session.id)}>隐藏背景图</ContextMenuItem>
+                      <ContextMenuItem onSelect={() => onHideBackground(session.id)}>{t("terminal.tab.hideBackground")}</ContextMenuItem>
                     )
                   )}
                   <ContextMenuSeparator />
                   <ContextMenuItem onSelect={() => onOpenSplitPicker(session.id, "horizontal", getAnchor())}>
-                    向右分屏
+                    {t("terminal.tab.splitRight")}
                   </ContextMenuItem>
                   <ContextMenuItem onSelect={() => onOpenSplitPicker(session.id, "vertical", getAnchor())}>
-                    向下分屏
+                    {t("terminal.tab.splitDown")}
                   </ContextMenuItem>
-                  {allPanes.length > 1 && <ContextMenuItem onSelect={() => onUnsplit(session.id)}>取消分屏</ContextMenuItem>}
+                  {allPanes.length > 1 && <ContextMenuItem onSelect={() => onUnsplit(session.id)}>{t("terminal.tab.unsplit")}</ContextMenuItem>}
                   {otherPanes.length > 0 && (
                     <ContextMenuSub>
-                      <ContextMenuSubTrigger>移动到其他分屏</ContextMenuSubTrigger>
+                      <ContextMenuSubTrigger>{t("terminal.tab.moveToPane")}</ContextMenuSubTrigger>
                       <ContextMenuSubContent className="terminal-skin" style={tabMenuStyle}>
                         {otherPanes.map((targetPane, index) => (
                           <ContextMenuItem key={targetPane.id} onSelect={() => onMoveToPane(session.id, targetPane.id)}>
-                            分屏 {index + 1}
+                            {t("terminal.tab.paneName", { index: index + 1 })}
                           </ContextMenuItem>
                         ))}
                       </ContextMenuSubContent>
@@ -980,8 +986,8 @@ function PaneTabBar({
             className="ui-terminal-tab-scroll-button ui-terminal-tab-scroll-button-right"
             onClick={() => scrollPaneTabs(1)}
             disabled={!tabScrollState.canScrollRight}
-            aria-label="向右滚动终端标签"
-            title="向右滚动终端标签"
+            aria-label={t("terminal.tab.scrollRight")}
+            title={t("terminal.tab.scrollRight")}
           >
             <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
           </button>
@@ -990,9 +996,9 @@ function PaneTabBar({
               <button
                 type="button"
                 className="ui-terminal-tab-list-button"
-                aria-label="打开终端标签列表"
+                aria-label={t("terminal.tab.openList")}
                 aria-expanded={tabListOpen && tabScrollState.isOverflowing}
-                title="终端标签列表"
+                title={t("terminal.tab.list")}
               >
                 <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
               </button>
@@ -1003,7 +1009,7 @@ function PaneTabBar({
               onOpenAutoFocus={(event) => event.preventDefault()}
               onCloseAutoFocus={(event) => event.preventDefault()}
             >
-              <div className="px-2 py-1 text-[11px] font-semibold text-on-surface">终端标签</div>
+              <div className="px-2 py-1 text-[11px] font-semibold text-on-surface">{t("terminal.tab.tabs")}</div>
               <div className="max-h-72 overflow-y-auto">
                 {paneSessions.map((session, index) => {
                   const notification = tabNotifications[session.id] ?? "none";
@@ -1258,6 +1264,7 @@ interface SplitProjectPickerProps {
 }
 
 function SplitProjectPicker({ picker, tree, menuStyle, onSelectEmpty, onSelectProject, onClose, shouldIgnoreOutsideInteraction }: SplitProjectPickerProps) {
+  const { t } = useI18n();
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
 
   const toggleGroup = useCallback((groupId: string) => {
@@ -1348,14 +1355,14 @@ function SplitProjectPicker({ picker, tree, menuStyle, onSelectEmpty, onSelectPr
           if (shouldIgnoreOutsideInteraction()) event.preventDefault();
         }}
       >
-        <div className="ui-split-project-picker-title px-2 py-1 text-xs font-semibold">选择分屏终端</div>
+        <div className="ui-split-project-picker-title px-2 py-1 text-xs font-semibold">{t("terminal.split.selectTerminal")}</div>
         <button
           type="button"
           onClick={onSelectEmpty}
           className="ui-tree-node ui-tree-project ui-split-project-picker-item ui-focus-ring mt-1 flex w-full cursor-pointer items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-[13px]"
         >
           <span className="ui-tree-leading-icon"><Terminal size={14} strokeWidth={1.5} /></span>
-          <span className="min-w-0 flex-1 truncate font-medium">空终端</span>
+          <span className="min-w-0 flex-1 truncate font-medium">{t("terminal.tab.emptyTerminal")}</span>
         </button>
         <div className="mt-1 max-h-72 space-y-0.5 overflow-y-auto">
           {tree.map((node) => renderTreeNode(node, 0))}
@@ -1376,6 +1383,7 @@ function TerminalCloseConfirmBubble({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const anchorStyle: CSSProperties = confirm
     ? { position: "fixed", left: confirm.x, top: confirm.y, width: 1, height: 1 }
     : { position: "fixed", left: 0, top: 0, width: 1, height: 1 };
@@ -1393,7 +1401,7 @@ function TerminalCloseConfirmBubble({
         onCloseAutoFocus={(event) => event.preventDefault()}
       >
         <div className="flex items-center gap-1">
-          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onClose} aria-label="取消关闭终端" title="取消关闭终端">
+          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onClose} aria-label={t("terminal.close.cancel")} title={t("terminal.close.cancel")}>
             <X size={13} strokeWidth={2.2} aria-hidden="true" />
           </Button>
           <Button
@@ -1401,11 +1409,11 @@ function TerminalCloseConfirmBubble({
             variant="destructive"
             className="h-6 px-1.5 text-[11px]"
             onClick={onConfirm}
-            aria-label="确认关闭终端"
-            title="确认关闭终端"
+            aria-label={t("terminal.close.confirm")}
+            title={t("terminal.close.confirm")}
           >
             <Check size={12} strokeWidth={2.2} aria-hidden="true" />
-            <span>关闭</span>
+            <span>{t("common.close")}</span>
           </Button>
         </div>
       </PopoverContent>
@@ -1443,6 +1451,7 @@ interface TerminalTabsProps {
 }
 
 export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: TerminalTabsProps = {}) {
+  const { t } = useI18n();
   const { sessions, activeSessionId, paneTree, tabNotifications } = useTerminalStore(
     useShallow((s) => ({
       sessions: s.sessions,
@@ -1484,7 +1493,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const sidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
   const updateSettings = useSettingsStore((s) => s.update);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
-  const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || "未设置快捷键";
+  const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || t("common.none");
   const historyOpen = useHistoryStore((s) => s.isOpen);
   const openHistory = useHistoryStore((s) => s.openHistory);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
@@ -1761,8 +1770,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
         }
       );
       if (status.claude.status !== "installed" && status.codex.status !== "installed") {
-        toast.warning("实时统计需要先安装 Hook", {
-          description: "实时统计依赖 Claude/Codex Hook 上报 sessionId。请先到设置 → Hook 设置中安装对应工具的 Hook。",
+        toast.warning(t("notifications.stats.needHook"), {
+          description: t("notifications.stats.needHookDescription"),
         });
         return false;
       }
@@ -1770,7 +1779,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       logError("Failed to check hook status before opening terminal stats panel", err);
     }
     return true;
-  }, []);
+  }, [t]);
 
   const handleToggleStatsPanel = useCallback(async () => {
     if (statsPanelActive) {
@@ -1987,8 +1996,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
         <button
           onClick={handleNewTab}
           className="ui-focus-ring ui-icon-action ui-primary-action ui-action-new"
-          title="新建终端"
-          aria-label="新建终端"
+          title={t("terminal.toolbar.newTerminal")}
+          aria-label={t("terminal.toolbar.newTerminal")}
         >
           <Plus size={15} strokeWidth={2} />
         </button>
@@ -2000,8 +2009,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           onClick={handleToggleGlobalFullscreen}
           className="ui-focus-ring ui-icon-action ui-action-fullscreen"
           data-active={fullscreen ? "true" : "false"}
-          title={fullscreen ? "退出沉浸式全屏" : "沉浸式全屏"}
-          aria-label={fullscreen ? "退出沉浸式全屏" : "进入沉浸式全屏"}
+          title={fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.immersiveFullscreen")}
+          aria-label={fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.enterImmersiveFullscreen")}
           aria-pressed={fullscreen}
         >
           {fullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
@@ -2012,13 +2021,13 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           onClick={handleOpenHistoryTab}
           className="ui-focus-ring ui-icon-action ui-action-session-history"
           data-active={historyOpen ? "true" : "false"}
-          title={`会话历史（${sessionHistoryShortcutHint}）`}
-          aria-label={historyOpen ? "关闭会话历史" : "打开会话历史"}
+          title={`${t("terminal.toolbar.sessionHistory")} (${sessionHistoryShortcutHint})`}
+          aria-label={historyOpen ? t("terminal.toolbar.closeSessionHistory") : t("terminal.toolbar.openSessionHistory")}
           aria-controls="history-workspace"
           aria-expanded={historyOpen}
         >
           <ListClockIcon size={16} />
-          {terminalToolbarVisibility.showText && <span>会话历史</span>}
+          {terminalToolbarVisibility.showText && <span>{t("terminal.toolbar.sessionHistory")}</span>}
         </button>
       ),
       gitChanges: (
@@ -2026,8 +2035,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           onClick={handleToggleGitChangesPanel}
           className="ui-focus-ring ui-icon-action ui-action-git"
           data-active={gitPanelActive ? "true" : "false"}
-          title={gitPanelActive ? "关闭 Git 变更" : "打开 Git 变更"}
-          aria-label={gitPanelActive ? "关闭 Git 变更面板" : "打开 Git 变更面板"}
+          title={gitPanelActive ? t("terminal.toolbar.closeGit") : t("terminal.toolbar.openGit")}
+          aria-label={gitPanelActive ? t("terminal.toolbar.closeGitPanel") : t("terminal.toolbar.openGitPanel")}
           aria-pressed={gitPanelActive}
         >
           <GitBranch size={13} strokeWidth={1.8} />
@@ -2038,8 +2047,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           onClick={handleToggleStatsPanel}
           className="ui-focus-ring ui-icon-action ui-action-stats"
           data-active={statsPanelActive ? "true" : "false"}
-          title={statsPanelActive ? "关闭统计面板" : "打开统计面板"}
-          aria-label={statsPanelActive ? "关闭统计面板" : "打开统计面板"}
+          title={statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel")}
+          aria-label={statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel")}
           aria-pressed={statsPanelActive}
         >
           <BarChart3 size={13} strokeWidth={1.8} />
@@ -2066,7 +2075,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       >
         <nav
           className="ui-terminal-actions ui-terminal-action-sidebar flex shrink-0 flex-col items-center gap-2"
-          aria-label="终端操作侧边栏"
+          aria-label={t("terminal.toolbar.actions")}
         >
           <SortableContext items={visibleButtons.map((b) => b.id)} strategy={verticalListSortingStrategy}>
             {visibleButtons.map((btn) => (
@@ -2101,6 +2110,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     onToggleFullscreen,
     sessionHistoryShortcutHint,
     statsPanelActive,
+    t,
     terminalToolbarOrder,
     terminalToolbarVisibility,
     toolbarSensors,
@@ -2245,10 +2255,10 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
               <div className="flex h-full items-center justify-center">
                 <EmptyState
                   icon={<Terminal size={40} strokeWidth={1} />}
-                  title="无活跃终端"
-                  description="Ctrl+Shift+T 新建终端，或从左侧项目列表双击启动"
+                  title={t("terminal.empty.title")}
+                  description={t("terminal.empty.description")}
                   tone="inverse"
-                  action={{ label: "打开终端", onClick: handleNewTab }}
+                  action={{ label: t("terminal.empty.action"), onClick: handleNewTab }}
                 />
               </div>
             )}
@@ -2267,8 +2277,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
                 <ResizableTerminalPanelFrame
                   storageKey={TERMINAL_STATS_PANEL_WIDTH_STORAGE_KEY}
                   defaultWidth={TERMINAL_STATS_PANEL_DEFAULT_WIDTH}
-                  resizeLabel="调整实时统计面板宽度"
-                  resizeTitle="拖拽调整实时统计面板宽度"
+                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
+                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
                 >
                   <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
                 </ResizableTerminalPanelFrame>
@@ -2277,8 +2287,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
                 <ResizableTerminalPanelFrame
                   storageKey={TERMINAL_GIT_PANEL_WIDTH_STORAGE_KEY}
                   defaultWidth={TERMINAL_GIT_PANEL_DEFAULT_WIDTH}
-                  resizeLabel="调整 Git 变更面板宽度"
-                  resizeTitle="拖拽调整 Git 变更面板宽度"
+                  resizeLabel={t("terminal.panel.resizeGitLabel")}
+                  resizeTitle={t("terminal.panel.resizeGitTitle")}
                 >
                   <Suspense fallback={null}>
                     <GitChangesPanel open={gitOpen} projectPath={panelSession?.cwd ?? null} embedded />

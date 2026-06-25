@@ -1,4 +1,5 @@
 import { FileCode2 } from "lucide-react";
+import { useI18n } from "../../lib/i18n";
 import type { SessionProcessModel } from "./sessionEvents";
 
 interface SessionFileChangesViewProps {
@@ -8,19 +9,20 @@ interface SessionFileChangesViewProps {
 }
 
 export function SessionFileChangesView({ model, onJumpToMessage, onOpenDiff }: SessionFileChangesViewProps) {
+  const { t } = useI18n();
   if (model.fileGroups.length === 0) {
-    return <div className="ui-session-process-empty">当前会话暂未解析到文件变更</div>;
+    return <div className="ui-session-process-empty">{t("history.files.empty")}</div>;
   }
 
   return (
     <div className="ui-session-process-view">
       <div className="ui-session-process-toolbar">
         <div className="ui-session-process-summary">
-          <span>{model.fileGroups.length} 个文件</span>
-          <span>{model.diffBlocks.length} 个 diff 块</span>
+          <span>{t("history.files.fileCount", { count: model.fileGroups.length })}</span>
+          <span>{t("history.files.diffBlockCount", { count: model.diffBlocks.length })}</span>
         </div>
         <button type="button" className="ui-session-process-primary" onClick={onOpenDiff}>
-          打开 Diff 视图
+          {t("history.files.openDiff")}
         </button>
       </div>
 
@@ -41,7 +43,7 @@ export function SessionFileChangesView({ model, onJumpToMessage, onOpenDiff }: S
                   onClick={() => event.messageIndex !== null && onJumpToMessage(event.messageIndex)}
                 >
                   <span>{event.detail}</span>
-                  <small>{event.timestamp ?? (event.messageIndex !== null ? `消息 #${event.messageIndex + 1}` : "-")}</small>
+                  <small>{event.timestamp ?? (event.messageIndex !== null ? t("history.files.messageRef", { index: event.messageIndex + 1 }) : "-")}</small>
                 </button>
               ))}
             </div>

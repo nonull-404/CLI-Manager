@@ -1,5 +1,6 @@
 import { AlertCircle, Bot, Code2, FileCode2, Search, Terminal, User, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useI18n, type TranslationKey } from "../../lib/i18n";
 import type { SessionEvent, SessionEventKind, SessionProcessModel } from "./sessionEvents";
 
 type TimelineFilter = "all" | "error" | "file" | "tool";
@@ -9,11 +10,11 @@ interface SessionTimelineViewProps {
   onJumpToMessage: (messageIndex: number) => void;
 }
 
-const FILTERS: Array<{ id: TimelineFilter; label: string }> = [
-  { id: "all", label: "全部" },
-  { id: "error", label: "错误" },
-  { id: "file", label: "文件改动" },
-  { id: "tool", label: "工具调用" },
+const FILTERS: Array<{ id: TimelineFilter; labelKey: TranslationKey }> = [
+  { id: "all", labelKey: "history.timeline.filter.all" },
+  { id: "error", labelKey: "history.timeline.filter.error" },
+  { id: "file", labelKey: "history.timeline.filter.file" },
+  { id: "tool", labelKey: "history.timeline.filter.tool" },
 ];
 
 function eventIcon(kind: SessionEventKind) {
@@ -34,6 +35,7 @@ function eventFilterMatch(event: SessionEvent, filter: TimelineFilter): boolean 
 }
 
 export function SessionTimelineView({ model, onJumpToMessage }: SessionTimelineViewProps) {
+  const { t } = useI18n();
   const [filter, setFilter] = useState<TimelineFilter>("all");
   const visibleEvents = useMemo(
     () => model.events.filter((event) => eventFilterMatch(event, filter)),
@@ -44,21 +46,21 @@ export function SessionTimelineView({ model, onJumpToMessage }: SessionTimelineV
     <div className="ui-session-process-view">
       <div className="ui-session-process-toolbar">
         <div className="ui-session-process-summary">
-          <span>{model.events.length} 个事件</span>
-          <span>{model.diffBlocks.length} 个文件变更</span>
-          <span>{model.errorEvents.length} 个错误线索</span>
+          <span>{t("history.timeline.summaryEvents", { count: model.events.length })}</span>
+          <span>{t("history.timeline.summaryFiles", { count: model.diffBlocks.length })}</span>
+          <span>{t("history.timeline.summaryErrors", { count: model.errorEvents.length })}</span>
         </div>
-        <div className="ui-session-process-filters" aria-label="时间线筛选">
+        <div className="ui-session-process-filters" aria-label={t("history.timeline.filtersAria")}>
           {FILTERS.map((item) => (
             <button key={item.id} type="button" data-active={filter === item.id} onClick={() => setFilter(item.id)}>
-              {item.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>
       </div>
 
       {visibleEvents.length === 0 ? (
-        <div className="ui-session-process-empty">当前筛选下没有事件</div>
+        <div className="ui-session-process-empty">{t("history.timeline.empty")}</div>
       ) : (
         <ol className="ui-session-timeline-list">
           {visibleEvents.map((event) => (
@@ -76,7 +78,7 @@ export function SessionTimelineView({ model, onJumpToMessage }: SessionTimelineV
               </div>
               {event.messageIndex !== null && (
                 <button type="button" className="ui-session-process-jump" onClick={() => onJumpToMessage(event.messageIndex!)}>
-                  跳转
+                  {t("history.timeline.jump")}
                 </button>
               )}
             </li>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FolderGit2, GitBranch } from "lucide-react";
 import type { HistorySessionDetail, HistorySessionView } from "../../lib/types";
+import { useI18n } from "../../lib/i18n";
 import { fetchTodayProjectStats, type TodayProjectStats } from "../../stores/historyStore";
 import {
   TERM,
@@ -28,6 +29,7 @@ function SessionInfoCard({
   view: HistorySessionView;
   session: HistorySessionDetail;
 }) {
+  const { t } = useI18n();
   const folderPath = view.file_path ? truncatePath(view.file_path, 3) : "—";
   const branch = view.branch || "—";
   const duration = formatDuration(session.updated_at - session.created_at);
@@ -36,17 +38,17 @@ function SessionInfoCard({
     <StatCard
       icon={<FolderGit2 size={13} />}
       iconColor={TERM.cyan}
-      title="会话"
+      title={t("termStats.session")}
       headerRight={
         <SourcePill source={view.source} />
       }
     >
-      <Row label="项目" value={view.project_key} title={view.project_key} />
-      <Row label="路径" value={folderPath} color={TERM.dim} title={view.file_path} />
+      <Row label={t("termStats.project")} value={view.project_key} title={view.project_key} />
+      <Row label={t("termStats.path")} value={folderPath} color={TERM.dim} title={view.file_path} />
       <div className="flex items-baseline justify-between gap-2 text-[11px] leading-5">
         <span className="flex shrink-0 items-center gap-1" style={{ color: TERM.dim }}>
           <GitBranch size={10} />
-          分支
+          {t("termStats.branch")}
         </span>
         <span className="truncate text-right" style={{ color: TERM.magenta }} title={branch}>
           {branch}
@@ -54,8 +56,8 @@ function SessionInfoCard({
       </div>
 
       <div className="mt-2 grid grid-cols-2 gap-1.5">
-        <StatChip dotColor={TERM.cyan} label="消息数" value={String(session.messages.length)} />
-        <StatChip dotColor={TERM.green} label="会话时长" value={duration} />
+        <StatChip dotColor={TERM.cyan} label={t("termStats.messageCount")} value={String(session.messages.length)} />
+        <StatChip dotColor={TERM.green} label={t("termStats.duration")} value={duration} />
       </div>
     </StatCard>
   );
@@ -82,6 +84,7 @@ function TodaySection({ projectKey }: { projectKey: string }) {
 }
 
 export function SessionStatsPanel({ activeView, activeSession, open }: SessionStatsPanelProps) {
+  const { t } = useI18n();
   const stats = useMemo(() => calculateTokenStats(activeSession), [activeSession]);
 
   if (!open) return null;
@@ -101,7 +104,7 @@ export function SessionStatsPanel({ activeView, activeSession, open }: SessionSt
           <TodaySection projectKey={activeView.project_key} />
         </>
       ) : (
-        <EmptyHint text="选择会话查看统计" />
+        <EmptyHint text={t("history.stats.empty")} />
       )}
     </aside>
   );

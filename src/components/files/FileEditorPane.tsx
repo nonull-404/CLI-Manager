@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { eventToCombo } from "../../hooks/useKeyboardShortcuts";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiAnchor, formatAiContextBlock, type AiTextSelection } from "../../lib/aiPathFormatter";
+import { useI18n } from "../../lib/i18n";
 import type { TerminalSession } from "../../lib/types";
 import { configureMonaco, languageFromPath } from "../../lib/monacoSetup";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -42,6 +43,7 @@ function isDarkHexColor(color: string): boolean {
 }
 
 export function FileEditorPane({ session, isActive, terminalThemeBackground, onClose }: FileEditorPaneProps) {
+  const { t } = useI18n();
   const editorRef = useRef<MonacoEditor | null>(null);
   const copyAiShortcut = useSettingsStore((s) => s.keyboardShortcuts.copyAi);
   const project = useFileExplorerStore((s) => s.project);
@@ -101,16 +103,16 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     const selection = (visibleFile.previewKind === "text" || visibleFile.previewKind === "markdown") && previewMode === "source"
       ? getEditorSelection()
       : null;
-    void copyAiText(formatAiAnchor(project, visibleFile.path, selection), "AI 路径已复制");
-  }, [getEditorSelection, previewMode, project, visibleFile]);
+    void copyAiText(formatAiAnchor(project, visibleFile.path, selection), t("files.toast.aiPathCopied"));
+  }, [getEditorSelection, previewMode, project, t, visibleFile]);
 
   const copyActiveAiContext = useCallback(() => {
     if (!project || !visibleFile) return;
     const selection = (visibleFile.previewKind === "text" || visibleFile.previewKind === "markdown") && previewMode === "source"
       ? getEditorSelection()
       : null;
-    void copyAiText(formatAiContextBlock(project, visibleFile.path, selection), "AI 上下文已复制");
-  }, [getEditorSelection, previewMode, project, visibleFile]);
+    void copyAiText(formatAiContextBlock(project, visibleFile.path, selection), t("files.toast.aiContextCopied"));
+  }, [getEditorSelection, previewMode, project, t, visibleFile]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -186,11 +188,11 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
         <FileCode size={15} strokeWidth={1.8} className="text-on-surface-variant" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold text-on-surface">
-            {visibleFile ? visibleFile.name : session.fileEditor?.projectName ?? project?.name ?? "文件编辑器"}
+            {visibleFile ? visibleFile.name : session.fileEditor?.projectName ?? project?.name ?? t("files.editor.titleFallback")}
             {dirty ? " *" : ""}
           </div>
           <div className="truncate text-[10px] text-text-muted">
-            {visibleFile?.path ?? session.fileEditor?.projectPath ?? project?.path ?? "未选择文件"}
+            {visibleFile?.path ?? session.fileEditor?.projectPath ?? project?.path ?? t("files.editor.noFile")}
           </div>
         </div>
         {visibleFile?.previewKind === "markdown" && (
@@ -201,7 +203,7 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
               data-active={previewMode === "source" ? "true" : "false"}
               onClick={() => setPreviewMode("source")}
             >
-              源码
+              {t("files.editor.source")}
             </button>
             <button
               type="button"
@@ -209,23 +211,23 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
               data-active={previewMode === "preview" ? "true" : "false"}
               onClick={() => setPreviewMode("preview")}
             >
-              预览
+              {t("files.editor.preview")}
             </button>
           </div>
         )}
         <Button size="sm" variant="outline" disabled={!visibleFile} onClick={copyActiveAiPath}>
           <Copy size={13} />
-          AI 路径
+          {t("files.editor.aiPath")}
         </Button>
         <Button size="sm" variant="outline" disabled={!visibleFile} onClick={copyActiveAiContext}>
           <Copy size={13} />
-          AI 上下文
+          {t("files.editor.aiContext")}
         </Button>
         <Button size="sm" variant="outline" disabled={!dirty} onClick={() => void save()}>
           <Save size={13} />
-          保存
+          {t("common.save")}
         </Button>
-        <button type="button" className="ui-icon-action" title="关闭文件编辑器" aria-label="关闭文件编辑器" onClick={requestClose}>
+        <button type="button" className="ui-icon-action" title={t("files.editor.close")} aria-label={t("files.editor.close")} onClick={requestClose}>
           <X size={15} />
         </button>
       </div>
@@ -253,7 +255,7 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
                 <button
                   type="button"
                   className="mr-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-70 hover:bg-surface-container-highest hover:opacity-100"
-                  aria-label={`关闭 ${file.name}`}
+                  aria-label={t("files.editor.closeNamed", { name: file.name })}
                   onClick={(event) => {
                     event.stopPropagation();
                     requestCloseFile(file.path);
@@ -271,13 +273,13 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
         {!visibleFile && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-text-muted">
             <FileCode size={36} strokeWidth={1.2} />
-            <div className="text-sm">从左侧文件树选择文件</div>
+            <div className="text-sm">{t("files.editor.selectFromTree")}</div>
           </div>
         )}
         {visibleFile?.previewKind === "unsupported" && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-text-muted">
             <FileCode size={36} strokeWidth={1.2} />
-            <div className="text-sm">此文件无法作为文本或图片预览</div>
+            <div className="text-sm">{t("files.editor.unsupported")}</div>
           </div>
         )}
         {visibleFile?.previewKind === "image" && visibleFile.image && (
@@ -322,16 +324,16 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
 
       <Dialog open={pendingAction !== null} onOpenChange={(open) => { if (!open) setPendingAction(null); }}>
         <DialogContent className="max-w-[420px]">
-          <DialogTitle>文件有未保存修改</DialogTitle>
+          <DialogTitle>{t("files.editor.unsavedTitle")}</DialogTitle>
           <DialogDescription className="mt-2">
             {pendingAction?.kind === "close-file"
-              ? "保存该文件，或丢弃修改后关闭。"
-              : `有 ${dirtyFiles.length} 个文件未保存，保存全部或丢弃修改后关闭编辑器。`}
+              ? t("files.editor.unsavedOne")
+              : t("files.editor.unsavedMany", { count: dirtyFiles.length })}
           </DialogDescription>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingAction(null)}>取消</Button>
-            <Button variant="outline" onClick={discardAndRun}>丢弃</Button>
-            <Button onClick={() => void saveAndRun()}>保存</Button>
+            <Button variant="outline" onClick={() => setPendingAction(null)}>{t("common.cancel")}</Button>
+            <Button variant="outline" onClick={discardAndRun}>{t("files.editor.discard")}</Button>
+            <Button onClick={() => void saveAndRun()}>{t("common.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -12,6 +12,7 @@ import { STATUS_CONFIG } from "./GitStatusIcon";
 import { DiffViewerModal } from "./DiffViewerModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { TERM, EmptyHint } from "../stats/termStatsUi";
+import { useI18n, type TranslationKey } from "../../lib/i18n";
 import type { GitTreeNode, GitPullStrategy } from "../../lib/types";
 
 interface GitChangesPanelProps {
@@ -29,16 +30,17 @@ const TERMINAL_PANEL_SCROLLBAR_STYLE = {
   "--ui-scrollbar-track": TERM.bg,
 } as CSSProperties;
 
-// 把后端 git 网络错误码（形如 "auth_failed: <原文>"）映射为可读中文 toast。
-function formatGitNetError(prefix: string, raw: string): string {
-  if (raw.includes("auth_failed")) return `${prefix}：认证失败，请检查远端凭据`;
-  if (raw.includes("not_fast_forward")) return `${prefix}：远端有新提交，请先拉取`;
-  if (raw.includes("no_upstream")) return `${prefix}：当前分支未跟踪远端`;
-  if (raw.includes("no_remote")) return `${prefix}：未配置远端或无法连接远端`;
-  if (raw.includes("pull_conflict")) return `${prefix}：存在冲突，请解决后继续或中止`;
-  if (raw.includes("git_not_found")) return `${prefix}：未找到 git，可执行文件不在 PATH`;
-  // 其余去掉错误码前缀，保留原始片段。
-  return `${prefix}：${raw.replace(/^[a-z_]+:\s*/, "")}`;
+type Translate = ReturnType<typeof useI18n>["t"];
+
+// 把后端 git 网络错误码（形如 "auth_failed: <原文>"）映射为当前语言的 toast。
+function formatGitNetError(prefix: string, raw: string, t: Translate): string {
+  if (raw.includes("auth_failed")) return t("git.error.authFailed", { prefix });
+  if (raw.includes("not_fast_forward")) return t("git.error.notFastForward", { prefix });
+  if (raw.includes("no_upstream")) return t("git.error.noUpstream", { prefix });
+  if (raw.includes("no_remote")) return t("git.error.noRemote", { prefix });
+  if (raw.includes("pull_conflict")) return t("git.error.pullConflict", { prefix });
+  if (raw.includes("git_not_found")) return t("git.error.gitNotFound", { prefix });
+  return t("git.error.generic", { prefix, message: raw.replace(/^[a-z_]+:\s*/, "") });
 }
 
 function collectDirectoryPaths(nodes: GitTreeNode[], treeId: string): string[] {
@@ -57,6 +59,7 @@ function collectDirectoryPaths(nodes: GitTreeNode[], treeId: string): string[] {
 }
 
 export function GitChangesPanel({ open, projectPath, visible = true, embedded = false }: GitChangesPanelProps) {
+  const { t } = useI18n();
   const {
     fetchChanges,
     reset,
@@ -266,14 +269,14 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     if (selectAllState === "checked") {
       // 全部取消：取消暂存 M/D/R + 清空未跟踪选中 + 取消勾选全部 A（A 保持跟踪，不 unstage）。
       if (trackedModPaths.length > 0) {
-        void unstagePaths(trackedModPaths).catch(() => toast.error("全部取消暂存失败"));
+        void unstagePaths(trackedModPaths).catch(() => toast.error(t("git.toast.unstageAllFailed")));
       }
       clearUntrackedSelection();
       if (addedPaths.length > 0) setAddedDeselection(addedPaths, true);
     } else {
       // 全选：暂存 M/D/R + 选中全部未跟踪 + 勾选回全部 A。
       if (trackedModPaths.length > 0) {
-        void stagePaths(trackedModPaths).catch(() => toast.error("全部暂存失败"));
+        void stagePaths(trackedModPaths).catch(() => toast.error(t("git.toast.stageAllFailed")));
       }
       if (allUntrackedPaths.length > 0) setUntrackedSelection(allUntrackedPaths, true);
       if (addedPaths.length > 0) setAddedDeselection(addedPaths, false);
@@ -282,13 +285,13 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
 
   const handleToggleStage = (filePath: string, staged: boolean) => {
     void (staged ? unstageFile(filePath) : stageFile(filePath)).catch(() => {
-      toast.error("暂存操作失败，请刷新后重试");
+      toast.error(t("git.toast.stageFailed"));
     });
   };
 
   const handleToggleStagePaths = (paths: string[], allStaged: boolean) => {
     void (allStaged ? unstagePaths(paths) : stagePaths(paths)).catch(() => {
-      toast.error("批量暂存操作失败，请刷新后重试");
+      toast.error(t("git.toast.batchStageFailed"));
     });
   };
 
@@ -298,15 +301,15 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     try {
       const shortId = await commit(msg);
       setCommitMsg("");
-      toast.success(`已提交 ${shortId}`);
+      toast.success(t("git.toast.committed", { shortId }));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       if (m.includes("no_git_identity")) {
-        toast.error("提交失败：未配置 git 身份（user.name / user.email）");
+        toast.error(t("git.toast.commitNoIdentity"));
       } else if (m.includes("nothing_staged")) {
-        toast.error("没有已暂存的改动");
+        toast.error(t("git.toast.nothingStaged"));
       } else {
-        toast.error(`提交失败：${m}`);
+        toast.error(t("git.toast.commitFailed", { message: m }));
       }
     }
   };
@@ -316,10 +319,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     const settingUpstream = !!branchStatus && !branchStatus.hasUpstream;
     try {
       await push();
-      toast.success(settingUpstream ? "已建立跟踪分支并推送" : "已推送到远端");
+      toast.success(settingUpstream ? t("git.toast.pushedWithUpstream") : t("git.toast.pushed"));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      toast.error(formatGitNetError("推送失败", m));
+      toast.error(formatGitNetError(t("git.error.pushFailed"), m, t));
     }
   };
 
@@ -327,19 +330,19 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     if (pulling) return;
     try {
       await pull(strategy);
-      toast.success("已拉取远端更新");
+      toast.success(t("git.toast.pulled"));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       if (m.includes("pull_conflict")) {
         toast.error(
           strategy === "rebase"
-            ? "变基存在冲突：解决并暂存后点击「继续」，或中止拉取。"
-            : "合并存在冲突：解决冲突后在下方提交以完成合并，或中止拉取。",
+            ? t("git.toast.pullConflictRebase")
+            : t("git.toast.pullConflictMerge"),
         );
       } else if (m.includes("not_fast_forward")) {
-        toast.error("无法快进（已分叉）。请改用「合并」或「变基」方式拉取。");
+        toast.error(t("git.toast.notFastForward"));
       } else {
-        toast.error(formatGitNetError("拉取失败", m));
+        toast.error(formatGitNetError(t("git.error.pullFailed"), m, t));
       }
     }
   };
@@ -348,10 +351,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     if (pulling) return;
     try {
       await pullAbort();
-      toast.success("已中止，恢复到拉取前");
+      toast.success(t("git.toast.aborted"));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      toast.error(formatGitNetError("中止失败", m));
+      toast.error(formatGitNetError(t("git.error.abortFailed"), m, t));
     }
   };
 
@@ -359,22 +362,28 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     if (pulling) return;
     try {
       await rebaseContinue();
-      toast.success("变基已继续");
+      toast.success(t("git.toast.rebaseContinued"));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       if (m.includes("pull_conflict")) {
-        toast.error("仍有未解决的冲突，请解决并暂存后再继续。");
+        toast.error(t("git.toast.unresolvedConflicts"));
       } else {
-        toast.error(formatGitNetError("继续变基失败", m));
+        toast.error(formatGitNetError(t("git.error.continueRebaseFailed"), m, t));
       }
     }
   };
 
-  const filterButtons = [
-    { label: "全部", value: "all" as const, count: allCount, color: TERM.fg, icon: Files },
-    { label: "修改", value: "M" as const, count: modifiedCount, color: STATUS_CONFIG.M.color, icon: FilePen },
-    { label: "新增", value: "A" as const, count: addedCount, color: STATUS_CONFIG.A.color, icon: FilePlus },
-    { label: "删除", value: "D" as const, count: deletedCount, color: STATUS_CONFIG.D.color, icon: FileMinus },
+  const filterButtons: {
+    labelKey: TranslationKey;
+    value: "all" | "M" | "A" | "D";
+    count: number;
+    color: string;
+    icon: typeof Files;
+  }[] = [
+    { labelKey: "git.filter.all", value: "all", count: allCount, color: TERM.fg, icon: Files },
+    { labelKey: "git.filter.modified", value: "M", count: modifiedCount, color: STATUS_CONFIG.M.color, icon: FilePen },
+    { labelKey: "git.filter.added", value: "A", count: addedCount, color: STATUS_CONFIG.A.color, icon: FilePlus },
+    { labelKey: "git.filter.deleted", value: "D", count: deletedCount, color: STATUS_CONFIG.D.color, icon: FileMinus },
   ];
 
   const panelClassName = embedded
@@ -391,7 +400,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       <div className="flex items-center justify-between gap-2 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
         <span className="flex items-center gap-2 text-[11px] font-bold" style={{ color: TERM.fg }}>
           <GitBranch size={12} strokeWidth={2} />
-          Git 变更
+          {t("git.title")}
         </span>
         <span className="flex items-center gap-1.5">
           {/* Group By 切换下拉 */}
@@ -401,8 +410,8 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               onClick={() => setGroupByMenuOpen(!groupByMenuOpen)}
               className="ui-focus-ring flex items-center gap-1 rounded px-1 py-0.5 text-[10px] transition-colors"
               style={{ color: TERM.cyan, backgroundColor: `${TERM.cyan}12` }}
-              title="切换分组模式"
-              aria-label="切换分组模式"
+              title={t("git.groupBy")}
+              aria-label={t("git.groupBy")}
             >
               {gitGroupBy === "module" ? <Layers size={10} /> : <FolderTree size={10} />}
               <ChevronDown size={8} />
@@ -464,7 +473,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
             <StageCheckbox
               state={selectAllState}
               onToggle={handleToggleSelectAll}
-              title={selectAllState === "checked" ? "全部取消（取消暂存 + 清空未跟踪选中）" : "全选（暂存已跟踪改动 + 选中未跟踪文件）"}
+              title={selectAllState === "checked" ? t("git.unselectAll") : t("git.selectAll")}
             />
           )}
           {hasDirectories && (
@@ -473,10 +482,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               onClick={allCollapsed ? expandAllDirs : collapseAllDirs}
               className="ui-focus-ring rounded px-1 py-0.5 text-[10px] transition-colors"
               style={{ color: TERM.cyan, backgroundColor: `${TERM.cyan}12` }}
-              title={allCollapsed ? "全部展开 Git 文件树" : "全部收起 Git 文件树"}
-              aria-label={allCollapsed ? "全部展开 Git 文件树" : "全部收起 Git 文件树"}
+              title={allCollapsed ? t("git.expandTree") : t("git.collapseTree")}
+              aria-label={allCollapsed ? t("git.expandTree") : t("git.collapseTree")}
             >
-              {allCollapsed ? "展开" : "收起"}
+              {allCollapsed ? t("git.expand") : t("git.collapse")}
             </button>
           )}
           {trackableCount > 0 && (
@@ -486,8 +495,8 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               disabled={discarding}
               className="ui-focus-ring rounded p-0.5 disabled:opacity-40"
               style={{ color: TERM.red }}
-              title="丢弃全部已跟踪改动"
-              aria-label="丢弃全部已跟踪改动"
+              title={t("git.discardAllTracked")}
+              aria-label={t("git.discardAllTracked")}
             >
               <Undo2 size={11} />
             </button>
@@ -497,8 +506,8 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
             onClick={handleRefresh}
             className={`ui-focus-ring rounded p-0.5 ${loading ? "animate-spin" : ""}`}
             style={{ color: TERM.cyan }}
-            title="刷新"
-            aria-label="刷新 Git 变更"
+            title={t("common.refresh")}
+            aria-label={t("git.refresh")}
           >
             <RefreshCw size={11} />
           </button>
@@ -511,7 +520,8 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
           {filterButtons.map((btn) => {
             const Icon = btn.icon;
             const active = statusFilter === btn.value;
-            const title = `${btn.label} ${btn.count}`;
+            const label = t(btn.labelKey);
+            const title = `${label} ${btn.count}`;
             return (
               <button
                 key={btn.value}
@@ -528,7 +538,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 }}
               >
                 <Icon size={11} strokeWidth={2} style={{ color: btn.color }} />
-                {!hideFilterLabels && <span>{btn.label}</span>}
+                {!hideFilterLabels && <span>{label}</span>}
                 <span className="font-bold">{btn.count}</span>
               </button>
             );
@@ -539,23 +549,23 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       {/* Summary */}
       {changes.length > 0 && (
         <div className="shrink-0 border-b px-2 py-1.5 text-[10px]" style={{ borderColor: TERM.dim, color: TERM.dim }}>
-          <span style={{ color: TERM.fg }}>{allCount}</span> 个文件
+          <span style={{ color: TERM.fg }}>{t("git.summary.files", { count: allCount })}</span>
           {modifiedCount > 0 && (
             <>
               {" · "}
-              <span style={{ color: STATUS_CONFIG.M.color }}>{modifiedCount}</span> 修改
+              <span style={{ color: STATUS_CONFIG.M.color }}>{t("git.summary.modified", { count: modifiedCount })}</span>
             </>
           )}
           {addedCount > 0 && (
             <>
               {" · "}
-              <span style={{ color: STATUS_CONFIG.A.color }}>{addedCount}</span> 新增
+              <span style={{ color: STATUS_CONFIG.A.color }}>{t("git.summary.added", { count: addedCount })}</span>
             </>
           )}
           {deletedCount > 0 && (
             <>
               {" · "}
-              <span style={{ color: STATUS_CONFIG.D.color }}>{deletedCount}</span> 删除
+              <span style={{ color: STATUS_CONFIG.D.color }}>{t("git.summary.deleted", { count: deletedCount })}</span>
             </>
           )}
           {(totalAdded > 0 || totalDeleted > 0) && (
@@ -572,17 +582,17 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       {/* Content */}
       <div className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll">
         {!projectPath ? (
-          <EmptyHint text="当前终端未关联项目" />
+          <EmptyHint text={t("git.empty.noProject")} />
         ) : loading && changes.length === 0 ? (
-          <EmptyHint text="加载中…" />
+          <EmptyHint text={t("common.loading")} />
         ) : changes.length === 0 ? (
-          <EmptyHint text="无文件变更" />
+          <EmptyHint text={t("git.empty.noChanges")} />
         ) : (
           <>
             {tree.length > 0 && (
               <div>
                 <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: TERM.dim }}>
-                  改动
+                  {t("git.section.changed")}
                 </div>
                 <GitChangesTree
                   nodes={tree}
@@ -598,7 +608,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
             {untrackedTree.length > 0 && statusFilter !== "M" && statusFilter !== "D" && (
               <div className={tree.length > 0 ? "mt-2 border-t pt-2" : ""} style={{ borderColor: TERM.dim }}>
                 <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: TERM.dim }}>
-                  未跟踪文件
+                  {t("git.section.untracked")}
                 </div>
                 <GitChangesTree
                   nodes={untrackedTree}
@@ -635,7 +645,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 </span>
               )}
               {!detached && branch && !hasUpstream && (
-                <span className="shrink-0 text-[10px]" style={{ color: TERM.dim }}>未跟踪远端</span>
+                <span className="shrink-0 text-[10px]" style={{ color: TERM.dim }}>{t("git.branch.noUpstream")}</span>
               )}
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
@@ -647,10 +657,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                     disabled={pulling}
                     className="ui-focus-ring flex items-center gap-1 rounded-l px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
                     style={{ color: TERM.cyan, border: `1px solid ${TERM.cyan}55`, borderRight: "none" }}
-                    title="拉取远端更新（合并；可快进时自动快进）"
+                    title={t("git.pull.title")}
                   >
                     <Download size={12} />
-                    {pulling ? "拉取中…" : `拉取 ${behind}`}
+                    {pulling ? t("git.pull.loading") : t("git.pull.count", { count: behind })}
                   </button>
                   <button
                     type="button"
@@ -658,7 +668,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                     disabled={pulling}
                     className="ui-focus-ring flex items-center justify-center rounded-r px-1 transition-opacity hover:opacity-80 disabled:opacity-40"
                     style={{ color: TERM.cyan, border: `1px solid ${TERM.cyan}55` }}
-                    title="选择拉取方式"
+                    title={t("git.pull.method")}
                     aria-haspopup="menu"
                     aria-expanded={pullMenuOpen}
                   >
@@ -673,9 +683,9 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                         role="menu"
                       >
                         {([
-                          { s: "merge", label: "合并拉取", desc: "保留两边历史" },
-                          { s: "rebase", label: "变基拉取", desc: "线性历史" },
-                          { s: "ff-only", label: "仅快进", desc: "不产生合并" },
+                          { s: "merge", label: t("git.pull.merge"), desc: t("git.pull.mergeDescription") },
+                          { s: "rebase", label: t("git.pull.rebase"), desc: t("git.pull.rebaseDescription") },
+                          { s: "ff-only", label: t("git.pull.ffOnly"), desc: t("git.pull.ffOnlyDescription") },
                         ] as { s: GitPullStrategy; label: string; desc: string }[]).map((o) => (
                           <button
                             key={o.s}
@@ -703,10 +713,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 disabled={pushing || !canPush}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
                 style={{ color: TERM.green, border: `1px solid ${TERM.green}55` }}
-                title={hasUpstream ? "推送到远端" : "推送并建立远端跟踪分支"}
+                title={hasUpstream ? t("git.push.title") : t("git.push.setUpstreamTitle")}
               >
                 <Upload size={12} />
-                {pushing ? "推送中…" : ahead > 0 ? `推送 ${ahead}` : "推送"}
+                {pushing ? t("git.push.loading") : ahead > 0 ? t("git.push.count", { count: ahead }) : t("git.push.action")}
               </button>
             </span>
           </div>
@@ -721,13 +731,13 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
         >
           <span className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: STATUS_CONFIG.C.color }}>
             <GitMerge size={12} strokeWidth={2} />
-            {pendingOp === "rebase" ? "变基进行中" : "合并进行中"}
-            {hasConflicts && <span className="font-normal">· 存在冲突</span>}
+            {pendingOp === "rebase" ? t("git.conflict.rebaseInProgress") : t("git.conflict.mergeInProgress")}
+            {hasConflicts && <span className="font-normal">· {t("git.conflict.hasConflicts")}</span>}
           </span>
           <span className="text-[10px] leading-snug" style={{ color: TERM.dim }}>
             {pendingOp === "rebase"
-              ? "解决冲突文件并暂存后点击「继续」，或中止回到拉取前。"
-              : "解决冲突文件后在下方提交以完成合并，或中止回到拉取前。"}
+              ? t("git.conflict.rebaseHint")
+              : t("git.conflict.mergeHint")}
           </span>
           <span className="flex items-center gap-1.5">
             {pendingOp === "rebase" && (
@@ -737,9 +747,9 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 disabled={pulling || hasConflicts}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
                 style={{ color: TERM.green, border: `1px solid ${TERM.green}55` }}
-                title={hasConflicts ? "请先解决并暂存所有冲突文件" : "继续变基"}
+                title={hasConflicts ? t("git.conflict.resolveFirst") : t("git.conflict.continueRebase")}
               >
-                <Check size={12} /> 继续
+                <Check size={12} /> {t("git.conflict.continue")}
               </button>
             )}
             <button
@@ -748,9 +758,9 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               disabled={pulling}
               className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
               style={{ color: STATUS_CONFIG.C.color, border: `1px solid ${STATUS_CONFIG.C.color}55` }}
-              title="中止合并/变基，恢复到拉取前"
+              title={t("git.conflict.abort")}
             >
-              <X size={12} /> 中止
+              <X size={12} /> {t("git.conflict.abort")}
             </button>
           </span>
         </div>
@@ -770,15 +780,15 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               }
             }}
             rows={2}
-            placeholder={committableCount > 0 ? "提交信息（Ctrl+Enter 提交）" : "勾选文件后再提交"}
+            placeholder={committableCount > 0 ? t("git.commit.placeholder") : t("git.commit.placeholderNoFiles")}
             className="ui-thin-scroll w-full resize-none rounded px-2 py-1 text-[11px] outline-none"
             style={{ backgroundColor: TERM.bg, color: TERM.fg, border: `1px solid ${TERM.dim}` }}
           />
           <div className="mt-1 flex items-center justify-between">
             <span className="text-[10px]" style={{ color: TERM.dim }}>
-              待提交 <span style={{ color: committableCount > 0 ? TERM.green : TERM.dim }}>{committableCount}</span> 个文件
+              {t("git.commit.pendingFiles", { count: committableCount })}
               {selectedUntrackedCount > 0 && (
-                <span style={{ color: TERM.dim }}>（含 {selectedUntrackedCount} 未跟踪）</span>
+                <span style={{ color: TERM.dim }}>（{t("git.commit.includesUntracked", { count: selectedUntrackedCount })}）</span>
               )}
             </span>
             <button
@@ -787,10 +797,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               disabled={committing || committableCount === 0 || commitMsg.trim().length === 0}
               className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
               style={{ color: TERM.green, border: `1px solid ${TERM.green}55` }}
-              title="提交已暂存与选中的改动"
+              title={t("git.commit.title")}
             >
               <GitCommitHorizontal size={12} />
-              {committing ? "提交中…" : `提交 (${committableCount})`}
+              {committing ? t("git.commit.loading") : `${t("git.commit.action")} (${committableCount})`}
             </button>
           </div>
         </div>
@@ -812,10 +822,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       {/* 单文件回滚确认 */}
       <ConfirmDialog
         open={!!discardTarget}
-        title="回滚改动？"
-        message={discardTarget ? `将永久丢弃对 ${discardTarget.name} 的未提交改动，无法通过 git 撤销。` : undefined}
-        confirmText="回滚"
-        cancelText="取消"
+        title={t("git.confirm.revertTitle")}
+        message={discardTarget ? t("git.confirm.revertMessage", { name: discardTarget.name }) : undefined}
+        confirmText={t("git.confirm.revert")}
+        cancelText={t("common.cancel")}
         danger
         onConfirm={() => {
           if (discardTarget) void discardFile(discardTarget.path, discardTarget.status);
@@ -827,10 +837,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       {/* 丢弃全部确认 */}
       <ConfirmDialog
         open={confirmAllOpen}
-        title="丢弃全部改动？"
-        message={`将永久丢弃 ${trackableCount} 个已跟踪文件的未提交改动，无法通过 git 撤销。未跟踪文件不受影响。`}
-        confirmText="全部丢弃"
-        cancelText="取消"
+        title={t("git.confirm.discardAllTitle")}
+        message={t("git.confirm.discardAllMessage", { count: trackableCount })}
+        confirmText={t("git.confirm.discardAll")}
+        cancelText={t("common.cancel")}
         danger
         onConfirm={() => {
           setConfirmAllOpen(false);

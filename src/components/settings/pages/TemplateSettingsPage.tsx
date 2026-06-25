@@ -4,6 +4,7 @@ import { useTemplateStore } from "../../../stores/templateStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
 import type { CommandTemplate } from "../../../lib/types";
+import { useI18n, type TranslationKey } from "../../../lib/i18n";
 
 type Scope = "global" | "project" | "session";
 
@@ -19,10 +20,10 @@ interface TemplateEditorForm {
   projectId: string | null;
 }
 
-const SCOPE_OPTIONS: { value: Scope; label: string }[] = [
-  { value: "global", label: "全局" },
-  { value: "project", label: "项目" },
-  { value: "session", label: "会话" },
+const SCOPE_OPTIONS: { value: Scope; labelKey: TranslationKey }[] = [
+  { value: "global", labelKey: "settings.templates.scope.global" },
+  { value: "project", labelKey: "settings.templates.scope.project" },
+  { value: "session", labelKey: "settings.templates.scope.session" },
 ];
 
 function resolveScope(template: CommandTemplate): Scope {
@@ -32,6 +33,7 @@ function resolveScope(template: CommandTemplate): Scope {
 }
 
 export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps) {
+  const { t } = useI18n();
   const {
     templates,
     sessionTemplates,
@@ -75,10 +77,12 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
   );
 
   const scopeLabel = (template: CommandTemplate): string => {
-    if (template.session_id) return "会话";
-    if (!template.project_id) return "全局";
+    if (template.session_id) return t("settings.templates.scope.session");
+    if (!template.project_id) return t("settings.templates.scope.global");
     const project = projects.find((item) => item.id === template.project_id);
-    return project ? `项目:${project.name}` : "项目";
+    return project
+      ? t("settings.templates.scope.projectWithName", { name: project.name })
+      : t("settings.templates.scope.project");
   };
 
   const keyword = searchValue.trim().toLowerCase();
@@ -93,7 +97,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
         || scopeText.includes(keyword)
       );
     });
-  }, [allTemplates, keyword]);
+  }, [allTemplates, keyword, projects, t]);
 
   const selectedTemplate = useMemo(
     () => allTemplates.find((item) => item.id === selectedId) ?? null,
@@ -101,17 +105,18 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
   );
   const projectOptions = useMemo(
     () => [
-      { value: "", label: "请选择项目" },
+      { value: "", label: t("settings.templates.selectProject") },
       ...projects.map((project) => ({ value: project.id, label: project.name })),
     ],
-    [projects]
+    [projects, t]
   );
   const scopeOptions = useMemo(
     () => SCOPE_OPTIONS.map((option) => ({
-      ...option,
+      value: option.value,
+      label: t(option.labelKey),
       disabled: option.value === "session" && !activeSessionId,
     })),
-    [activeSessionId]
+    [activeSessionId, t]
   );
 
   const resetToCreate = () => {
@@ -214,10 +219,10 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
         <Stack gap="sm">
           <Group justify="space-between" align="center" gap="sm">
             <Text size="sm" fw={600} c="var(--on-surface)">
-              模板列表
+              {t("settings.templates.list")}
             </Text>
             <Button type="button" size="xs" variant="subtle" color="cliPrimary" onClick={resetToCreate}>
-              新建模板
+              {t("settings.templates.new")}
             </Button>
           </Group>
 
@@ -249,7 +254,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
           {visibleTemplates.length === 0 && (
             <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
               <Text size="xs" c="var(--on-surface-variant)">
-              暂无匹配模板，可从右侧新建。
+                {t("settings.templates.empty")}
               </Text>
             </Card>
           )}
@@ -262,10 +267,10 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
           <Group justify="space-between" align="flex-start" gap="md">
             <Box>
               <Text size="sm" fw={600} c="var(--on-surface)">
-              {mode === "create" ? "新建模板" : "编辑模板"}
+                {mode === "create" ? t("settings.templates.createTitle") : t("settings.templates.editTitle")}
               </Text>
               <Text mt={2} size="xs" c="var(--on-surface-variant)">
-              新建与编辑共用同一表单，避免行为分叉。
+                {t("settings.templates.formDescription")}
               </Text>
             </Box>
             <Group gap="xs" justify="flex-end">
@@ -277,7 +282,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
                 color="gray"
                 onClick={resetToCreate}
               >
-                取消编辑
+                {t("settings.templates.cancelEdit")}
               </Button>
             )}
             <Button
@@ -287,7 +292,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
               onClick={() => void handleSave()}
               disabled={saveDisabled}
             >
-              {saving ? "保存中..." : "确认保存"}
+              {saving ? t("settings.templates.saving") : t("settings.templates.confirmSave")}
             </Button>
             {mode === "edit" && (
               confirmingDelete ? (
@@ -299,7 +304,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
                     color="gray"
                     onClick={() => setConfirmingDelete(false)}
                   >
-                    取消删除
+                    {t("settings.templates.cancelDelete")}
                   </Button>
                   <Button
                     type="button"
@@ -307,7 +312,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
                     color="red"
                     onClick={() => void handleDelete()}
                   >
-                    确认删除
+                    {t("settings.templates.confirmDelete")}
                   </Button>
                 </>
               ) : (
@@ -318,7 +323,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
                   color="red"
                   onClick={() => setConfirmingDelete(true)}
                 >
-                  删除
+                  {t("common.delete")}
                 </Button>
               )
             )}
@@ -328,35 +333,35 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
 
         <Stack gap="sm" p="md">
           <TextInput
-              label="名称"
+              label={t("settings.templates.name")}
               value={form.name}
               onChange={(event) => setForm((prev) => ({ ...prev, name: event.currentTarget.value }))}
-              placeholder="例如：启动后端服务"
+              placeholder={t("settings.templates.namePlaceholder")}
               size="xs"
-              aria-label="模板名称"
+              aria-label={t("settings.templates.name")}
           />
 
           <TextInput
-              label="命令"
+              label={t("settings.templates.command")}
               value={form.command}
               onChange={(event) => setForm((prev) => ({ ...prev, command: event.currentTarget.value }))}
-              placeholder="支持 ${projectPath}, ${projectName}"
+              placeholder={t("settings.templates.commandPlaceholder")}
               size="xs"
-              aria-label="模板命令"
+              aria-label={t("settings.templates.command")}
           />
 
           <TextInput
-              label="描述"
+              label={t("settings.templates.description")}
               value={form.description}
               onChange={(event) => setForm((prev) => ({ ...prev, description: event.currentTarget.value }))}
-              placeholder="可选"
+              placeholder={t("settings.templates.optional")}
               size="xs"
-              aria-label="模板描述"
+              aria-label={t("settings.templates.description")}
           />
 
           <Box>
             <Select<Scope>
-              label="作用域"
+              label={t("settings.templates.scopeLabel")}
               value={form.scope}
               onChange={(value) => {
                 if (value) setForm((prev) => ({ ...prev, scope: value }));
@@ -365,39 +370,39 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
               allowDeselect={false}
               disabled={mode === "edit"}
               size="xs"
-              aria-label="模板作用域"
+              aria-label={t("settings.templates.scopeLabel")}
             />
             {!activeSessionId && form.scope === "session" && (
               <Text mt={4} size="xs" c="var(--warning)">
-                当前无活跃会话，不能创建会话模板。
+                {t("settings.templates.noActiveSession")}
               </Text>
             )}
             {mode === "edit" && (
               <Text mt={4} size="xs" c="var(--on-surface-variant)">
-                编辑模式锁定作用域，避免跨作用域迁移造成误操作。
+                {t("settings.templates.lockedScope")}
               </Text>
             )}
           </Box>
 
           {form.scope === "project" && (
             <Select<string>
-                label="目标项目"
+                label={t("settings.templates.targetProject")}
                 value={form.projectId ?? ""}
                 onChange={(value) => setForm((prev) => ({ ...prev, projectId: value || null }))}
                 data={projectOptions}
                 allowDeselect={false}
                 disabled={mode === "edit"}
                 size="xs"
-                aria-label="目标项目"
+                aria-label={t("settings.templates.targetProject")}
             />
           )}
 
           {form.scope === "session" && (
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Text size="xs" c="var(--on-surface-variant)">
-              {activeSessionId
-                ? `将绑定到当前会话：${activeSessionId}`
-                : "请先激活一个会话后再创建会话模板。"}
+                {activeSessionId
+                  ? t("settings.templates.bindSession", { sessionId: activeSessionId })
+                  : t("settings.templates.activateSessionFirst")}
               </Text>
             </Card>
           )}

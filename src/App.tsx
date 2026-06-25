@@ -31,7 +31,7 @@ import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
 import { useModelPricingStore } from "./stores/modelPricingStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
 import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contrast";
-import { useI18n } from "./lib/i18n";
+import { translateCurrent, useI18n } from "./lib/i18n";
 import "./App.css";
 
 const appStartAt =
@@ -71,8 +71,8 @@ async function hasInstalledCliHook(): Promise<boolean> {
     autoRepair: settings.claudeHookAutoRepairKnownInstalled,
   });
   if (status.claudeAutoRepaired && !settings.claudeHookAutoRepairNoticeShown) {
-    toast.info("Claude Hook 已自动恢复", {
-      description: "检测到 Hook 被外部工具覆盖，CLI-Manager 已重新写入全局 Hook 配置。",
+    toast.info(translateCurrent("notifications.hook.autoRepaired.title"), {
+      description: translateCurrent("notifications.hook.autoRepaired.description"),
     });
     void settings.update("claudeHookAutoRepairNoticeShown", true);
   }
@@ -108,15 +108,15 @@ function createClaudeHookToastId(tabId: string): string {
 
 function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle {
   if (payload.event === "Stop") {
-    return { variant: "finished", icon: Check, eyebrow: "任务完成", actionLabel: "查看" };
+    return { variant: "finished", icon: Check, eyebrow: translateCurrent("notifications.hookToast.finished"), actionLabel: translateCurrent("notifications.hookToast.view") };
   }
   if (payload.event === "StopFailure") {
-    return { variant: "failed", icon: AlertTriangle, eyebrow: "执行失败", actionLabel: "查看" };
+    return { variant: "failed", icon: AlertTriangle, eyebrow: translateCurrent("notifications.hookToast.failed"), actionLabel: translateCurrent("notifications.hookToast.view") };
   }
   if (payload.event === "PermissionRequest") {
-    return { variant: "approval", icon: AlertTriangle, eyebrow: "需要审批", actionLabel: "去处理" };
+    return { variant: "approval", icon: AlertTriangle, eyebrow: translateCurrent("notifications.hookToast.approval"), actionLabel: translateCurrent("notifications.hookToast.handle") };
   }
-  return { variant: "attention", icon: AlertTriangle, eyebrow: "提醒", actionLabel: "查看" };
+  return { variant: "attention", icon: AlertTriangle, eyebrow: translateCurrent("notifications.hookToast.attention"), actionLabel: translateCurrent("notifications.hookToast.view") };
 }
 
 function getCliHookSourceName(payload: CliHookPayload): string {
@@ -126,10 +126,10 @@ function getCliHookSourceName(payload: CliHookPayload): string {
 function getClaudeHookToastTitle(payload: CliHookPayload, tabTitle: string): string {
   if (payload.title) return payload.title;
   const sourceName = getCliHookSourceName(payload);
-  if (payload.event === "Stop") return `${tabTitle} 已完成`;
-  if (payload.event === "StopFailure") return `${tabTitle} 执行失败`;
-  if (payload.event === "PermissionRequest") return `${sourceName} 需要审批`;
-  return `${sourceName} 提醒`;
+  if (payload.event === "Stop") return translateCurrent("notifications.hookToast.title.finished", { tabTitle });
+  if (payload.event === "StopFailure") return translateCurrent("notifications.hookToast.title.failed", { tabTitle });
+  if (payload.event === "PermissionRequest") return translateCurrent("notifications.hookToast.title.approval", { sourceName });
+  return translateCurrent("notifications.hookToast.title.attention", { sourceName });
 }
 
 function getHookProjectName(payload: CliHookPayload, tabTitle?: string | null): string {
@@ -143,7 +143,7 @@ function getHookProjectName(payload: CliHookPayload, tabTitle?: string | null): 
     return cwdParts.length > 0 ? cwdParts[cwdParts.length - 1] : cwd;
   }
 
-  return "未知项目";
+  return translateCurrent("notifications.system.unknownProject");
 }
 
 function isSystemNotificationEvent(eventType: CliHookPayload["event"]): eventType is HookEventType {
@@ -160,23 +160,23 @@ function isSystemNotificationEvent(eventType: CliHookPayload["event"]): eventTyp
 function getSystemNotificationBody(payload: CliHookPayload, projectName: string): string {
   const sourceName = getCliHookSourceName(payload);
   const detail = payload.message?.trim();
-  const suffix = detail ? `：${detail}` : "";
+  const suffix = detail ? `: ${detail}` : "";
 
   switch (payload.event) {
     case "Stop":
-      return `✅ ${sourceName} 在 ${projectName} 的任务已完成${suffix}`;
+      return translateCurrent("notifications.system.stop", { sourceName, projectName, suffix });
     case "StopFailure":
-      return `⚠️ ${sourceName} 在 ${projectName} 执行失败，请查看详情${suffix}`;
+      return translateCurrent("notifications.system.stopFailure", { sourceName, projectName, suffix });
     case "PermissionRequest":
-      return `🔔 ${sourceName} 需要你的关注哦~ 快来看看 ${projectName} 吧!${suffix}`;
+      return translateCurrent("notifications.system.permissionRequest", { sourceName, projectName, suffix });
     case "Notification":
-      return `🔔 ${sourceName} 在 ${projectName} 有新的提醒${suffix}`;
+      return translateCurrent("notifications.system.notification", { sourceName, projectName, suffix });
     case "SessionStart":
-      return `🚀 ${sourceName} 在 ${projectName} 的会话已启动${suffix}`;
+      return translateCurrent("notifications.system.sessionStart", { sourceName, projectName, suffix });
     case "UserPromptSubmit":
-      return `💬 ${sourceName} 在 ${projectName} 已提交新指令${suffix}`;
+      return translateCurrent("notifications.system.userPromptSubmit", { sourceName, projectName, suffix });
     default:
-      return `🔔 ${sourceName} 在 ${projectName} 有新的通知${suffix}`;
+      return translateCurrent("notifications.system.default", { sourceName, projectName, suffix });
   }
 }
 
@@ -243,7 +243,7 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string): void {
           <div className="claude-hook-toast__eyebrow">{item.style.eyebrow}</div>
           <div className="claude-hook-toast__title">{item.title}</div>
           <div className="claude-hook-toast__source" title={item.tabTitle}>
-            来自：{item.tabTitle}
+            {translateCurrent("notifications.hookToast.from", { tabTitle: item.tabTitle })}
           </div>
           {item.message ? <div className="claude-hook-toast__description">{item.message}</div> : null}
           <div className="claude-hook-toast__actions">
@@ -259,14 +259,14 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string): void {
               {item.style.actionLabel}
             </button>
             <button type="button" className="claude-hook-toast__ignore" onClick={() => toast.dismiss(item.id)}>
-              忽略
+              {translateCurrent("notifications.hookToast.ignore")}
             </button>
           </div>
         </div>
         <button
           type="button"
           className="claude-hook-toast__close"
-          aria-label="关闭通知"
+          aria-label={translateCurrent("notifications.hookToast.close")}
           onClick={() => toast.dismiss(item.id)}
         >
           <X size={20} strokeWidth={2.2} />
@@ -289,9 +289,13 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
     void (async () => {
       const result = await useSyncStore.getState().runAutoSync("startup");
       if (result === "conflict") {
-        toast.warning("自动同步暂停", { description: "检测到云端与本地都有更新，请进入同步设置手动处理。" });
+        toast.warning(translateCurrent("notifications.autoSync.startConflict"), {
+          description: translateCurrent("notifications.autoSync.conflictDescription"),
+        });
       } else if (result === "error") {
-        toast.error("启动自动同步失败", { description: "请检查 WebDAV 配置或网络连接。" });
+        toast.error(translateCurrent("notifications.autoSync.startFailed"), {
+          description: translateCurrent("notifications.autoSync.failedDescription"),
+        });
       }
     })();
 
@@ -302,11 +306,11 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
         await updateStore.fetchVersion();
         const updateInfo = await updateStore.checkUpdate({ silent: true });
         if (!updateInfo) return;
-        toast.info(`发现新版本 V${updateInfo.version}`, {
-          description: "可在设置页查看说明并下载安装，安装前会再次确认。",
+        toast.info(translateCurrent("notifications.update.availableTitle", { version: updateInfo.version }), {
+          description: translateCurrent("notifications.update.availableDescription"),
           action: openSettings
             ? {
-                label: "查看更新",
+                label: translateCurrent("notifications.update.viewUpdate"),
                 onClick: () => openSettings("general"),
               }
             : undefined,
@@ -356,11 +360,15 @@ function App() {
   const runCloseAutoSync = useCallback(async () => {
     const result = await useSyncStore.getState().runAutoSync("close");
     if (result === "conflict") {
-      toast.warning("退出自动同步暂停", { description: "检测到云端与本地都有更新，请进入同步设置手动处理。" });
+      toast.warning(t("notifications.autoSync.exitConflict"), {
+        description: t("notifications.autoSync.conflictDescription"),
+      });
     } else if (result === "error") {
-      toast.error("退出自动同步失败", { description: "请检查 WebDAV 配置或网络连接。" });
+      toast.error(t("notifications.autoSync.exitFailed"), {
+        description: t("notifications.autoSync.failedDescription"),
+      });
     }
-  }, []);
+  }, [t]);
 
   const handleOpenStats = useCallback(() => {
     // 历史用量分析（StatsPanel）不需要 hook，直接打开
@@ -380,15 +388,15 @@ function App() {
         logWarn("Failed to check hook status before opening realtime stats", err);
       }
 
-      toast.warning("实时统计需要先安装 Hook", {
-        description: "实时统计依赖 Claude/Codex Hook 上报 sessionId。请先到 Hook 设置中安装对应工具的 Hook。",
+      toast.warning(t("notifications.stats.needHook"), {
+        description: t("notifications.stats.needHookDescription"),
         action: {
-          label: "去设置",
+          label: t("notifications.goSettings"),
           onClick: () => handleOpenSettings("hooks"),
         },
       });
     })();
-  }, [ccusageAnalyticsEnabled, handleOpenSettings]);
+  }, [ccusageAnalyticsEnabled, handleOpenSettings, t]);
 
   const handleOpenStatsSession = useCallback(
     async (sessionKey: string) => {
@@ -418,11 +426,11 @@ function App() {
         }
         setTerminalFullscreen(nextFullscreen);
       } catch (err) {
-        toast.error(nextFullscreen ? "进入全屏失败" : "退出全屏失败", { description: String(err) });
+        toast.error(nextFullscreen ? t("notifications.fullscreen.enterFailed") : t("notifications.fullscreen.exitFailed"), { description: String(err) });
         logWarn("Failed to toggle terminal fullscreen", err);
       }
     })();
-  }, [terminalFullscreen]);
+  }, [terminalFullscreen, t]);
 
   useKeyboardShortcuts({ onToggleTerminalFullscreen: handleToggleTerminalFullscreen });
 
@@ -505,9 +513,9 @@ function App() {
       runDeferredStartupTasks(handleOpenSettings);
     };
     init().catch((err) => {
-      toast.error("初始化失败", { description: String(err) });
+      toast.error(t("notifications.app.initFailed"), { description: String(err) });
     });
-  }, [handleOpenSettings, loadSettings]);
+  }, [handleOpenSettings, loadSettings, t]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", resolvedTheme);

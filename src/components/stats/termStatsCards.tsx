@@ -3,6 +3,7 @@ import type { HistorySessionDetail, HistoryToolCount } from "../../lib/types";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { getContextLimit } from "../../lib/modelPricing";
 import type { TodayProjectStats } from "../../stores/historyStore";
+import { useI18n } from "../../lib/i18n";
 import {
   TERM,
   StatCard,
@@ -20,6 +21,7 @@ import {
 } from "./termStatsUi";
 
 export function TokenUsageCard({ stats }: { stats: TokenStats }) {
+  const { t } = useI18n();
   const animatedTotal = useCountUp(stats.totalTokens);
   const animatedCost = useCountUp(stats.estimatedCost);
 
@@ -27,7 +29,7 @@ export function TokenUsageCard({ stats }: { stats: TokenStats }) {
     <StatCard
       icon={<Coins size={13} />}
       iconColor={TERM.yellow}
-      title="Token 用量"
+      title={t("termStats.tokenUsage")}
       headerRight={<HeaderPill>{formatCompactCount(animatedTotal)}</HeaderPill>}
     >
       <div className="flex items-center gap-3">
@@ -44,17 +46,17 @@ export function TokenUsageCard({ stats }: { stats: TokenStats }) {
           </span>
         </Donut>
         <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
-          <StatChip dotColor={TERM.green} label="输入" value={formatCompactCount(stats.inputTokens)} />
-          <StatChip dotColor={TERM.yellow} label="输出" value={formatCompactCount(stats.outputTokens)} />
-          <StatChip dotColor={TERM.blue} label="缓存命中" value={formatCompactCount(stats.cacheReadTokens)} />
-          <StatChip dotColor={TERM.magenta} label="缓存写入" value={formatCompactCount(stats.cacheCreationTokens)} />
+          <StatChip dotColor={TERM.green} label={t("termStats.input")} value={formatCompactCount(stats.inputTokens)} />
+          <StatChip dotColor={TERM.yellow} label={t("termStats.output")} value={formatCompactCount(stats.outputTokens)} />
+          <StatChip dotColor={TERM.blue} label={t("termStats.cacheHit")} value={formatCompactCount(stats.cacheReadTokens)} />
+          <StatChip dotColor={TERM.magenta} label={t("termStats.cacheWrite")} value={formatCompactCount(stats.cacheCreationTokens)} />
         </div>
       </div>
       <div
         className="mt-2 flex items-baseline justify-between border-t pt-2 text-[11px]"
         style={{ borderColor: TERM.border }}
       >
-        <span style={{ color: TERM.dim }}>估算费用</span>
+        <span style={{ color: TERM.dim }}>{t("termStats.estimatedCost")}</span>
         <span className="text-[14px] font-bold" style={{ color: TERM.green }}>
           {formatCost(animatedCost)}
         </span>
@@ -70,6 +72,7 @@ export function ModelContextCard({
   stats: TokenStats;
   session: HistorySessionDetail | null;
 }) {
+  const { t } = useI18n();
   // 上限：优先 Codex token_count 事件携带的精确窗口，回退模型映射（含 [1m] → 1M）
   const contextLimit = session?.usage?.context_window ?? getContextLimit(stats.dominantModel);
 
@@ -111,7 +114,7 @@ export function ModelContextCard({
     <StatCard
       icon={<Cpu size={13} />}
       iconColor={TERM.magenta}
-      title="模型与上下文"
+      title={t("termStats.modelContext")}
       headerRight={
         usagePercent !== null ? (
           <HeaderPill color={percentColor}>{animatedPercent.toFixed(1)}%</HeaderPill>
@@ -121,7 +124,7 @@ export function ModelContextCard({
       }
     >
       <div className="flex items-center justify-between gap-2 text-[11px] leading-5">
-        <span className="shrink-0" style={{ color: TERM.dim }}>模型</span>
+        <span className="shrink-0" style={{ color: TERM.dim }}>{t("termStats.model")}</span>
         <span
           className="flex min-w-0 items-center gap-1 truncate text-right"
           style={{ color: TERM.magenta }}
@@ -132,19 +135,19 @@ export function ModelContextCard({
         </span>
       </div>
       <Row
-        label="当前上下文"
+        label={t("termStats.currentContext")}
         value={contextTokens !== null ? formatCompactCount(contextTokens) : "—"}
         color={TERM.fg}
       />
       <Row
-        label="上下文上限"
+        label={t("termStats.contextLimit")}
         value={contextLimit ? formatCompactCount(contextLimit) : "—"}
         color={TERM.fg}
       />
       {remaining !== null ? (
-        <Row label="剩余空间" value={formatCompactCount(remaining)} color={percentColor} />
+        <Row label={t("termStats.remaining")} value={formatCompactCount(remaining)} color={percentColor} />
       ) : isEmpty ? (
-        <Row label="剩余空间" value="—" color={TERM.dim} />
+        <Row label={t("termStats.remaining")} value="—" color={TERM.dim} />
       ) : null}
       {usagePercent !== null ? (
         <div className="mt-1.5">
@@ -162,12 +165,13 @@ export function ModelContextCard({
 const TREND_POINT_LIMIT = 40;
 
 export function TrendCard({ session }: { session: HistorySessionDetail | null }) {
+  const { t } = useI18n();
   const trend: SparkPoint[] = [];
   const backendTrend = session?.usage?.token_trend ?? [];
-  let sourceLabel = "每条消息 输入+输出";
+  let sourceLabel = t("termStats.messageInputOutput");
   if (session) {
     if (backendTrend.length > 0) {
-      sourceLabel = "每次请求 Token 增量";
+      sourceLabel = t("termStats.requestTokenDelta");
       for (const point of backendTrend) {
         const total =
           point.total_tokens
@@ -203,10 +207,10 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
     <StatCard
       icon={<Activity size={13} />}
       iconColor={TERM.cyan}
-      title="Token 趋势"
+      title={t("termStats.tokenTrend")}
       headerRight={
         hasTrend ? (
-          <HeaderPill color={TERM.cyan}>{recent.length} 条</HeaderPill>
+          <HeaderPill color={TERM.cyan}>{t("termStats.trendPointCount", { count: recent.length })}</HeaderPill>
         ) : isEmpty ? (
           <HeaderPill color={TERM.cyan}>—</HeaderPill>
         ) : undefined
@@ -219,20 +223,22 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
           className="flex items-center justify-center rounded-md text-[10px]"
           style={{ height: 40, color: TERM.dim, backgroundColor: TERM.cardInner }}
         >
-          {recent.length === 1 ? `仅 1 个趋势点：${formatCompactCount(peakTokens)}` : "暂无趋势数据"}
+          {recent.length === 1
+            ? t("termStats.singleTrendPoint", { tokens: formatCompactCount(peakTokens) })
+            : t("termStats.noTrendData")}
         </div>
       )}
       {hasTrend ? (
         <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM.dim }}>
           <span>{sourceLabel}</span>
           <span>
-            峰值 {formatCompactCount(peakTokens)}
+            {t("termStats.peak", { value: formatCompactCount(peakTokens) })}
           </span>
         </div>
       ) : isEmpty ? (
         <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM.dim }}>
           <span>{sourceLabel}</span>
-          <span>峰值 {formatCompactCount(peakTokens)}</span>
+          <span>{t("termStats.peak", { value: formatCompactCount(peakTokens) })}</span>
         </div>
       ) : null}
     </StatCard>
@@ -250,6 +256,7 @@ function ToolCountList({
   color: string;
   items: HistoryToolCount[];
 }) {
+  const { t } = useI18n();
   const top = items.slice(0, TOOL_LIST_LIMIT);
   const restCount = items.length - top.length;
   return (
@@ -273,7 +280,7 @@ function ToolCountList({
       ))}
       {restCount > 0 && (
         <div className="text-[10px]" style={{ color: TERM.dim }}>
-          +{restCount} 更多
+          +{restCount} {t("common.more")}
         </div>
       )}
     </div>
@@ -281,6 +288,7 @@ function ToolCountList({
 }
 
 export function ToolsCard({ session }: { session: HistorySessionDetail | null }) {
+  const { t } = useI18n();
   const usage = session?.usage;
   const toolCalls = usage?.tool_call_count ?? 0;
   const mcpCalls = usage?.mcp_calls ?? [];
@@ -293,27 +301,27 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
     <StatCard
       icon={<Wrench size={13} />}
       iconColor={TERM.blue}
-      title="工具与扩展"
+      title={t("termStats.tools")}
       headerRight={
         toolCalls > 0 ? (
-          <HeaderPill color={TERM.blue}>{formatCompactCount(toolCalls)} 次</HeaderPill>
+          <HeaderPill color={TERM.blue}>{t("termStats.callCount", { count: formatCompactCount(toolCalls) })}</HeaderPill>
         ) : isEmpty ? (
-          <HeaderPill color={TERM.blue}>0 次</HeaderPill>
+          <HeaderPill color={TERM.blue}>{t("termStats.zeroCalls")}</HeaderPill>
         ) : undefined
       }
     >
       {mcpCalls.length === 0 && skillCalls.length === 0 && builtinCalls.length === 0 ? (
         <div className="text-[11px]" style={{ color: TERM.dim }}>
-          暂无工具调用
+          {t("termStats.noToolCalls")}
         </div>
       ) : (
         <>
           {builtinCalls.length > 0 && (
-            <ToolCountList label="内置工具" color={TERM.green} items={builtinCalls} />
+            <ToolCountList label={t("termStats.builtinTools")} color={TERM.green} items={builtinCalls} />
           )}
           {mcpCalls.length > 0 && <ToolCountList label="MCP" color={TERM.cyan} items={mcpCalls} />}
           {skillCalls.length > 0 && (
-            <ToolCountList label="Skill / 命令" color={TERM.magenta} items={skillCalls} />
+            <ToolCountList label={t("termStats.skillCommand")} color={TERM.magenta} items={skillCalls} />
           )}
         </>
       )}
@@ -328,18 +336,19 @@ export function TodayUsageCard({
   stats: TodayProjectStats | null;
   loading: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <StatCard
       icon={<CalendarClock size={13} />}
       iconColor={TERM.green}
-      title="今日项目用量"
+      title={t("termStats.todayUsage")}
       headerRight={
-        stats && stats.sessions > 0 ? <HeaderPill>{stats.sessions} 会话</HeaderPill> : undefined
+        stats && stats.sessions > 0 ? <HeaderPill>{t("termStats.sessionCount", { count: stats.sessions })}</HeaderPill> : undefined
       }
     >
       {loading && !stats ? (
         <div className="text-[11px]" style={{ color: TERM.dim }}>
-          加载中…
+          {t("common.loading")}
         </div>
       ) : stats && stats.sessions > 0 ? (
         <div className="grid grid-cols-2 gap-1.5">
@@ -351,14 +360,14 @@ export function TodayUsageCard({
           />
           <StatChip
             dotColor={TERM.green}
-            label="费用"
+            label={t("termStats.cost")}
             value={formatCost(stats.totalCostUsd)}
             valueColor={TERM.green}
           />
         </div>
       ) : (
         <div className="text-[11px]" style={{ color: TERM.dim }}>
-          今日暂无会话
+          {t("termStats.todayNoSessions")}
         </div>
       )}
     </StatCard>

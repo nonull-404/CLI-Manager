@@ -3,6 +3,7 @@ import { BookCopy, ChevronDown, ChevronRight, Copy, GitCompare, Star, Terminal }
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
 import type { HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
+import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { EmptyState } from "../ui/EmptyState";
 import { SessionTranscriptContent } from "./SessionTranscriptContent";
 import { MetaEditor } from "./MetaEditor";
@@ -52,13 +53,13 @@ interface SessionDetailPaneProps {
   onLoadMoreMessages: () => void;
 }
 
-const DETAIL_VIEWS: Array<{ id: HistoryDetailView; label: string }> = [
-  { id: "transcript", label: "原文" },
-  { id: "timeline", label: "过程" },
-  { id: "context", label: "上下文" },
-  { id: "changes", label: "变更" },
-  { id: "tools", label: "工具" },
-  { id: "subtasks", label: "子任务" },
+const DETAIL_VIEWS: Array<{ id: HistoryDetailView; labelKey: TranslationKey }> = [
+  { id: "transcript", labelKey: "history.detail.view.transcript" },
+  { id: "timeline", labelKey: "history.detail.view.timeline" },
+  { id: "context", labelKey: "history.detail.view.context" },
+  { id: "changes", labelKey: "history.detail.view.changes" },
+  { id: "tools", labelKey: "history.detail.view.tools" },
+  { id: "subtasks", labelKey: "history.detail.view.subtasks" },
 ];
 
 function isInjectedPromptContent(content: string): boolean {
@@ -82,7 +83,7 @@ function shouldAutoCollapseMessage(message: HistoryMessage): boolean {
   return normalized !== "user";
 }
 
-function getCollapsedMessagePreview(content: string): string[] {
+function getCollapsedMessagePreview(content: string, fallback: string): string[] {
   const lines: string[] = [];
   let start = 0;
 
@@ -93,7 +94,7 @@ function getCollapsedMessagePreview(content: string): string[] {
     start = i + 1;
   }
 
-  return lines.length > 0 ? lines : ["无文本内容"];
+  return lines.length > 0 ? lines : [fallback];
 }
 
 function AutoCollapsedMessageContent({
@@ -105,11 +106,12 @@ function AutoCollapsedMessageContent({
   query: string;
   open: boolean;
 }) {
+  const { t } = useI18n();
   if (!shouldAutoCollapseMessage(message)) {
     return <SessionTranscriptContent content={message.content} query={query} />;
   }
 
-  const previewLines = getCollapsedMessagePreview(message.content);
+  const previewLines = getCollapsedMessagePreview(message.content, t("history.detail.noText"));
 
   if (open) {
     return (
@@ -149,6 +151,7 @@ function HistoryMessageCard({
   messageRefs: RefObject<Record<number, HTMLDivElement | null>>;
   measureElement: (element: Element) => void;
 }) {
+  const { t } = useI18n();
   const forceOpen = isMatched || isFocused;
   const collapsible = shouldAutoCollapseMessage(message);
   const [open, setOpen] = useState(forceOpen);
@@ -167,7 +170,7 @@ function HistoryMessageCard({
     messageRefs.current[index] = element;
     if (element) measureElement(element);
   };
-  const toggleTitle = open ? "收起内容" : "展开折叠内容";
+  const toggleTitle = open ? t("history.detail.collapse") : t("history.detail.expand");
 
   return (
     <div
@@ -258,6 +261,7 @@ export function SessionDetailPane({
   onToggleStar,
   onLoadMoreMessages,
 }: SessionDetailPaneProps) {
+  const { t, language } = useI18n();
   // matchIndices.includes(idx) 在 visibleMessages.map 内对每个可见消息做 O(N) 扫描，
   // 当匹配数 N 和可见消息数 M 都达到几百时累计 O(N·M)。改 Set 后是 O(1) lookup。
   const matchSet = useMemo(() => new Set(matchIndices), [matchIndices]);
@@ -287,8 +291,8 @@ export function SessionDetailPane({
       <div className="row-span-2 flex min-h-0 items-center justify-center">
         <EmptyState
           icon={<BookCopy size={34} strokeWidth={1.5} />}
-          title="未选择会话"
-          description="从左侧选择会话查看详情"
+          title={t("history.detail.noSelectionTitle")}
+          description={t("history.detail.noSelectionDescription")}
         />
       </div>
     );
@@ -297,8 +301,8 @@ export function SessionDetailPane({
   const copyText = (text: string, label: string) => {
     void navigator.clipboard
       .writeText(text)
-      .then(() => toast.success(`${label} 已复制`))
-      .catch((err) => toast.error("复制失败", { description: String(err) }));
+      .then(() => toast.success(t("history.detail.copySuccess", { label })))
+      .catch((err) => toast.error(t("history.detail.copyFailed"), { description: String(err) }));
   };
 
   const locationText = [
@@ -315,7 +319,7 @@ export function SessionDetailPane({
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-text-primary">{activeView.displayTitle}</h3>
             <div className="ui-dev-label mt-1 text-[11px] text-text-muted">
-              {activeView.source} · {makeSessionLabel(activeView)} · 更新于 {formatTime(activeView.updated_at)}
+              {activeView.source} · {makeSessionLabel(activeView)} · {t("history.detail.updatedAt", { time: formatTime(activeView.updated_at, language) })}
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-text-muted">
               <span className="ui-dev-label max-w-full truncate rounded border border-border bg-bg-secondary px-1.5 py-0.5">
@@ -325,19 +329,19 @@ export function SessionDetailPane({
                 onClick={() => copyText(activeView.session_id, "sessionId")}
                 className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
                 style={{ color: "var(--accent)" }}
-                title="复制 sessionId"
+                title={t("history.detail.copySessionId")}
               >
                 <Copy size={11} />
-                复制ID
+                {t("history.detail.copyId")}
               </button>
               <button
-                onClick={() => copyText(locationText, "会话定位信息")}
+                onClick={() => copyText(locationText, t("history.detail.copyLocationLabel"))}
                 className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
                 style={{ color: "var(--primary)" }}
-                title="复制 source/project/filePath 定位信息"
+                title={t("history.detail.copyLocation")}
               >
                 <Copy size={11} />
-                复制定位
+                {t("history.detail.copyLocationShort")}
               </button>
             </div>
           </div>
@@ -345,46 +349,46 @@ export function SessionDetailPane({
             <button
               onClick={onResumeSession}
               disabled={loadingSessionDetail || !activeSession}
-              aria-label="继续对话"
+              aria-label={t("history.detail.resume")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact ui-primary-action"
-              title="新建内部终端并继续该会话"
+              title={t("history.detail.resumeTitle")}
             >
               <Terminal size={12} />
-              继续对话
+              {t("history.detail.resume")}
             </button>
             <button
               onClick={onOpenPrompt}
-              aria-label="打开历史 Prompt 库"
+              aria-label={t("history.detail.openPrompt")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
               style={{ color: "var(--success)" }}
-              title="历史 Prompt 库"
+              title={t("history.detail.promptLibrary")}
             >
               <BookCopy size={12} />
-              历史Prompt
+              {t("history.detail.promptShort")}
             </button>
             <button
               onClick={onOpenDiff}
-              aria-label="打开 Diff 视图"
+              aria-label={t("history.detail.openDiff")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
               style={{ color: "var(--danger)" }}
-              title="Diff 视图"
+              title={t("history.detail.diffView")}
             >
               <GitCompare size={12} />
               Diff
             </button>
             <button
               onClick={onToggleStar}
-              aria-label={activeView.starred ? "取消收藏会话" : "收藏会话"}
+              aria-label={activeView.starred ? t("history.detail.unstar") : t("history.detail.star")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
               style={{
                 color: activeView.starred
                   ? "var(--warning)"
                   : "color-mix(in srgb, var(--warning) 78%, var(--on-surface-variant))",
               }}
-              title="收藏"
+              title={t("history.detail.starTitle")}
             >
               <Star size={12} fill={activeView.starred ? "currentColor" : "none"} />
-              {activeView.starred ? "已收藏" : "收藏"}
+              {activeView.starred ? t("history.detail.starred") : t("history.detail.starTitle")}
             </button>
           </div>
         </div>
@@ -404,7 +408,7 @@ export function SessionDetailPane({
           onJumpNext={onJumpNext}
         />
 
-        <div className="ui-history-detail-tabs" role="tablist" aria-label="会话详情视图">
+        <div className="ui-history-detail-tabs" role="tablist" aria-label={t("history.detail.viewsAria")}>
           {DETAIL_VIEWS.map((item) => (
             <button
               key={item.id}
@@ -414,17 +418,17 @@ export function SessionDetailPane({
               data-active={detailView === item.id}
               onClick={() => onDetailViewChange(item.id)}
             >
-              {item.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>
       </div>
 
       <div ref={messageListRef} onScroll={onMessageListScroll} className="[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3">
-        {loadingSessionDetail && <div className="text-xs text-text-muted">正在读取会话详情...</div>}
+        {loadingSessionDetail && <div className="text-xs text-text-muted">{t("history.detail.loading")}</div>}
 
         {!loadingSessionDetail && activeSession?.messages.length === 0 && (
-          <div className="text-xs text-text-muted">当前会话没有可显示的消息</div>
+          <div className="text-xs text-text-muted">{t("history.detail.noMessages")}</div>
         )}
 
         {!loadingSessionDetail && detailView === "transcript" && visibleMessages.length > 0 && (
@@ -479,8 +483,8 @@ export function SessionDetailPane({
         )}
 
         {!loadingSessionDetail && detailView === "transcript" && hasMoreMessages && (
-          <button onClick={onLoadMoreMessages} className="ui-btn mt-2.5 w-full" aria-label="加载更多消息">
-            加载更多消息 ({visibleMessageCount}/{totalMessageCount})
+          <button onClick={onLoadMoreMessages} className="ui-btn mt-2.5 w-full" aria-label={t("history.detail.loadMoreMessages")}>
+            {t("history.detail.loadMoreMessagesCount", { visible: visibleMessageCount, total: totalMessageCount })}
           </button>
         )}
       </div>

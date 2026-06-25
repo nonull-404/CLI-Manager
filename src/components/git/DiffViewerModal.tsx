@@ -6,6 +6,7 @@ import { parseDiff, Diff, Hunk, tokenize, Decoration, getChangeKey } from "react
 import type { ChangeData } from "react-diff-view";
 import { useGitStore } from "../../stores/gitStore";
 import { TERM } from "../stats/termStatsUi";
+import { useI18n } from "../../lib/i18n";
 import { refractor, detectLanguage } from "./diffHighlight";
 import "react-diff-view/style/index.css";
 import "./diffViewer.css";
@@ -21,6 +22,7 @@ interface DiffViewerModalProps {
 }
 
 export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName, status, onRequestDiscard }: DiffViewerModalProps) {
+  const { t } = useI18n();
   const [diffText, setDiffText] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,7 +114,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
       await revertHunk(diffText, hunkIndex);
       onClose();
     } catch {
-      toast.error("回滚此块失败：工作区可能已变化，请刷新后重试");
+      toast.error(t("git.diff.revertHunkFailed"));
     }
   };
 
@@ -139,7 +141,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
       await revertLines(diffText, selectedLines);
       onClose();
     } catch {
-      toast.error("回滚选中行失败：工作区可能已变化，请刷新后重试");
+      toast.error(t("git.diff.revertLinesFailed"));
     }
   };
 
@@ -175,17 +177,17 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                 }}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-1 text-[12px] transition-opacity hover:opacity-80"
                 style={{ color: TERM.red, border: `1px solid ${TERM.border}` }}
-                title="回滚此文件的全部改动"
+                title={t("git.diff.revertFileTitle")}
               >
                 <Undo2 size={13} />
-                回滚此文件
+                {t("git.diff.revertFile")}
               </button>
             )}
             <button
               onClick={onClose}
               className="ui-focus-ring rounded p-1 transition-opacity hover:opacity-70"
               style={{ color: TERM.dim }}
-              title="关闭"
+              title={t("common.close")}
             >
               <X size={18} strokeWidth={1.5} />
             </button>
@@ -201,7 +203,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                   className="h-8 w-8 animate-spin rounded-full border-2"
                   style={{ borderColor: TERM.green, borderTopColor: "transparent" }}
                 ></div>
-                <p className="text-sm" style={{ color: TERM.dim }}>加载中...</p>
+                <p className="text-sm" style={{ color: TERM.dim }}>{t("git.diff.loading")}</p>
               </div>
             </div>
           )}
@@ -243,10 +245,10 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                             disabled={discarding}
                             className="ui-focus-ring flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
                             style={{ color: TERM.red }}
-                            title="回滚此变更块"
+                            title={t("git.diff.revertHunkTitle")}
                           >
                             <Undo2 size={11} />
-                            回滚此块
+                            {t("git.diff.revertHunk")}
                           </button>
                         )}
                       </div>
@@ -260,7 +262,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
 
           {!loading && !error && (!diffText || !parsedDiff) && (
             <div className="flex items-center justify-center h-full">
-              <p className="text-sm" style={{ color: TERM.dim }}>无 diff 内容</p>
+              <p className="text-sm" style={{ color: TERM.dim }}>{t("git.diff.noContent")}</p>
             </div>
           )}
         </div>
@@ -271,16 +273,16 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
             className="flex items-center justify-between gap-3 border-t px-4 py-2 text-[11px]"
             style={{ borderColor: TERM.border, backgroundColor: TERM.card, color: TERM.dim }}
           >
-            <span>点击行号可选择要回滚的行</span>
+            <span>{t("git.diff.selectLineHint")}</span>
             {selectedKeys.length > 0 && (
               <div className="flex items-center gap-2">
-                <span style={{ color: TERM.fg }}>已选 {selectedKeys.length} 行</span>
+                <span style={{ color: TERM.fg }}>{t("git.diff.selectedLines", { count: selectedKeys.length })}</span>
                 <button
                   onClick={() => setSelectedKeys([])}
                   className="ui-focus-ring rounded px-2 py-0.5 transition-opacity hover:opacity-80"
                   style={{ color: TERM.dim }}
                 >
-                  取消选择
+                  {t("git.diff.clearSelection")}
                 </button>
                 <button
                   onClick={handleRevertLines}
@@ -289,7 +291,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                   style={{ color: TERM.red, border: `1px solid ${TERM.border}` }}
                 >
                   <Undo2 size={11} />
-                  回滚选中 {selectedKeys.length} 行
+                  {t("git.diff.revertSelectedLines", { count: selectedKeys.length })}
                 </button>
               </div>
             )}

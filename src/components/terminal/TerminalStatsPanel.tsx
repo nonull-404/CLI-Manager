@@ -25,6 +25,7 @@ import {
   truncatePath,
 } from "../stats/termStatsUi";
 import { TokenUsageCard, ModelContextCard, TrendCard, ToolsCard, TodayUsageCard } from "../stats/termStatsCards";
+import { useI18n } from "../../lib/i18n";
 
 interface TerminalStatsPanelProps {
   activeSessionId: string | null;
@@ -120,6 +121,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   projectPath: string;
   currentBranch: string | null;
 }) {
+  const { t } = useI18n();
   // 统计数据（消息/时长/角色分布）只认 hook 绑定的会话，未绑定时置空；
   // 元信息（项目/路径/分支/来源）来自当前终端，始终用 session 展示
   const roleCounts = useMemo(() => {
@@ -149,24 +151,24 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
     <StatCard
       icon={<FolderGit2 size={13} />}
       iconColor={TERM.cyan}
-      title="会话"
+      title={t("termStats.session")}
       headerRight={
         <SourcePill source={session.source} />
       }
     >
-      <Row icon={<FolderGit2 size={10} />} label="项目" value={projectName} title={projectName} />
+      <Row icon={<FolderGit2 size={10} />} label={t("termStats.project")} value={projectName} title={projectName} />
       <Row
         icon={<FolderOpen size={10} />}
-        label="路径"
+        label={t("termStats.path")}
         value={truncatePath(projectPath, 3)}
         color={TERM.dim}
-        title={`${projectPath}\n\n双击打开文件夹`}
+        title={`${projectPath}\n\n${t("termStats.openFolderHint")}`}
         onDoubleClick={handleOpenFolder}
       />
       <div className="flex items-baseline justify-between gap-2 text-[11px] leading-5">
         <span className="flex shrink-0 items-center gap-1" style={{ color: TERM.dim }}>
           <GitBranch size={10} />
-          分支
+          {t("termStats.branch")}
         </span>
         <span className="truncate text-right" style={{ color: TERM.magenta }} title={branch}>
           {branch}
@@ -174,30 +176,30 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
       </div>
 
       <div className="mt-2 grid grid-cols-2 gap-1.5">
-        <StatChip dotColor={TERM.cyan} label="消息数" value={String(messageCount)} />
-        <StatChip dotColor={TERM.green} label="会话时长" value={duration} />
+        <StatChip dotColor={TERM.cyan} label={t("termStats.messageCount")} value={String(messageCount)} />
+        <StatChip dotColor={TERM.green} label={t("termStats.duration")} value={duration} />
       </div>
 
       <div className="mt-2">
         <SegmentedBar
           parts={[
-            { value: roleCounts.user, color: ROLE_COLORS.user, label: "用户" },
-            { value: roleCounts.assistant, color: ROLE_COLORS.assistant, label: "助手" },
-            { value: roleCounts.tool, color: ROLE_COLORS.tool, label: "工具" },
+            { value: roleCounts.user, color: ROLE_COLORS.user, label: t("termStats.user") },
+            { value: roleCounts.assistant, color: ROLE_COLORS.assistant, label: t("termStats.assistant") },
+            { value: roleCounts.tool, color: ROLE_COLORS.tool, label: t("termStats.tool") },
           ]}
         />
         <div className="mt-1 flex gap-3 text-[10px]" style={{ color: TERM.dim }}>
           <span className="flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ROLE_COLORS.user }} />
-            用户 {roleCounts.user}
+            {t("termStats.user")} {roleCounts.user}
           </span>
           <span className="flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ROLE_COLORS.assistant }} />
-            助手 {roleCounts.assistant}
+            {t("termStats.assistant")} {roleCounts.assistant}
           </span>
           <span className="flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ROLE_COLORS.tool }} />
-            工具 {roleCounts.tool}
+            {t("termStats.tool")} {roleCounts.tool}
           </span>
         </div>
       </div>
@@ -206,6 +208,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
 }
 
 export function TerminalStatsPanel({ activeSessionId, open, visible = true, embedded = false }: TerminalStatsPanelProps) {
+  const { t } = useI18n();
   const terminalSessions = useTerminalStore((state) => state.sessions);
   const projects = useProjectStore((state) => state.projects);
 
@@ -377,7 +380,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       <div className="flex items-center justify-between px-1 py-0.5">
         <span className="flex items-center gap-2 text-[11px] font-bold" style={{ color: TERM.fg }}>
           <LiveDot />
-          实时统计
+          {t("termStats.live")}
           {sourceFilter && (
             <SourcePill source={sourceFilter} />
           )}
@@ -388,8 +391,8 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             onClick={handleRefresh}
             className={`ui-focus-ring rounded p-0.5 ${loadingSession ? "animate-spin" : ""}`}
             style={{ color: TERM.cyan }}
-            title="刷新统计"
-            aria-label="刷新统计"
+            title={t("termStats.refresh")}
+            aria-label={t("termStats.refresh")}
           >
             <RefreshCw size={11} />
           </button>
@@ -397,11 +400,11 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       </div>
 
       {!projectPath ? (
-        <EmptyHint text="当前终端未关联项目" />
+        <EmptyHint text={t("termStats.noProject")} />
       ) : loadingSession && !latestSession ? (
-        <EmptyHint text="加载中…" />
+        <EmptyHint text={t("common.loading")} />
       ) : !latestSession ? (
-        <EmptyHint text={`该项目暂无 ${sourceFilter ?? "CLI"} 会话记录`} />
+        <EmptyHint text={t("termStats.noSessionRecord", { source: sourceFilter ?? "CLI" })} />
       ) : (
         <>
           <SessionInfoCard session={latestSession} statsSession={boundSession} projectName={projectName} projectPath={projectPath} currentBranch={currentBranch} />

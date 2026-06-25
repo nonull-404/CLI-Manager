@@ -21,6 +21,7 @@ import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
 import { Skeleton } from "../ui/Skeleton";
 import { Portal } from "../ui/Portal";
 import { ACCENT, CHART_TOOLTIP, PEAK, SERIES_COLORS } from "./statsPalette";
+import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
 
 interface StatsPanelProps {
   open: boolean;
@@ -53,24 +54,24 @@ interface StatsTimeWindowState {
   customEnd: string;
 }
 
-const STATS_TIME_WINDOW_OPTIONS: { value: StatsTimeWindowMode; label: string }[] = [
-  { value: "day", label: "日" },
-  { value: "week", label: "近7天" },
-  { value: "month", label: "月" },
-  { value: "year", label: "年" },
-  { value: "custom", label: "自定义" },
+const STATS_TIME_WINDOW_OPTIONS: { value: StatsTimeWindowMode; labelKey: TranslationKey }[] = [
+  { value: "day", labelKey: "stats.window.day" },
+  { value: "week", labelKey: "stats.window.week" },
+  { value: "month", labelKey: "stats.window.month" },
+  { value: "year", labelKey: "stats.window.year" },
+  { value: "custom", labelKey: "stats.window.custom" },
 ];
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: AppLanguage = "zh-CN"): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(Math.max(0, Math.round(value)));
+  return new Intl.NumberFormat(language).format(Math.max(0, Math.round(value)));
 }
 
-function formatCompactCount(value: number): string {
+function formatCompactCount(value: number, language: AppLanguage = "zh-CN"): string {
   if (!Number.isFinite(value)) return "0";
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return formatCount(value);
+  return formatCount(value, language);
 }
 
 function formatCost(value: number): string {
@@ -83,23 +84,13 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-const DAY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  weekday: "short",
-});
-
-const DATETIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-});
-
-function formatDay(dayStartUtc: number): string {
+function formatDay(dayStartUtc: number, language: AppLanguage = "zh-CN"): string {
   if (!Number.isFinite(dayStartUtc) || dayStartUtc <= 0) return "-";
-  return DAY_FORMATTER.format(new Date(dayStartUtc));
+  return new Intl.DateTimeFormat(language, {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).format(new Date(dayStartUtc));
 }
 
 function formatHour(hourStartUtc: number): string {
@@ -108,13 +99,20 @@ function formatHour(hourStartUtc: number): string {
   return `${String(date.getHours()).padStart(2, "0")}:00`;
 }
 
-function formatBucketLabel(bucketStartUtc: number, granularity: StatsBucketGranularity): string {
-  return granularity === "hour" ? formatHour(bucketStartUtc) : formatDay(bucketStartUtc);
+function formatBucketLabel(bucketStartUtc: number, granularity: StatsBucketGranularity, language: AppLanguage = "zh-CN"): string {
+  return granularity === "hour" ? formatHour(bucketStartUtc) : formatDay(bucketStartUtc, language);
 }
 
-function formatDateTime(ts: number | null): string {
+function formatDateTime(ts: number | null, language: AppLanguage = "zh-CN"): string {
   if (!ts || !Number.isFinite(ts)) return "-";
-  return DATETIME_FORMATTER.format(new Date(ts));
+  return new Intl.DateTimeFormat(language, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(ts));
 }
 
 function formatDateInput(date: Date): string {
@@ -205,12 +203,16 @@ function dateRangeFromStatsTimeWindow(window: StatsTimeWindowState): DateRangeIn
   };
 }
 
-function statsTimeWindowLabel(window: StatsTimeWindowState, range: DateRangeInput): string {
+function statsTimeWindowLabel(
+  window: StatsTimeWindowState,
+  range: DateRangeInput,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+): string {
   if (window.mode === "day") return window.day;
-  if (window.mode === "week") return `最近 7 天（${range.startDate} 至 ${range.endDate}）`;
-  if (window.mode === "month") return `${window.month} 月`;
-  if (window.mode === "year") return `${window.year} 年`;
-  return `${range.startDate} 至 ${range.endDate}`;
+  if (window.mode === "week") return t("stats.weekRange", { start: range.startDate, end: range.endDate });
+  if (window.mode === "month") return t("stats.monthLabel", { month: window.month });
+  if (window.mode === "year") return t("stats.yearLabel", { year: window.year });
+  return t("stats.rangeLabel", { start: range.startDate, end: range.endDate });
 }
 
 function parseDateInput(value: string, endOfDay: boolean): number | null {
@@ -357,6 +359,7 @@ function SectionHeading({
 }
 
 function KpiStrip({ stats }: { stats: HistoryStatsPayload }) {
+  const { language, t } = useI18n();
   const totalTokens = totalTokensOf({
     input_tokens: stats.total_input_tokens,
     output_tokens: stats.total_output_tokens,
@@ -373,30 +376,32 @@ function KpiStrip({ stats }: { stats: HistoryStatsPayload }) {
 
   const items = [
     {
-      label: "总 Token",
-      value: formatCompactCount(totalTokens),
-      hint: `完整值 ${formatCount(totalTokens)}`,
+      label: t("stats.kpi.totalToken"),
+      value: formatCompactCount(totalTokens, language),
+      hint: t("stats.kpi.fullValue", { value: formatCount(totalTokens, language) }),
       icon: Layers,
       accent: "var(--accent)",
     },
     {
-      label: "估算费用",
+      label: t("stats.kpi.estimatedCost"),
       value: formatCost(stats.total_cost_usd),
-      hint: stats.total_unpriced_tokens > 0 ? `未定价 ${formatCompactCount(stats.total_unpriced_tokens)} Token` : "本地估算",
+      hint: stats.total_unpriced_tokens > 0
+        ? t("stats.kpi.unpriced", { value: formatCompactCount(stats.total_unpriced_tokens, language) })
+        : t("stats.kpi.localEstimate"),
       icon: Coins,
       accent: "var(--warning)",
     },
     {
-      label: "最高使用日",
-      value: peak && peakTokens > 0 ? formatDay(peak.day_start_utc) : "-",
-      hint: peak && peakTokens > 0 ? `${formatCompactCount(peakTokens)} Token` : "暂无逐日 Token",
+      label: t("stats.kpi.peakDay"),
+      value: peak && peakTokens > 0 ? formatDay(peak.day_start_utc, language) : "-",
+      hint: peak && peakTokens > 0 ? `${formatCompactCount(peakTokens, language)} Token` : t("stats.kpi.noDailyToken"),
       icon: LineChart,
       accent: "var(--accent)",
     },
     {
-      label: "计价覆盖",
+      label: t("stats.kpi.pricingCoverage"),
       value: totalTokens > 0 ? formatPercent(coverage) : "0%",
-      hint: "可匹配定价的 Token 占比",
+      hint: t("stats.kpi.coverageHint"),
       icon: Activity,
       accent: coverage >= 60 ? "var(--success)" : "var(--warning)",
     },
@@ -434,11 +439,12 @@ function KpiStrip({ stats }: { stats: HistoryStatsPayload }) {
 }
 
 function TokenCompositionStrip({ stats }: { stats: HistoryStatsPayload }) {
+  const { language, t } = useI18n();
   const parts = [
-    { key: "input", label: "输入", value: stats.total_input_tokens, color: SERIES_COLORS.input },
-    { key: "output", label: "输出", value: stats.total_output_tokens, color: SERIES_COLORS.output },
-    { key: "cacheCreation", label: "缓存写入", value: stats.total_cache_creation_tokens, color: SERIES_COLORS.cacheCreation },
-    { key: "cacheRead", label: "缓存命中", value: stats.total_cache_read_tokens, color: SERIES_COLORS.cacheRead },
+    { key: "input", label: t("termStats.input"), value: stats.total_input_tokens, color: SERIES_COLORS.input },
+    { key: "output", label: t("termStats.output"), value: stats.total_output_tokens, color: SERIES_COLORS.output },
+    { key: "cacheCreation", label: t("termStats.cacheWrite"), value: stats.total_cache_creation_tokens, color: SERIES_COLORS.cacheCreation },
+    { key: "cacheRead", label: t("termStats.cacheHit"), value: stats.total_cache_read_tokens, color: SERIES_COLORS.cacheRead },
   ];
   const total = Math.max(1, parts.reduce((sum, item) => sum + item.value, 0));
 
@@ -448,9 +454,9 @@ function TokenCompositionStrip({ stats }: { stats: HistoryStatsPayload }) {
         <div className="min-w-[126px]">
           <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-text-primary">
             <Layers size={13} className="text-accent" />
-            Token 构成
+            {t("stats.tokenComposition")}
           </div>
-          <div className="mt-0.5 text-[11px] text-text-muted">输入 / 输出 / 缓存</div>
+          <div className="mt-0.5 text-[11px] text-text-muted">{t("stats.tokenCompositionHint")}</div>
         </div>
         <div className="min-w-[220px] flex-1">
           <div className="flex h-2.5 overflow-hidden rounded-full bg-bg-tertiary">
@@ -459,7 +465,7 @@ function TokenCompositionStrip({ stats }: { stats: HistoryStatsPayload }) {
                 key={item.key}
                 className="h-full"
                 style={{ width: `${(item.value / total) * 100}%`, backgroundColor: item.color }}
-                title={`${item.label} ${formatCount(item.value)}`}
+                title={`${item.label} ${formatCount(item.value, language)}`}
               />
             ))}
           </div>
@@ -469,7 +475,7 @@ function TokenCompositionStrip({ stats }: { stats: HistoryStatsPayload }) {
             <div key={item.key} className="inline-flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
               <span>{item.label}</span>
-              <span className="font-semibold text-text-primary">{formatCompactCount(item.value)}</span>
+              <span className="font-semibold text-text-primary">{formatCompactCount(item.value, language)}</span>
               <span className="text-text-muted">{formatPercent((item.value / total) * 100)}</span>
             </div>
           ))}
@@ -490,17 +496,18 @@ function ContextNote({
   dateRangeLabel: string;
   stats: HistoryStatsPayload;
 }) {
+  const { language, t } = useI18n();
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-bg-secondary px-3 py-2 text-[11px] text-text-secondary">
       <span className="inline-flex items-center gap-1 font-semibold text-text-primary">
         <Database size={13} />
-        本地历史估算
+        {t("stats.context.localEstimate")}
       </span>
-      <span>来源：{sourceLabel}</span>
-      <span>项目：{projectLabel}</span>
-      <span>范围：{dateRangeLabel}</span>
-      <span>未定价：{formatCompactCount(stats.total_unpriced_tokens)} Token</span>
-      <span className="text-text-muted">费用来自日志 usage 与内置价格估算，不等同官方账单。</span>
+      <span>{t("stats.context.source", { value: sourceLabel })}</span>
+      <span>{t("stats.context.project", { value: projectLabel })}</span>
+      <span>{t("stats.context.range", { value: dateRangeLabel })}</span>
+      <span>{t("stats.context.unpriced", { value: formatCompactCount(stats.total_unpriced_tokens, language) })}</span>
+      <span className="text-text-muted">{t("stats.context.billingNote")}</span>
     </div>
   );
 }
@@ -512,6 +519,7 @@ function DailyUsageTrendChart({
   items: HistoryStatsDailySeriesItem[];
   granularity: StatsBucketGranularity;
 }) {
+  const { language, t } = useI18n();
   const peak = useMemo(() => {
     const found = items.reduce<HistoryStatsDailySeriesItem | null>((current, item) => {
       if (!current) return item;
@@ -549,17 +557,17 @@ function DailyUsageTrendChart({
           const rows = tooltipRows(params);
           const day = items[tooltipIndex(rows[0])];
           if (!day) return "";
-          const bucketLabel = formatBucketLabel(day.day_start_utc, granularity);
+          const bucketLabel = formatBucketLabel(day.day_start_utc, granularity, language);
           const lineRows = rows
             .map((row) => {
               const name = typeof row.seriesName === "string" ? row.seriesName : "";
               const marker = typeof row.marker === "string" ? row.marker : "";
               const value = tooltipNumber(row, "value");
-              const display = name === "费用" ? formatCost(value) : `${formatCount(value)} Token`;
+              const display = name === t("stats.trend.cost") ? formatCost(value) : `${formatCount(value, language)} Token`;
               return `<div style="display:flex;align-items:center;justify-content:space-between;gap:18px;line-height:22px;"><span>${marker}${name}</span><strong>${display}</strong></div>`;
             })
             .join("");
-          return `<div style="min-width:210px;"><strong>${bucketLabel}</strong>${lineRows}<div style="margin-top:6px;color:var(--text-muted);">未定价：${formatCount(day.unpriced_tokens)}</div></div>`;
+          return `<div style="min-width:210px;"><strong>${bucketLabel}</strong>${lineRows}<div style="margin-top:6px;color:var(--text-muted);">${t("stats.trend.unpricedTooltip", { value: formatCount(day.unpriced_tokens, language) })}</div></div>`;
         },
       },
       legend: {
@@ -590,7 +598,7 @@ function DailyUsageTrendChart({
           max: tokenAxisMax,
           nameTextStyle: { color: "var(--text-muted)", fontSize: 10 },
           splitLine: { lineStyle: { color: "var(--border)", opacity: 0.42 } },
-          axisLabel: { color: "var(--text-muted)", formatter: (value: number) => formatCompactCount(value) },
+          axisLabel: { color: "var(--text-muted)", formatter: (value: number) => formatCompactCount(value, language) },
         },
         {
           type: "value",
@@ -603,7 +611,7 @@ function DailyUsageTrendChart({
       ],
       series: [
         {
-          name: "总 Token",
+          name: t("stats.trend.totalToken"),
           type: "line",
           smooth: true,
           symbol: "circle",
@@ -617,12 +625,12 @@ function DailyUsageTrendChart({
               : totalTokensOf(item)
           ),
         },
-        { name: "输入", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.input_tokens) },
-        { name: "输出", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.output_tokens) },
-        { name: "缓存写入", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.cache_creation_tokens) },
-        { name: "缓存命中", type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.cache_read_tokens) },
+        { name: t("termStats.input"), type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.input_tokens) },
+        { name: t("termStats.output"), type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.output_tokens) },
+        { name: t("termStats.cacheWrite"), type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.cache_creation_tokens) },
+        { name: t("termStats.cacheHit"), type: "line", smooth: true, symbol: "none", emphasis: { disabled: true }, lineStyle: { width: 1.8 }, data: items.map((item) => item.cache_read_tokens) },
         {
-          name: "费用",
+          name: t("stats.trend.cost"),
           type: "bar",
           yAxisIndex: 1,
           barMaxWidth: 12,
@@ -632,7 +640,7 @@ function DailyUsageTrendChart({
         },
       ],
     };
-  }, [items, peak, granularity]);
+  }, [items, peak, granularity, language, t]);
 
   return (
     <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4 lg:p-5">
@@ -641,16 +649,21 @@ function DailyUsageTrendChart({
           <LineChart size={14} />
         </span>
         <div>
-          <div className="text-[14px] font-semibold tracking-tight text-text-primary">Token / 费用趋势</div>
+          <div className="text-[14px] font-semibold tracking-tight text-text-primary">{t("stats.trend.title")}</div>
           <div className="mt-0.5 text-[11px] text-text-muted">
-            {granularity === "hour" ? "按 24 小时展示 Token 主趋势，费用以弱柱状辅助对照。" : "折线展示 Token 主趋势，费用以弱柱状辅助对照。"}
+            {granularity === "hour" ? t("stats.trend.hourHint") : t("stats.trend.dayHint")}
           </div>
         </div>
         <div className="ml-auto rounded-full border border-border/60 bg-bg-primary px-3 py-1 text-[11px] font-medium text-text-secondary">
-          {peak ? `峰值 ${formatBucketLabel(peak.day_start_utc, granularity)} · ${formatCount(totalTokensOf(peak))} Token` : "暂无峰值"}
+          {peak
+            ? t("stats.trend.peak", {
+                bucket: formatBucketLabel(peak.day_start_utc, granularity, language),
+                tokens: formatCount(totalTokensOf(peak), language),
+              })
+            : t("stats.trend.noPeak")}
         </div>
       </div>
-      {hasData ? <EChart option={option} className="h-[380px] w-full" /> : <EmptyBlock text="当前时间窗口没有可绘制的 Token / 费用数据。" />}
+      {hasData ? <EChart option={option} className="h-[380px] w-full" /> : <EmptyBlock text={t("stats.trend.empty")} />}
     </section>
   );
 }
@@ -660,6 +673,7 @@ function EmptyBlock({ text }: { text: string }) {
 }
 
 function ModelRankingChart({ items }: { items: HistoryStatsModelItem[] }) {
+  const { language, t } = useI18n();
   const models = useMemo(
     () =>
       items
@@ -681,7 +695,11 @@ function ModelRankingChart({ items }: { items: HistoryStatsModelItem[] }) {
           const row = tooltipRows(params)[0];
           const model = models[tooltipIndex(row)];
           if (!model) return "";
-          return `<div style="min-width:220px;"><strong>${model.model}</strong><div style="margin-top:6px;">Token：${formatCount(totalTokensOf(model))}</div><div>费用：${formatCost(model.total_cost_usd)}</div><div>缓存命中/写入：${formatCount(model.cache_creation_tokens + model.cache_read_tokens)}</div></div>`;
+          return `<div style="min-width:220px;"><strong>${model.model}</strong><div style="margin-top:6px;">${t("stats.modelRanking.tooltip", {
+            tokens: formatCount(totalTokensOf(model), language),
+            cost: formatCost(model.total_cost_usd),
+            cache: formatCount(model.cache_creation_tokens + model.cache_read_tokens, language),
+          })}</div></div>`;
         },
       },
       grid: { left: 112, right: 54, top: 14, bottom: 24 },
@@ -689,7 +707,7 @@ function ModelRankingChart({ items }: { items: HistoryStatsModelItem[] }) {
         type: "value",
         max: tokenAxisMax,
         splitLine: { lineStyle: { color: "var(--border)", opacity: 0.42 } },
-        axisLabel: { color: "var(--text-muted)", formatter: (value: number) => formatCompactCount(value) },
+        axisLabel: { color: "var(--text-muted)", formatter: (value: number) => formatCompactCount(value, language) },
       },
       yAxis: {
         type: "category",
@@ -709,7 +727,7 @@ function ModelRankingChart({ items }: { items: HistoryStatsModelItem[] }) {
             position: "right",
             color: "var(--text-muted)",
             fontSize: 10,
-            formatter: (params: unknown) => formatCompactCount(tooltipNumber(params as Record<string, unknown>, "value")),
+            formatter: (params: unknown) => formatCompactCount(tooltipNumber(params as Record<string, unknown>, "value"), language),
           },
           data: models.map((item, index) => ({
             value: totalTokensOf(item),
@@ -718,13 +736,13 @@ function ModelRankingChart({ items }: { items: HistoryStatsModelItem[] }) {
         },
       ],
     };
-  }, [models]);
+  }, [models, language, t]);
 
   return (
     <section className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
-      <SectionHeading icon={BarChart3} title="模型用量排行" hint="Top models by Token" />
+      <SectionHeading icon={BarChart3} title={t("stats.modelRanking")} hint="Top models by Token" />
       <div className="min-h-0 flex-1">
-        {models.length === 0 ? <EmptyBlock text="当前过滤条件下没有模型 Token 数据。" /> : <EChart option={option} className="h-full w-full" />}
+        {models.length === 0 ? <EmptyBlock text={t("stats.modelRanking.empty")} /> : <EChart option={option} className="h-full w-full" />}
       </div>
     </section>
   );
@@ -736,24 +754,25 @@ function ProjectRanking({ items, selectedProjectKey, onSelectProject, onClearPro
   onSelectProject: (projectKey: string) => void;
   onClearProject: () => void;
 }) {
+  const { language, t } = useI18n();
   const topItems = items.slice(0, 8);
   const maxTokens = Math.max(1, ...topItems.map(totalTokensOf));
   return (
     <section className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <SectionHeading
         icon={Folder}
-        title="项目排行"
+        title={t("stats.projectRanking")}
         right={
           selectedProjectKey ? (
             <Button className="ml-auto" onClick={onClearProject} size="sm" variant="ghost">
-              清除项目
+              {t("stats.projectRanking.clear")}
             </Button>
           ) : undefined
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto ui-thin-scroll pr-1">
         {topItems.length === 0 ? (
-          <EmptyBlock text="当前过滤条件下没有项目数据。" />
+          <EmptyBlock text={t("stats.projectRanking.empty")} />
         ) : (
           <div className="space-y-2">
             {topItems.map((item) => {
@@ -766,11 +785,11 @@ function ProjectRanking({ items, selectedProjectKey, onSelectProject, onClearPro
                   onClick={() => onSelectProject(item.project_key)}
                   className="ui-list-row w-full rounded-lg bg-bg-primary px-3 py-2 text-left"
                   aria-pressed={selected}
-                  title={`按项目过滤：${item.project_key}`}
+                  title={t("stats.projectRanking.filterTitle", { project: item.project_key })}
                 >
                   <div className="flex items-center justify-between gap-3 text-[12px]">
                     <span className="truncate font-medium text-text-primary">{item.project_key}</span>
-                    <span className="shrink-0 text-text-muted">{formatCompactCount(totalTokens)} Token · {formatCost(item.total_cost_usd)}</span>
+                    <span className="shrink-0 text-text-muted">{formatCompactCount(totalTokens, language)} Token · {formatCost(item.total_cost_usd)}</span>
                   </div>
                   <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-tertiary">
                     <div
@@ -792,13 +811,14 @@ function ProjectRanking({ items, selectedProjectKey, onSelectProject, onClearPro
 }
 
 function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
+  const { language, t } = useI18n();
   const maxTokens = Math.max(1, ...items.map(totalTokensOf));
   return (
     <section className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
-      <SectionHeading icon={Database} title="来源对比" hint="Claude / Codex" />
+      <SectionHeading icon={Database} title={t("stats.sourceBreakdown")} hint="Claude / Codex" />
       <div className="min-h-0 flex-1 overflow-y-auto ui-thin-scroll pr-1">
         {items.length === 0 ? (
-          <EmptyBlock text="当前过滤条件下没有来源分布数据。" />
+          <EmptyBlock text={t("stats.sourceBreakdown.empty")} />
         ) : (
           <div className="space-y-2">
             {items.map((item) => {
@@ -807,13 +827,17 @@ function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
                 <div key={item.source} className="rounded-lg bg-bg-primary px-3 py-2">
                   <div className="flex items-center justify-between gap-3 text-[12px]">
                     <span className="font-medium text-text-primary">{item.source}</span>
-                    <span className="text-text-muted">{formatCompactCount(totalTokens)} Token · {formatCost(item.total_cost_usd)}</span>
+                    <span className="text-text-muted">{formatCompactCount(totalTokens, language)} Token · {formatCost(item.total_cost_usd)}</span>
                   </div>
                   <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-tertiary">
                     <div className="h-full rounded-full" style={{ width: `${Math.max(4, (totalTokens / maxTokens) * 100)}%`, backgroundColor: ACCENT }} />
                   </div>
                   <div className="mt-1 text-[10px] text-text-muted">
-                    输入 {formatCompactCount(item.input_tokens)} · 输出 {formatCompactCount(item.output_tokens)} · 缓存命中/写入 {formatCompactCount(item.cache_creation_tokens + item.cache_read_tokens)}
+                    {t("stats.sourceBreakdown.detail", {
+                      input: formatCompactCount(item.input_tokens, language),
+                      output: formatCompactCount(item.output_tokens, language),
+                      cache: formatCompactCount(item.cache_creation_tokens + item.cache_read_tokens, language),
+                    })}
                   </div>
                 </div>
               );
@@ -826,6 +850,7 @@ function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
 }
 
 export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
+  const { language, t } = useI18n();
   const loadingStats = useHistoryStore((s) => s.loadingStats);
   const loadingStatsProjectOptions = useHistoryStore((s) => s.loadingStatsProjectOptions);
   const stats = useHistoryStore((s) => s.stats);
@@ -851,13 +876,13 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const dateBounds = useMemo(() => {
     const startAt = parseDateInput(dateRange.startDate, false);
     const endAt = parseDateInput(dateRange.endDate, true);
-    if (!dateRange.startDate || !dateRange.endDate) return { startAt, endAt, error: "请选择开始日期和结束日期" };
-    if (startAt === null || endAt === null) return { startAt, endAt, error: "日期格式无效" };
-    if (endAt < startAt) return { startAt, endAt, error: "结束日期不能早于开始日期" };
+    if (!dateRange.startDate || !dateRange.endDate) return { startAt, endAt, error: t("stats.rangeInvalid.missing") };
+    if (startAt === null || endAt === null) return { startAt, endAt, error: t("stats.rangeInvalid.format") };
+    if (endAt < startAt) return { startAt, endAt, error: t("stats.rangeInvalid.order") };
     return { startAt, endAt, error: null };
-  }, [dateRange.endDate, dateRange.startDate]);
+  }, [dateRange.endDate, dateRange.startDate, t]);
 
-  const dateRangeLabel = dateBounds.error ? "未生效" : statsTimeWindowLabel(resolvedTimeWindow, dateRange);
+  const dateRangeLabel = dateBounds.error ? t("stats.rangeInactive") : statsTimeWindowLabel(resolvedTimeWindow, dateRange, t);
   const statsQueryKey = useMemo(
     () => `${sourceFilter}|${projectKey || ALL_PROJECTS_VALUE}|${dateBounds.startAt ?? "invalid"}|${dateBounds.endAt ?? "invalid"}`,
     [dateBounds.endAt, dateBounds.startAt, projectKey, sourceFilter]
@@ -921,8 +946,8 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
   }, [selectedDayStart]);
 
-  const sourceLabel = sourceFilter === "all" ? "全部来源" : sourceFilter;
-  const projectLabel = projectKey || "全部项目";
+  const sourceLabel = sourceFilter === "all" ? t("common.allSources") : sourceFilter;
+  const projectLabel = projectKey || t("common.allProjects");
   const waitingForStatsQuery = dateBounds.error === null && (!projectSelectionReady || requestedStatsQueryKey !== statsQueryKey);
   const statsGranularity: StatsBucketGranularity = resolvedTimeWindow.mode === "day" ? "hour" : "day";
   const trendItems = useMemo(() => {
@@ -947,17 +972,17 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     () => selectedBucket?.session_refs.slice(0, dayVisibleCount) ?? [],
     [dayVisibleCount, selectedBucket]
   );
-  const heatmapTitle = statsGranularity === "hour" ? "24 小时会话热力图" : "会话热力图";
+  const heatmapTitle = statsGranularity === "hour" ? t("stats.heatmap.hourTitle") : t("stats.heatmap.dayTitle");
   const selectedBucketTitle = selectedBucket
-    ? `${formatBucketLabel(selectedBucket.day_start_utc, statsGranularity)} 会话`
+    ? t("stats.bucket.sessionTitle", { bucket: formatBucketLabel(selectedBucket.day_start_utc, statsGranularity, language) })
     : statsGranularity === "hour"
-      ? "选择小时查看会话"
-      : "选择热力图日期查看会话";
-  const emptyBucketText = statsGranularity === "hour" ? "该小时无会话" : "当天无会话";
+      ? t("stats.bucket.hourSelect")
+      : t("stats.bucket.daySelect");
+  const emptyBucketText = statsGranularity === "hour" ? t("stats.bucket.hourEmpty") : t("stats.bucket.dayEmpty");
   const selectHintText =
     statsGranularity === "hour"
-      ? "点击上方小时方块后，这里会展示该小时会话清单。"
-      : "点击上方热力图方块后，这里会展示当天会话清单。";
+      ? t("stats.bucket.hourHint")
+      : t("stats.bucket.dayHint");
 
   useEffect(() => {
     if (selectedDayStart === null) return;
@@ -994,11 +1019,11 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                 <span className="ui-stats-panel-badge">
                   <BarChart3 size={15} />
                 </span>
-                历史用量分析
+                {t("stats.title")}
               </div>
-              <div className="ui-dev-label mt-1 text-[11px] text-text-muted">本地历史日志 · Token / 缓存命中/写入 / Cost 估算</div>
+              <div className="ui-dev-label mt-1 text-[11px] text-text-muted">{t("stats.subtitle")}</div>
             </div>
-            <Button onClick={onClose} aria-label="关闭分析看板" size="icon" variant="ghost" title="关闭">
+            <Button onClick={onClose} aria-label={t("stats.closeDashboard")} size="icon" variant="ghost" title={t("common.close")}>
               <X size={14} />
             </Button>
           </div>
@@ -1013,9 +1038,9 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
               }}
               disabled={!projectOptionsReady && loadingStatsProjectOptions}
               className="h-8 w-auto min-w-[124px] shrink-0 text-xs"
-              aria-label="项目过滤"
+              aria-label={t("stats.projectFilter")}
             >
-              <option value={ALL_PROJECTS_VALUE}>全部项目</option>
+              <option value={ALL_PROJECTS_VALUE}>{t("common.allProjects")}</option>
               {projectOptions.map((project) => (
                 <option key={project} value={project}>{project}</option>
               ))}
@@ -1025,11 +1050,11 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
               value={timeWindow.mode}
               onChange={(e) => setTimeWindow((prev) => nextStatsTimeWindowForMode(e.target.value as StatsTimeWindowMode, prev))}
               className={`${controlClass} w-auto min-w-[92px] shrink-0`}
-              aria-label="统计时间窗口类型"
+              aria-label={t("stats.timeWindow")}
             >
               {STATS_TIME_WINDOW_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label}
+                  {t(option.labelKey)}
                 </option>
               ))}
             </Select>
@@ -1040,12 +1065,12 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                 value={resolvedTimeWindow.day}
                 onChange={(e) => setTimeWindow((prev) => ({ ...prev, day: e.target.value }))}
                 className={timeInputClass}
-                aria-label="统计日期"
+                aria-label={t("stats.date")}
               />
             )}
 
             {timeWindow.mode === "week" && (
-              <span className={`${controlClass} inline-flex items-center`}>最近 7 天</span>
+              <span className={`${controlClass} inline-flex items-center`}>{t("stats.weekLabel")}</span>
             )}
 
             {timeWindow.mode === "month" && (
@@ -1054,7 +1079,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                 value={resolvedTimeWindow.month}
                 onChange={(e) => setTimeWindow((prev) => ({ ...prev, month: e.target.value }))}
                 className={timeInputClass}
-                aria-label="统计月份"
+                aria-label={t("stats.month")}
               />
             )}
 
@@ -1066,7 +1091,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                 value={resolvedTimeWindow.year}
                 onChange={(e) => setTimeWindow((prev) => ({ ...prev, year: e.target.value }))}
                 className={`${controlClass} w-[92px]`}
-                aria-label="统计年份"
+                aria-label={t("stats.year")}
               />
             )}
 
@@ -1077,27 +1102,29 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                   value={resolvedTimeWindow.customStart}
                   onChange={(e) => setTimeWindow((prev) => ({ ...prev, customStart: e.target.value }))}
                   className={timeInputClass}
-                  aria-label="统计自定义开始日期"
+                  aria-label={t("stats.customStart")}
                 />
-                <span className="text-[11px] text-text-muted">至</span>
+                <span className="text-[11px] text-text-muted">{t("common.to")}</span>
                 <input
                   type="date"
                   value={resolvedTimeWindow.customEnd}
                   onChange={(e) => setTimeWindow((prev) => ({ ...prev, customEnd: e.target.value }))}
                   className={timeInputClass}
-                  aria-label="统计自定义结束日期"
+                  aria-label={t("stats.customEnd")}
                 />
               </>
             )}
 
-            <Button onClick={refreshStats} disabled={!projectSelectionReady || dateBounds.error !== null || waitingForStatsQuery} aria-label="刷新统计" size="sm">
+            <Button onClick={refreshStats} disabled={!projectSelectionReady || dateBounds.error !== null || waitingForStatsQuery} aria-label={t("common.refresh")} size="sm">
               <RefreshCw size={12} className={loadingStats ? "animate-spin" : ""} />
-              刷新
+              {t("common.refresh")}
             </Button>
-            <div className="ml-auto text-[12px] font-medium text-text-secondary">最近刷新：{waitingForStatsQuery ? "-" : formatDateTime(statsUpdatedAt)}</div>
-            <div className="w-full text-[12px] font-medium text-text-secondary">当前范围：{dateRangeLabel}</div>
+            <div className="ml-auto text-[12px] font-medium text-text-secondary">
+              {t("stats.lastRefresh", { value: waitingForStatsQuery ? "-" : formatDateTime(statsUpdatedAt, language) })}
+            </div>
+            <div className="w-full text-[12px] font-medium text-text-secondary">{t("stats.currentRange", { value: dateRangeLabel })}</div>
             {dateBounds.error && <div className="w-full text-[12px] font-medium text-danger">{dateBounds.error}</div>}
-            {statsProjectOptionsError && <div className="w-full text-[12px] font-medium text-danger">项目选项加载失败：{statsProjectOptionsError}</div>}
+            {statsProjectOptionsError && <div className="w-full text-[12px] font-medium text-danger">{t("stats.projectOptionsFailed", { error: statsProjectOptionsError })}</div>}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
@@ -1105,17 +1132,17 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
             {!waitingForStatsQuery && !loadingStats && statsError && (
               <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4 text-[12px] text-danger space-y-2">
-                <div>统计加载失败：{statsError}</div>
+                <div>{t("stats.loadFailed", { error: statsError })}</div>
                 <Button onClick={refreshStats} disabled={dateBounds.error !== null} size="sm">
                   <RefreshCw size={12} />
-                  重试
+                  {t("common.retry")}
                 </Button>
               </section>
             )}
 
             {!waitingForStatsQuery && stats && (
               <>
-                {loadingStats && <div className="text-[12px] font-medium text-text-muted">正在后台更新统计...</div>}
+                {loadingStats && <div className="text-[12px] font-medium text-text-muted">{t("stats.updating")}</div>}
                 <KpiStrip stats={stats} />
                 <TokenCompositionStrip stats={stats} />
                 <ContextNote sourceLabel={sourceLabel} projectLabel={projectLabel} dateRangeLabel={dateRangeLabel} stats={stats} />
@@ -1166,13 +1193,13 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                     >
                       <div className="truncate text-[13px] font-semibold text-text-primary">{session.title}</div>
                       <div className="ui-dev-label mt-0.5 text-[11px] text-text-muted">
-                        {session.source} · {session.project_key} · {session.message_count} 条消息
+                        {session.source} · {session.project_key} · {t("stats.session.messageCount", { count: session.message_count })}
                       </div>
                     </button>
                   ))}
                   {selectedBucket && dayVisibleCount < selectedBucket.session_refs.length && (
                     <Button onClick={() => setDayVisibleCount((prev) => prev + DAY_SESSION_PAGE_SIZE)} className="mt-2 w-full" size="sm">
-                      加载更多 ({dayVisibleCount}/{selectedBucket.session_refs.length})
+                      {t("stats.session.loadMore", { shown: dayVisibleCount, total: selectedBucket.session_refs.length })}
                     </Button>
                   )}
                 </section>

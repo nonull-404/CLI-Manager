@@ -1,17 +1,20 @@
 ﻿import type { HistorySearchHit } from "../../lib/types";
 
+import { useI18n } from "../../lib/i18n";
+
 interface SearchHitsPanelProps {
   searchHits: HistorySearchHit[];
   onOpenHit: (hit: HistorySearchHit) => void;
 }
 
 export function SearchHitsPanel({ searchHits, onOpenHit }: SearchHitsPanelProps) {
+  const { t } = useI18n();
   if (searchHits.length === 0) return null;
 
   return (
     <div className="border-b border-border pb-2">
       <div className="px-3 py-2 text-[11px] font-semibold text-text-muted">
-        搜索命中 {searchHits.length} 条
+        {t("history.searchHits", { count: searchHits.length })}
       </div>
       {searchHits.map((hit, idx) => (
         <button

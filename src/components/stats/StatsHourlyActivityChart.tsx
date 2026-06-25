@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryStatsHourlyActivityItem } from "../../lib/types";
+import { useI18n, type AppLanguage } from "../../lib/i18n";
 
 interface StatsHourlyActivityChartProps {
   items: HistoryStatsHourlyActivityItem[];
@@ -8,9 +9,9 @@ interface StatsHourlyActivityChartProps {
 // 单指标固定色：会话(0-3) 与消息(上千) 量级悬殊、不是趋势关系，故只画消息柱，会话进 tooltip/摘要。
 const BAR_COLOR = "#46C06A";
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: AppLanguage): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(language).format(value);
 }
 
 function formatHour(hour: number): string {
@@ -20,6 +21,7 @@ function formatHour(hour: number): string {
 export const StatsHourlyActivityChart = memo(StatsHourlyActivityChartImpl);
 
 function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) {
+  const { language, t } = useI18n();
   const [activeHour, setActiveHour] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   // 响应式宽度：用 ResizeObserver 测容器实际宽度，几何按宽度自适应，铺满容器、无横向滚动条。
@@ -114,18 +116,22 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
   return (
     <div className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <div className="mb-2 flex items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">活跃时段分布</div>
+        <div className="text-xs font-semibold text-text-primary">{t("stats.hourly.title")}</div>
         <div className="ml-auto text-[11px] text-text-secondary">
           {active
-            ? `${formatHour(active.hour)} · ${formatCount(active.sessions)} 会话 · ${formatCount(active.messages)} 消息`
-            : "暂无时段数据"}
+            ? t("stats.summary.sessionsMessages", {
+                bucket: formatHour(active.hour),
+                sessions: formatCount(active.sessions, language),
+                messages: formatCount(active.messages, language),
+              })
+            : t("stats.hourly.empty")}
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto ui-thin-scroll">
         {normalized.length === 0 ? (
           <div className="py-8 text-center text-[11px] text-text-muted">
-            当前过滤条件下没有时段数据
+            {t("stats.hourly.noData")}
           </div>
         ) : (
           <>
@@ -140,7 +146,7 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
                 viewBox={`0 0 ${chart.width} ${chart.height}`}
                 preserveAspectRatio="none"
                 role="img"
-                aria-label="24 小时消息活跃分布柱状图"
+                aria-label={t("stats.hourly.chartAria")}
                 className="block"
               >
                 {[0, 1, 2, 3].map((step) => {
@@ -197,7 +203,11 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
                       onMouseEnter={() => setActiveHour(point.item.hour)}
                       onFocus={() => setActiveHour(point.item.hour)}
                       onBlur={() => setActiveHour(null)}
-                      aria-label={`${formatHour(point.item.hour)}，${point.item.sessions} 会话，${point.item.messages} 消息`}
+                      aria-label={t("stats.summary.sessionsMessages", {
+                        bucket: formatHour(point.item.hour),
+                        sessions: formatCount(point.item.sessions, language),
+                        messages: formatCount(point.item.messages, language),
+                      })}
                       data-hour-index={point.index}
                       onKeyDown={(event) => {
                         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -226,8 +236,8 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
                   }}
                 >
                   <div className="font-semibold text-text-primary">{formatHour(tooltipPoint.item.hour)}</div>
-                  <div className="mt-0.5 text-text-secondary">会话 {formatCount(tooltipPoint.item.sessions)}</div>
-                  <div className="text-text-secondary">消息 {formatCount(tooltipPoint.item.messages)}</div>
+                  <div className="mt-0.5 text-text-secondary">{t("stats.unit.sessions", { count: formatCount(tooltipPoint.item.sessions, language) })}</div>
+                  <div className="text-text-secondary">{t("stats.unit.messages", { count: formatCount(tooltipPoint.item.messages, language) })}</div>
                 </div>
               )}
             </div>
@@ -235,7 +245,7 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
             <div className="mt-1 flex items-center gap-3 text-[10px] text-text-muted">
               <span className="inline-flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: BAR_COLOR }} />
-                消息
+                {t("stats.hourly.legendMessages")}
               </span>
             </div>
           </>

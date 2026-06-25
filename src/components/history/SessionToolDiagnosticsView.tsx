@@ -1,5 +1,6 @@
 import { AlertTriangle, Gauge, Wrench } from "lucide-react";
 import type { HistoryToolCount, HistoryToolEvent } from "../../lib/types";
+import { useI18n } from "../../lib/i18n";
 import type { SessionProcessModel } from "./sessionEvents";
 
 interface SessionToolDiagnosticsViewProps {
@@ -38,28 +39,29 @@ export function SessionToolDiagnosticsView({
   toolEvents,
   onJumpToMessage,
 }: SessionToolDiagnosticsViewProps) {
+  const { t } = useI18n();
   const hasCounts = builtinCalls.length > 0 || mcpCalls.length > 0 || skillCalls.length > 0;
   const hasEvents = toolEvents.length > 0 || model.toolEvents.length > 0 || model.errorEvents.length > 0;
 
   if (!hasCounts && !hasEvents) {
-    return <div className="ui-session-process-empty">当前会话暂未解析到工具调用</div>;
+    return <div className="ui-session-process-empty">{t("history.tools.empty")}</div>;
   }
 
   return (
     <div className="ui-session-process-view">
       <div className="ui-session-process-grid">
-        <ToolCountSection title="内置工具" items={builtinCalls} />
+        <ToolCountSection title={t("history.tools.builtin")} items={builtinCalls} />
         <ToolCountSection title="MCP" items={mcpCalls} />
-        <ToolCountSection title="Skill / 命令" items={skillCalls} />
+        <ToolCountSection title={t("history.tools.skillCommand")} items={skillCalls} />
         <section className="ui-session-process-card">
           <div className="ui-session-process-card-title">
             <Gauge size={14} />
-            耗时数据
+            {t("history.tools.durationData")}
           </div>
           <div className="ui-session-process-empty compact">
             {toolEvents.some((event) => event.duration_ms)
-              ? "已显示原始日志提供的调用耗时"
-              : "当前历史未提供逐次调用耗时"}
+              ? t("history.tools.durationShown")
+              : t("history.tools.durationMissing")}
           </div>
         </section>
       </div>
@@ -68,7 +70,7 @@ export function SessionToolDiagnosticsView({
         <section className="ui-session-process-card mt-2">
           <div className="ui-session-process-card-title">
             <Wrench size={14} />
-            结构化工具调用
+            {t("history.tools.structuredCalls")}
           </div>
           <div className="ui-session-diagnostic-list">
             {toolEvents.map((event, index) => (
@@ -93,7 +95,7 @@ export function SessionToolDiagnosticsView({
         <section className="ui-session-process-card mt-2">
           <div className="ui-session-process-card-title danger">
             <AlertTriangle size={14} />
-            失败 / 错误线索
+            {t("history.tools.errorClues")}
           </div>
           <div className="ui-session-diagnostic-list">
             {model.errorEvents.map((event) => (
@@ -114,7 +116,7 @@ export function SessionToolDiagnosticsView({
         <section className="ui-session-process-card mt-2">
           <div className="ui-session-process-card-title">
             <Wrench size={14} />
-            疑似工具事件
+            {t("history.tools.suspectedEvents")}
           </div>
           <div className="ui-session-diagnostic-list">
             {model.toolEvents.slice(0, 80).map((event) => (

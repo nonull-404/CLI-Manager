@@ -18,12 +18,12 @@ export interface TerminalThemePreset {
 }
 
 export const TERMINAL_THEME_GROUPS: TerminalThemeGroup[] = [
-  { id: "cool", name: "冷色 / 蓝紫", description: "蓝、青、靛紫调" },
-  { id: "warm", name: "暖色 / 复古", description: "棕、橙、黄、纸感配色" },
-  { id: "nature", name: "自然绿", description: "森林、草木、低饱和绿色" },
-  { id: "pink-purple", name: "粉紫 / 柔和", description: "粉、玫瑰、薰衣草、奶油色" },
-  { id: "high-contrast", name: "经典高对比", description: "黑底、鲜明 ANSI、高可读性" },
-  { id: "light-office", name: "浅色办公", description: "白底、浅灰、文档友好" },
+  { id: "cool", name: "Cool / Blue Purple", description: "Blue, cyan, and indigo-purple tones" },
+  { id: "warm", name: "Warm / Vintage", description: "Brown, orange, yellow, and paper-like palettes" },
+  { id: "nature", name: "Nature Green", description: "Green, forest, and low-strain palettes" },
+  { id: "pink-purple", name: "Pink Purple / Soft", description: "Soft, candy-like, low-saturation palettes" },
+  { id: "high-contrast", name: "Classic High Contrast", description: "Black background, vivid ANSI colors, high readability" },
+  { id: "light-office", name: "Light Office", description: "White background and paper tones for bright environments" },
 ];
 
 export type LightTerminalPalette =

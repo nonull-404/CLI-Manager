@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Portal } from "../ui/Portal";
+import { useI18n, type TranslationKey } from "../../lib/i18n";
 import type { CcusageSource } from "../../lib/types";
 import { useCcusageStore } from "../../stores/ccusageStore";
 import { EChart } from "./EChart";
@@ -118,18 +119,20 @@ const DEFAULT_TIME_WINDOW: CcusageTimeWindowState = {
   customEnd: "",
 };
 
-const TIME_WINDOW_OPTIONS: { value: CcusageTimeWindowMode; label: string }[] = [
-  { value: "all", label: "全部" },
-  { value: "year", label: "年" },
-  { value: "month", label: "月" },
-  { value: "day", label: "日" },
-  { value: "custom", label: "自定义" },
+type Translate = ReturnType<typeof useI18n>["t"];
+
+const TIME_WINDOW_OPTIONS: { value: CcusageTimeWindowMode; labelKey: TranslationKey }[] = [
+  { value: "all", labelKey: "common.all" },
+  { value: "year", labelKey: "stats.window.year" },
+  { value: "month", labelKey: "stats.window.month" },
+  { value: "day", labelKey: "stats.window.day" },
+  { value: "custom", labelKey: "stats.window.custom" },
 ];
 
-const SOURCE_OPTIONS: { value: CcusageSource; label: string; description: string }[] = [
-  { value: "all", label: "全部", description: "ccusage 统一报告" },
-  { value: "claude", label: "Claude", description: "Claude Code 聚焦报告" },
-  { value: "codex", label: "Codex", description: "Codex CLI 聚焦报告" },
+const SOURCE_OPTIONS: { value: CcusageSource; label: string; labelKey?: TranslationKey; descriptionKey: TranslationKey }[] = [
+  { value: "all", label: "全部", labelKey: "ccusage.source.all", descriptionKey: "ccusage.source.allDescription" },
+  { value: "claude", label: "Claude", descriptionKey: "ccusage.source.claudeDescription" },
+  { value: "codex", label: "Codex", descriptionKey: "ccusage.source.codexDescription" },
 ];
 
 const DATETIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
@@ -261,17 +264,17 @@ function availableYears(items: CcusageDailyItem[]): string[] {
   return Array.from(new Set(items.map((item) => dateKey(item.date).slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
 }
 
-function timeWindowLabel(window: CcusageTimeWindowState): string {
-  if (window.mode === "year") return window.year ? `${window.year} 年` : "选择年份";
-  if (window.mode === "month") return window.month ? `${window.month} 月` : "选择月份";
-  if (window.mode === "day") return window.day || "选择日期";
+function timeWindowLabel(window: CcusageTimeWindowState, t: Translate): string {
+  if (window.mode === "year") return window.year ? t("ccusage.time.year", { year: window.year }) : t("ccusage.time.selectYear");
+  if (window.mode === "month") return window.month ? t("ccusage.time.month", { month: window.month }) : t("ccusage.time.selectMonth");
+  if (window.mode === "day") return window.day || t("ccusage.time.selectDate");
   if (window.mode === "custom") {
-    if (window.customStart && window.customEnd) return `${window.customStart} 至 ${window.customEnd}`;
-    if (window.customStart) return `${window.customStart} 起`;
-    if (window.customEnd) return `截至 ${window.customEnd}`;
-    return "自定义范围";
+    if (window.customStart && window.customEnd) return t("ccusage.time.range", { start: window.customStart, end: window.customEnd });
+    if (window.customStart) return t("ccusage.time.from", { date: window.customStart });
+    if (window.customEnd) return t("ccusage.time.until", { date: window.customEnd });
+    return t("ccusage.time.customRange");
   }
-  return "全部时间";
+  return t("ccusage.time.all");
 }
 
 function resolveTimeWindow(window: CcusageTimeWindowState, items: CcusageDailyItem[]): CcusageTimeWindowState {
@@ -331,7 +334,7 @@ function tokenTotal(record: Record<string, unknown> | null): number {
   );
 }
 
-function normalizeModelItem(value: unknown, fallbackModel = "未知模型"): CcusageModelItem | null {
+function normalizeModelItem(value: unknown, fallbackModel = "Unknown Model"): CcusageModelItem | null {
   const record = asRecord(value);
   if (!record) return null;
   const model = stringField(record, "model") || stringField(record, "modelName") || fallbackModel;
@@ -587,12 +590,12 @@ function projectDailyRecords(projects: unknown): unknown[] {
 }
 
 function summarizeField(value: unknown): string {
-  if (Array.isArray(value)) return `数组 · ${value.length} 项`;
+  if (Array.isArray(value)) return `Array · ${value.length}`;
   const record = asRecord(value);
-  if (record) return `对象 · ${Object.keys(record).length} 个字段`;
-  if (typeof value === "number") return `数字 · ${formatCount(value)}`;
-  if (typeof value === "string") return value.length > 36 ? `文本 · ${value.slice(0, 36)}...` : `文本 · ${value}`;
-  if (typeof value === "boolean") return `布尔 · ${value ? "true" : "false"}`;
+  if (record) return `Object · ${Object.keys(record).length} fields`;
+  if (typeof value === "number") return `Number · ${formatCount(value)}`;
+  if (typeof value === "string") return value.length > 36 ? `Text · ${value.slice(0, 36)}...` : `Text · ${value}`;
+  if (typeof value === "boolean") return `Boolean · ${value ? "true" : "false"}`;
   if (value === null) return "null";
   return typeof value;
 }
@@ -837,7 +840,7 @@ function chartGranularityLabel(mode: CcusageTimeWindowMode): string {
 
 function formatBucketAxisLabel(value: string): string {
   if (/^\d{2}:00$/.test(value)) return value;
-  if (/^\d{4}-\d{2}$/.test(value)) return `${value.slice(5)}月`;
+  if (/^\d{4}-\d{2}$/.test(value)) return value.slice(5);
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value.slice(5);
   return value;
 }
@@ -886,34 +889,36 @@ function tooltipNumber(value: Record<string, unknown>, key: string): number {
 }
 
 function KpiStrip({ summary }: { summary: CcusageSummary }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const peak = getPeakDay(summary.daily);
   const peakShare = peak && summary.totalTokens > 0 ? (peak.totalTokens / summary.totalTokens) * 100 : 0;
   const items: { label: string; value: string; hint: string; icon: typeof Coins; accent: string }[] = [
     {
-      label: "总 Token",
+      label: text("总 Token", "Total Token"),
       value: formatCompactCount(summary.totalTokens),
-      hint: `完整值 ${formatCount(summary.totalTokens)} · 输入 / 输出 / 缓存合计`,
+      hint: text(`完整值 ${formatCount(summary.totalTokens)} · 输入 / 输出 / 缓存合计`, `Full value ${formatCount(summary.totalTokens)} · input / output / cache total`),
       icon: Layers,
       accent: "var(--accent)",
     },
     {
-      label: "估算费用",
+      label: text("估算费用", "Estimated Cost"),
       value: formatCost(summary.totalCost),
-      hint: "ccusage 本地估算",
+      hint: text("ccusage 本地估算", "ccusage local estimate"),
       icon: Coins,
       accent: "var(--warning)",
     },
     {
-      label: "最高使用日",
+      label: text("最高使用日", "Peak Day"),
       value: peak ? formatDayFromStart(peak.dayStart) : "-",
-      hint: peak ? `${formatCompactCount(peak.totalTokens)} Token · ${formatPercent(peakShare)}` : "暂无逐日数据",
+      hint: peak ? `${formatCompactCount(peak.totalTokens)} Token · ${formatPercent(peakShare)}` : text("暂无逐日数据", "No daily data"),
       icon: Flame,
       accent: peakShare >= 40 ? "var(--danger)" : "var(--accent)",
     },
     {
-      label: "模型 / 天数",
+      label: text("模型 / 天数", "Models / Days"),
       value: `${formatCount(summary.modelCount)} / ${formatCount(summary.daily.length)}`,
-      hint: "识别模型数 / 日报天数",
+      hint: text("识别模型数 / 日报天数", "Detected models / daily records"),
       icon: CalendarClock,
       accent: "var(--success)",
     },
@@ -944,14 +949,16 @@ function KpiStrip({ summary }: { summary: CcusageSummary }) {
 }
 
 function PeakDaySummaryCard({ summary }: { summary: CcusageSummary }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const peak = getPeakDay(summary.daily);
   const peakShare = peak && summary.totalTokens > 0 ? (peak.totalTokens / summary.totalTokens) * 100 : 0;
   const metrics = peak
     ? [
         { label: "Token", value: formatCompactCount(peak.totalTokens), detail: formatCount(peak.totalTokens) },
-        { label: "费用", value: formatCost(peak.totalCost), detail: "本地估算" },
-        { label: "输入", value: formatCompactCount(peak.inputTokens), detail: formatCount(peak.inputTokens) },
-        { label: "输出", value: formatCompactCount(peak.outputTokens), detail: formatCount(peak.outputTokens) },
+        { label: text("费用", "Cost"), value: formatCost(peak.totalCost), detail: text("本地估算", "Local estimate") },
+        { label: text("输入", "Input"), value: formatCompactCount(peak.inputTokens), detail: formatCount(peak.inputTokens) },
+        { label: text("输出", "Output"), value: formatCompactCount(peak.outputTokens), detail: formatCount(peak.outputTokens) },
       ]
     : [];
 
@@ -963,15 +970,15 @@ function PeakDaySummaryCard({ summary }: { summary: CcusageSummary }) {
             <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-bg-tertiary text-accent">
               <Flame size={14} />
             </span>
-            峰值日摘要
+            {text("峰值日摘要", "Peak Day Summary")}
           </div>
           <div className="mt-1 text-[12px] text-text-muted">
-            {peak ? `${peak.date} · 占当前窗口 ${formatPercent(peakShare)}` : "当前时间窗口暂无峰值日数据。"}
+            {peak ? text(`${peak.date} · 占当前窗口 ${formatPercent(peakShare)}`, `${peak.date} · ${formatPercent(peakShare)} of current window`) : text("当前时间窗口暂无峰值日数据。", "No peak day data in the current time window.")}
           </div>
         </div>
         {peak && (
           <div className="rounded-full bg-bg-tertiary px-3 py-1 text-[11px] font-medium text-text-secondary">
-            {peak.models.length > 0 ? `模型 ${formatCount(peak.models.length)}` : "模型未拆分"}
+            {peak.models.length > 0 ? text(`模型 ${formatCount(peak.models.length)}`, `${formatCount(peak.models.length)} models`) : text("模型未拆分", "Models not split")}
           </div>
         )}
       </div>
@@ -992,17 +999,19 @@ function PeakDaySummaryCard({ summary }: { summary: CcusageSummary }) {
 }
 
 function TokenCompositionStrip({ summary }: { summary: CcusageSummary }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const parts = [
-    { key: "input", label: "输入", value: summary.inputTokens, color: SERIES_COLORS.input },
-    { key: "output", label: "输出", value: summary.outputTokens, color: SERIES_COLORS.output },
-    { key: "cacheCreation", label: "缓存写入", value: summary.cacheCreationTokens, color: SERIES_COLORS.cacheCreation },
-    { key: "cacheRead", label: "缓存命中", value: summary.cacheReadTokens, color: SERIES_COLORS.cacheRead },
+    { key: "input", label: text("输入", "Input"), value: summary.inputTokens, color: SERIES_COLORS.input },
+    { key: "output", label: text("输出", "Output"), value: summary.outputTokens, color: SERIES_COLORS.output },
+    { key: "cacheCreation", label: text("缓存写入", "Cache Write"), value: summary.cacheCreationTokens, color: SERIES_COLORS.cacheCreation },
+    { key: "cacheRead", label: text("缓存命中", "Cache Hit"), value: summary.cacheReadTokens, color: SERIES_COLORS.cacheRead },
   ];
   const total = Math.max(1, parts.reduce((sum, item) => sum + item.value, 0));
 
   return (
     <section className="rounded-2xl border border-border/60 bg-bg-secondary px-4 py-3.5">
-      <SectionHeading icon={Layers} title="Token 构成" hint="输入 / 输出 / 缓存" />
+      <SectionHeading icon={Layers} title={text("Token 构成", "Token Composition")} hint={text("输入 / 输出 / 缓存", "Input / output / cache")} />
       <div className="flex h-2.5 overflow-hidden rounded-full bg-bg-tertiary">
         {parts.map((item) => (
           <div
@@ -1028,16 +1037,18 @@ function TokenCompositionStrip({ summary }: { summary: CcusageSummary }) {
 }
 
 function ReportContextNote({ reportKind, sourceLabel, schemaLabel }: { reportKind: string; sourceLabel: string; schemaLabel: string }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border/60 bg-bg-secondary px-3 py-2 text-[11px] text-text-secondary">
       <span className="inline-flex items-center gap-1 font-semibold text-text-primary">
         <Database size={13} />
-        统计口径
+        {text("统计口径", "Stats Scope")}
       </span>
-      <span>来源：{sourceLabel}</span>
-      <span>报告：{reportKind}</span>
-      <span>结构：{schemaLabel}</span>
-      <span className="text-text-muted">费用和 Token 来自本机日志估算，不等同官方账单。</span>
+      <span>{text(`来源：${sourceLabel}`, `Source: ${sourceLabel}`)}</span>
+      <span>{text(`报告：${reportKind}`, `Report: ${reportKind}`)}</span>
+      <span>{text(`结构：${schemaLabel}`, `Schema: ${schemaLabel}`)}</span>
+      <span className="text-text-muted">{text("费用和 Token 来自本机日志估算，不等同官方账单。", "Costs and tokens come from local log estimates, not official bills.")}</span>
     </div>
   );
 }
@@ -1053,6 +1064,7 @@ function TimeWindowSelector({
   timeWindow: CcusageTimeWindowState;
   onChange: (value: CcusageTimeWindowState) => void;
 }) {
+  const { t } = useI18n();
   const resolved = resolveTimeWindow(timeWindow, baseSummary.daily);
   const years = availableYears(baseSummary.daily);
   const first = firstDateKey(baseSummary.daily);
@@ -1064,16 +1076,16 @@ function TimeWindowSelector({
   return (
     <section className="rounded-xl border border-primary/35 bg-primary/10 px-3 py-2 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="text-[12px] font-semibold text-text-primary">时间窗口</div>
+        <div className="text-[12px] font-semibold text-text-primary">{t("ccusage.timeWindow")}</div>
         <Select
           value={timeWindow.mode}
           onChange={(e) => onChange(nextTimeWindowForMode(e.target.value as CcusageTimeWindowMode, timeWindow, baseSummary.daily))}
           className={`${controlClass} w-auto min-w-[104px]`}
-          aria-label="ccusage 时间窗口类型"
+          aria-label={t("ccusage.timeWindowType")}
         >
           {TIME_WINDOW_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {t(option.labelKey)}
             </option>
           ))}
         </Select>
@@ -1083,12 +1095,12 @@ function TimeWindowSelector({
             value={resolved.year}
             onChange={(e) => onChange({ ...timeWindow, year: e.target.value })}
             className={`${controlClass} w-auto min-w-[96px]`}
-            aria-label="ccusage 年份"
+            aria-label={t("ccusage.year")}
             disabled={disabled || years.length === 0}
           >
             {years.map((year) => (
               <option key={year} value={year}>
-                {year} 年
+                {year}
               </option>
             ))}
           </Select>
@@ -1102,7 +1114,7 @@ function TimeWindowSelector({
             max={latest.slice(0, 7)}
             onChange={(e) => onChange({ ...timeWindow, month: e.target.value })}
             className={inputClass}
-            aria-label="ccusage 月份"
+            aria-label={t("ccusage.month")}
             disabled={disabled}
           />
         )}
@@ -1115,7 +1127,7 @@ function TimeWindowSelector({
             max={latest}
             onChange={(e) => onChange({ ...timeWindow, day: e.target.value })}
             className={inputClass}
-            aria-label="ccusage 日期"
+            aria-label={t("ccusage.date")}
             disabled={disabled}
           />
         )}
@@ -1129,10 +1141,10 @@ function TimeWindowSelector({
               max={latest}
               onChange={(e) => onChange({ ...timeWindow, customStart: e.target.value })}
               className={inputClass}
-              aria-label="ccusage 自定义开始日期"
+              aria-label={t("ccusage.customStart")}
               disabled={disabled}
             />
-            <span className="text-[11px] text-text-muted">至</span>
+            <span className="text-[11px] text-text-muted">{t("common.to")}</span>
             <input
               type="date"
               value={resolved.customEnd}
@@ -1140,15 +1152,15 @@ function TimeWindowSelector({
               max={latest}
               onChange={(e) => onChange({ ...timeWindow, customEnd: e.target.value })}
               className={inputClass}
-              aria-label="ccusage 自定义结束日期"
+              aria-label={t("ccusage.customEnd")}
               disabled={disabled}
             />
           </>
         )}
 
         <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary">
-          <span>当前：{timeWindowLabel(resolved)}</span>
-          <span>记录：{formatCount(activeSummary.daily.length)} / {formatCount(baseSummary.daily.length)}</span>
+          <span>{t("ccusage.currentWindow", { value: timeWindowLabel(resolved, t) })}</span>
+          <span>{t("ccusage.records", { active: formatCount(activeSummary.daily.length), total: formatCount(baseSummary.daily.length) })}</span>
         </div>
       </div>
     </section>
@@ -1156,9 +1168,13 @@ function TimeWindowSelector({
 }
 
 function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[]; granularity: string }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const peak = useMemo(() => getPeakDay(items), [items]);
   const hasItems = items.length > 0;
-  const peakLabel = granularity === "小时" ? "峰值小时" : granularity === "月" ? "峰值月份" : "最高使用日";
+  const displayGranularity = granularity === "小时" ? text("小时", "hour") : granularity === "月" ? text("月", "month") : text("天", "day");
+  const peakLabel = granularity === "小时" ? text("峰值小时", "Peak Hour") : granularity === "月" ? text("峰值月份", "Peak Month") : text("最高使用日", "Peak Day");
+  const costLabel = text("费用", "Cost");
   const option = useMemo<EChartsOption>(() => {
     const dates = items.map((item) => item.date);
     const tokenAxisMax = niceAxisMax(
@@ -1193,11 +1209,11 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
               const name = tooltipString(row, "seriesName");
               const marker = tooltipString(row, "marker");
               const value = tooltipNumber(row, "value");
-              const display = name === "费用" ? formatCost(value) : `${formatCount(value)} Token`;
+              const display = name === costLabel ? formatCost(value) : `${formatCount(value)} Token`;
               return `<div style="display:flex;align-items:center;justify-content:space-between;gap:18px;line-height:22px;"><span style="display:inline-flex;align-items:center;gap:6px;text-align:left;">${marker}<span>${name}</span></span><strong style="min-width:88px;text-align:right;">${display}</strong></div>`;
             })
             .join("");
-          return `<div style="min-width:190px;"><div style="font-weight:700;margin-bottom:6px;">${day.date}${peak?.date === day.date ? ` · ${peakLabel}` : ""}</div>${seriesRows}<div style="margin-top:6px;color:var(--text-muted);">模型：${day.models.length || "-"}</div></div>`;
+          return `<div style="min-width:190px;"><div style="font-weight:700;margin-bottom:6px;">${day.date}${peak?.date === day.date ? ` · ${peakLabel}` : ""}</div>${seriesRows}<div style="margin-top:6px;color:var(--text-muted);">${text("模型", "Models")}：${day.models.length || "-"}</div></div>`;
         },
       },
       legend: {
@@ -1245,7 +1261,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
       ],
       series: [
         {
-          name: "总 Token",
+          name: text("总 Token", "Total Token"),
           type: "line",
           smooth: true,
           symbol: "circle",
@@ -1262,7 +1278,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
                 symbol: "pin",
                 symbolSize: 56,
                 itemStyle: { color: PEAK },
-                label: { color: "var(--bg-secondary)", fontSize: 10, lineHeight: 12, fontWeight: 700, formatter: "峰值\n{c}" },
+                label: { color: "var(--bg-secondary)", fontSize: 10, lineHeight: 12, fontWeight: 700, formatter: `${text("峰值", "Peak")}\n{c}` },
                 data: [{ name: peakLabel, coord: [peak.date, peak.totalTokens], value: formatCompactCount(peak.totalTokens) }],
               }
             : undefined,
@@ -1276,7 +1292,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
             : undefined,
         },
         {
-          name: "输入",
+          name: text("输入", "Input"),
           type: "line",
           smooth: true,
           symbol: "none",
@@ -1284,7 +1300,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
           data: items.map((item) => item.inputTokens),
         },
         {
-          name: "输出",
+          name: text("输出", "Output"),
           type: "line",
           smooth: true,
           symbol: "none",
@@ -1292,7 +1308,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
           data: items.map((item) => item.outputTokens),
         },
         {
-          name: "缓存写入",
+          name: text("缓存写入", "Cache Write"),
           type: "line",
           smooth: true,
           symbol: "none",
@@ -1300,7 +1316,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
           data: items.map((item) => item.cacheCreationTokens),
         },
         {
-          name: "缓存命中",
+          name: text("缓存命中", "Cache Hit"),
           type: "line",
           smooth: true,
           symbol: "none",
@@ -1308,7 +1324,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
           data: items.map((item) => item.cacheReadTokens),
         },
         {
-          name: "费用",
+          name: costLabel,
           type: "bar",
           yAxisIndex: 1,
           barMaxWidth: 12,
@@ -1317,23 +1333,23 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
         },
       ],
     };
-  }, [items, peak, granularity, peakLabel]);
+  }, [items, peak, granularity, peakLabel, costLabel, language]);
 
   return (
     <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4 lg:p-5">
       <SectionHeading
         icon={LineChart}
-        title={`按${granularity} Token / 费用趋势`}
+        title={text(`按${granularity} Token / 费用趋势`, `Token / cost trend by ${displayGranularity}`)}
         right={
           <div className="ml-auto rounded-full bg-bg-tertiary px-3 py-1 text-[11px] font-medium text-text-secondary">
-            {peak ? `${peakLabel}：${peak.date} · ${formatCount(peak.totalTokens)} Token` : "暂无逐日数据"}
+            {peak ? text(`${peakLabel}：${peak.date} · ${formatCount(peak.totalTokens)} Token`, `${peakLabel}: ${peak.date} · ${formatCount(peak.totalTokens)} Token`) : text("暂无逐日数据", "No daily data")}
           </div>
         }
       />
 
       {!hasItems ? (
         <div className="rounded-xl bg-bg-primary py-8 text-center text-[12px] text-text-muted">
-          当前时间窗口没有可绘制的 Token / 费用数据。
+          {text("当前时间窗口没有可绘制的 Token / 费用数据。", "No drawable Token / cost data in the current time window.")}
         </div>
       ) : (
         <EChart option={option} className="h-[380px] w-full" />
@@ -1353,6 +1369,8 @@ function heatmapCellColor(value: number, maxValue: number): string {
 }
 
 function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; granularity: string }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const peak = useMemo(() => getPeakDay(items), [items]);
   const maxTokens = Math.max(0, ...items.map((item) => item.totalTokens));
   const hasItems = items.length > 0;
@@ -1362,13 +1380,13 @@ function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; 
     <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <SectionHeading
         icon={Grid3x3}
-        title={`按${granularity} Token 热点图`}
-        hint={peak ? `最高：${peak.date} · ${formatCount(peak.totalTokens)} Token` : "暂无数据"}
+        title={text(`按${granularity} Token 热点图`, `Token heatmap by ${granularity === "小时" ? "hour" : granularity === "月" ? "month" : "day"}`)}
+        hint={peak ? text(`最高：${peak.date} · ${formatCount(peak.totalTokens)} Token`, `Peak: ${peak.date} · ${formatCount(peak.totalTokens)} Token`) : text("暂无数据", "No data")}
       />
 
       {!hasItems ? (
         <div className="rounded-xl bg-bg-primary py-8 text-center text-[12px] text-text-muted">
-          当前时间窗口没有可绘制的热点数据。
+          {text("当前时间窗口没有可绘制的热点数据。", "No drawable heatmap data in the current time window.")}
         </div>
       ) : (
         <>
@@ -1384,16 +1402,16 @@ function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; 
                       backgroundColor: heatmapCellColor(item.totalTokens, maxTokens),
                       boxShadow: isPeak ? `0 0 0 2px color-mix(in srgb, ${PEAK} 55%, transparent)` : "none",
                     }}
-                    title={`${item.date} · ${formatCount(item.totalTokens)} Token · ${formatCost(item.totalCost)}${isPeak ? " · 峰值" : ""}`}
+                    title={`${item.date} · ${formatCount(item.totalTokens)} Token · ${formatCost(item.totalCost)}${isPeak ? text(" · 峰值", " · Peak") : ""}`}
                   />
                 );
               })}
             </div>
           </div>
           <div className="mt-2 flex items-center justify-between text-[10px] text-text-muted">
-            <span>低使用</span>
-            <span>颜色越深代表 Token 越高</span>
-            <span>高使用</span>
+            <span>{text("低使用", "Low")}</span>
+            <span>{text("颜色越深代表 Token 越高", "Darker color means higher Token usage")}</span>
+            <span>{text("高使用", "High")}</span>
           </div>
         </>
       )}
@@ -1402,6 +1420,8 @@ function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; 
 }
 
 function ModelRankingChart({ summary }: { summary: CcusageSummary }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const models = useMemo(
     () => summary.models.filter((item) => item.totalTokens > 0).slice(0, 8).reverse(),
     [summary.models]
@@ -1419,7 +1439,7 @@ function ModelRankingChart({ summary }: { summary: CcusageSummary }) {
           const row = tooltipParamRows(params)[0];
           const model = models[tooltipDataIndex(row)];
           if (!model) return "";
-          return `<div style="min-width:220px;"><strong>${model.model}</strong><div style="margin-top:6px;">Token：${formatCount(model.totalTokens)}</div><div>费用：${formatCost(model.totalCost)}</div><div>输入：${formatCount(model.inputTokens)} · 输出：${formatCount(model.outputTokens)}</div></div>`;
+          return `<div style="min-width:220px;"><strong>${model.model}</strong><div style="margin-top:6px;">Token: ${formatCount(model.totalTokens)}</div><div>${text("费用", "Cost")}: ${formatCost(model.totalCost)}</div><div>${text("输入", "Input")}: ${formatCount(model.inputTokens)} · ${text("输出", "Output")}: ${formatCount(model.outputTokens)}</div></div>`;
         },
       },
       grid: { left: 112, right: 54, top: 14, bottom: 24 },
@@ -1461,19 +1481,19 @@ function ModelRankingChart({ summary }: { summary: CcusageSummary }) {
         },
       ],
     };
-  }, [models]);
+  }, [models, language]);
 
   return (
     <section className="rounded-2xl border border-border/60 bg-bg-secondary p-4">
       <SectionHeading
         icon={BarChart3}
-        title="模型用量排行"
-        hint={summary.hasModelBreakdown ? "Top models by Token" : summary.modelNames.length > 0 ? "仅识别到模型名" : "暂无模型数据"}
+        title={text("模型用量排行", "Model Usage Ranking")}
+        hint={summary.hasModelBreakdown ? "Top models by Token" : summary.modelNames.length > 0 ? text("仅识别到模型名", "Only model names detected") : text("暂无模型数据", "No model data")}
       />
 
       {models.length === 0 ? (
         <div className="rounded-xl bg-bg-primary py-8 text-center text-[12px] text-text-muted">
-          ccusage 输出中没有可用于排行的模型 Token 数据。
+          {text("ccusage 输出中没有可用于排行的模型 Token 数据。", "ccusage output has no model Token data available for ranking.")}
         </div>
       ) : (
         <EChart option={option} className="h-[300px] w-full" />
@@ -1483,14 +1503,16 @@ function ModelRankingChart({ summary }: { summary: CcusageSummary }) {
 }
 
 function PayloadOverviewFooter({ summary }: { summary: CcusageSummary }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   return (
     <section className="rounded-xl border border-border/60 bg-bg-secondary px-3 py-2 text-[11px] text-text-muted">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span className="font-semibold text-text-secondary">数据结构摘要</span>
-        <span>结构：{summary.schemaLabel}</span>
-        <span>逐日：{formatCount(summary.daily.length)}</span>
-        <span>模型：{formatCount(summary.modelCount)}</span>
-        <span>模型拆分：{summary.hasModelBreakdown ? "已返回" : "未返回"}</span>
+        <span className="font-semibold text-text-secondary">{text("数据结构摘要", "Data Schema Summary")}</span>
+        <span>{text(`结构：${summary.schemaLabel}`, `Schema: ${summary.schemaLabel}`)}</span>
+        <span>{text(`逐日：${formatCount(summary.daily.length)}`, `Daily: ${formatCount(summary.daily.length)}`)}</span>
+        <span>{text(`模型：${formatCount(summary.modelCount)}`, `Models: ${formatCount(summary.modelCount)}`)}</span>
+        <span>{text(`模型拆分：${summary.hasModelBreakdown ? "已返回" : "未返回"}`, `Model breakdown: ${summary.hasModelBreakdown ? "returned" : "not returned"}`)}</span>
       </div>
       {summary.payloadFields.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -1506,6 +1528,7 @@ function PayloadOverviewFooter({ summary }: { summary: CcusageSummary }) {
 }
 
 export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
+  const { t } = useI18n();
   const source = useCcusageStore((s) => s.source);
   const toolStatus = useCcusageStore((s) => s.toolStatus);
   const report = useCcusageStore((s) => s.report);
@@ -1559,6 +1582,8 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
   const selectedDayHasBlocks =
     resolvedTimeWindow.mode !== "day" || blockItems.some((item) => item.day === resolvedTimeWindow.day && item.totalTokens > 0);
   const sourceOption = SOURCE_OPTIONS.find((option) => option.value === source) ?? SOURCE_OPTIONS[0];
+  const sourceLabel = sourceOption.labelKey ? t(sourceOption.labelKey) : sourceOption.label;
+  const sourceDescription = t(sourceOption.descriptionKey);
   const toolReady = toolStatus?.bunxAvailable === true;
 
   if (!open) return null;
@@ -1579,11 +1604,11 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
                 <span className="ui-stats-panel-badge">
                   <BarChart3 size={15} />
                 </span>
-                ccusage 用量分析
+                {t("ccusage.title")}
               </div>
-              <div className="ui-dev-label mt-1 text-[11px] text-text-muted">Claude / Codex 本地用量估算</div>
+              <div className="ui-dev-label mt-1 text-[11px] text-text-muted">{t("ccusage.subtitle")}</div>
             </div>
-            <Button onClick={onClose} aria-label="关闭 ccusage 用量分析" size="icon" variant="ghost" title="关闭">
+            <Button onClick={onClose} aria-label={t("ccusage.close")} size="icon" variant="ghost" title={t("common.close")}>
               <X size={14} />
             </Button>
           </div>
@@ -1593,11 +1618,11 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
               value={source}
               onChange={(e) => setSource(e.target.value as CcusageSource)}
               className="h-8 w-auto min-w-[124px] shrink-0 text-xs"
-              aria-label="ccusage 来源"
+              aria-label={t("ccusage.source")}
             >
               {SOURCE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label}
+                  {option.labelKey ? t(option.labelKey) : option.label}
                 </option>
               ))}
             </Select>
@@ -1611,48 +1636,51 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
                 void refreshReport().catch(() => {});
               }}
               disabled={checkingStatus || installingTools || refreshing || !toolReady}
-              aria-label="刷新 ccusage 报告"
+              aria-label={t("ccusage.refreshReport")}
               size="sm"
             >
               <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-              刷新
+              {t("ccusage.refresh")}
             </Button>
 
             {!toolReady && (
               <Button
                 onClick={() => setInstallConfirmOpen(true)}
                 disabled={checkingStatus || installingTools}
-                aria-label="安装 Bun 和 bunx"
+                aria-label={t("ccusage.installAria")}
                 size="sm"
               >
                 <PackageCheck size={12} className={installingTools ? "animate-pulse" : ""} />
-                {installingTools ? "安装中" : "安装 Bun/bunx"}
+                {installingTools ? t("ccusage.installing") : t("ccusage.installTools")}
               </Button>
             )}
 
             <div className="ml-auto text-[12px] font-medium text-text-secondary">
-              来源：{sourceOption.label} ｜ 口径：{sourceOption.description}
+              {t("ccusage.sourceSummary", { source: sourceLabel, description: sourceDescription })}
             </div>
             <div className="w-full text-[12px] font-medium text-text-secondary">
-              缓存更新时间：{formatDateTime(report?.updatedAt ?? null)} ｜ 数据来源：{report ? (report.fromCache ? "SQLite 缓存" : "刚刚刷新") : "暂无缓存"}
+              {t("ccusage.cacheSummary", {
+                time: formatDateTime(report?.updatedAt ?? null),
+                source: report ? (report.fromCache ? t("ccusage.source.cache") : t("ccusage.source.refreshed")) : t("ccusage.source.none"),
+              })}
             </div>
           </div>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
             {(checkingStatus || loadingCache) && !report && (
-              <Card className="bg-bg-secondary p-3 text-[12px] text-text-secondary">正在读取工具状态和本地缓存...</Card>
+              <Card className="bg-bg-secondary p-3 text-[12px] text-text-secondary">{t("ccusage.loadingStatus")}</Card>
             )}
 
             {!toolReady && (
               <Card className="bg-bg-secondary p-4">
                 <div className="flex items-center gap-2 text-[13px] font-semibold text-text-primary">
                   <PackageCheck size={14} />
-                  需要准备 Bun/bunx
+                  {t("ccusage.prepareTools")}
                 </div>
                 <div className="mt-2 space-y-1.5 text-[12px] leading-6 text-text-secondary">
-                  <div>ccusage 会读取 daily 和 blocks 本地统计；daily 用于年/月/自定义，blocks 用于日视图小时聚合。</div>
-                  <div>Bun：{toolStatus?.bunVersion ?? "未检测到"}；bunx：{toolStatus?.bunxVersion ?? "未检测到"}。</div>
-                  <div>点击安装前会再次确认；安装命令使用 npm 国内镜像源，不会把 ccusage 写入本项目依赖。</div>
+                  <div>{t("ccusage.reportExplanation")}</div>
+                  <div>{t("ccusage.toolVersions", { bun: toolStatus?.bunVersion ?? t("ccusage.notDetected"), bunx: toolStatus?.bunxVersion ?? t("ccusage.notDetected") })}</div>
+                  <div>{t("ccusage.installNote")}</div>
                 </div>
               </Card>
             )}
@@ -1661,13 +1689,13 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
 
             {!report && toolReady && !loadingCache && (
               <Card className="bg-bg-secondary p-4 text-[12px] leading-6 text-text-secondary">
-                当前来源暂无 SQLite 缓存。点击“刷新”后会运行 ccusage，并把成功结果写入本地缓存。
+                {t("ccusage.noCache")}
               </Card>
             )}
 
             {report && (
               <>
-                {refreshing && <div className="text-[12px] font-medium text-text-muted">正在后台刷新 ccusage 报告...</div>}
+                {refreshing && <div className="text-[12px] font-medium text-text-muted">{t("ccusage.refreshing")}</div>}
 
                 <TimeWindowSelector
                   baseSummary={baseSummary}
@@ -1677,11 +1705,11 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
                 />
                 {!selectedDayHasBlocks && (
                   <Card className="bg-bg-secondary px-3 py-2 text-[12px] leading-5 text-text-secondary">
-                    日视图小时数据来自 ccusage blocks（startTime/blockStart）。如果刷新后仍为 0，说明当前来源或该日期没有可拆分到小时的 blocks 记录；daily 报告本身只提供逐日汇总。
+                    {t("ccusage.dayBlocksNote")}
                   </Card>
                 )}
                 <KpiStrip summary={summary} />
-                <ReportContextNote reportKind={report.reportKind} sourceLabel={sourceOption.label} schemaLabel={summary.schemaLabel} />
+                <ReportContextNote reportKind={report.reportKind} sourceLabel={sourceLabel} schemaLabel={summary.schemaLabel} />
                 <PeakDaySummaryCard summary={summary} />
                 <TokenCompositionStrip summary={summary} />
 
@@ -1701,10 +1729,10 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
 
       <ConfirmDialog
         open={installConfirmOpen}
-        title="安装 Bun/bunx？"
-        message={`将执行固定命令 npm install -g bun --registry ${REGISTRY_MIRROR_TEXT}，这会修改当前用户的全局开发环境。`}
-        confirmText="安装"
-        cancelText="取消"
+        title={t("ccusage.installConfirmTitle")}
+        message={t("ccusage.installConfirmMessage", { registry: REGISTRY_MIRROR_TEXT })}
+        confirmText={t("ccusage.installTools")}
+        cancelText={t("common.cancel")}
         zIndex={60}
         onClose={() => setInstallConfirmOpen(false)}
         onConfirm={() => {
@@ -1714,14 +1742,12 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
               await installTools();
               const status = useCcusageStore.getState().toolStatus;
               if (status?.bunxAvailable) {
-                toast.success(
-                  `Bun/bunx 安装成功（Bun ${status.bunVersion ?? "?"} / bunx ${status.bunxVersion ?? "?"}）`
-                );
+                toast.success(t("ccusage.installSuccess", { bun: status.bunVersion ?? "?", bunx: status.bunxVersion ?? "?" }));
               } else {
-                toast.warning("安装命令已执行，但仍未检测到 bunx，请重启应用或检查 PATH");
+                toast.warning(t("ccusage.installWarning"));
               }
             } catch (err) {
-              toast.error(`Bun/bunx 安装失败：${String(err)}`);
+              toast.error(t("ccusage.installFailed", { error: String(err) }));
             }
           })();
         }}

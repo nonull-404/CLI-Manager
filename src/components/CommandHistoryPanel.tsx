@@ -8,6 +8,7 @@ import { EmptyState } from "./ui/EmptyState";
 import { Skeleton } from "./ui/Skeleton";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
+import { useI18n } from "../lib/i18n";
 
 interface CommandHistoryPanelProps {
   compact?: boolean;
@@ -16,6 +17,7 @@ interface CommandHistoryPanelProps {
 }
 
 export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", toneClassName = "" }: CommandHistoryPanelProps) {
+  const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const [panelLoading, setPanelLoading] = useState(false);
   const { entries, searchQuery, setSearchQuery, fetchAll } = useCommandHistoryStore();
@@ -40,14 +42,14 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
 
   const handleReplay = async (command: string) => {
     if (!activeSessionId) {
-      toast.error("当前无活跃终端");
+      toast.error(t("commandHistory.toast.noActiveTerminal"));
       return;
     }
     try {
       await invoke("pty_write", { sessionId: activeSessionId, data: command + "\r" });
       setOpen(false);
     } catch (err) {
-      toast.error("重放命令失败", { description: String(err) });
+      toast.error(t("commandHistory.toast.replayFailed"), { description: String(err) });
       logError("Failed to replay command history", {
         sessionId: activeSessionId,
         command,
@@ -63,7 +65,7 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
 
   const formatTime = (ts: string) => {
     const d = new Date(Number(ts));
-    return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
   };
   const triggerClassName = compact
     ? "ui-focus-ring ui-icon-action"
@@ -75,11 +77,11 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
         <button
           className={`${triggerClassName} ${toneClassName}`.trim()}
           data-active={open ? "true" : "false"}
-          title="命令历史"
-          aria-label={open ? "关闭命令历史面板" : "打开命令历史面板"}
+          title={t("commandHistory.title")}
+          aria-label={open ? t("commandHistory.closePanel") : t("commandHistory.openPanel")}
         >
           <Clock size={14} strokeWidth={1.5} />
-          {!compact && <span>命令历史</span>}
+          {!compact && <span>{t("commandHistory.title")}</span>}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -93,11 +95,11 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
             <Search size={12} strokeWidth={1.5} />
             <input
               type="text"
-              placeholder="搜索命令..."
+              placeholder={t("commandHistory.searchPlaceholder")}
               value={searchQuery}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="flex-1 bg-transparent text-xs text-text-primary outline-none"
-              aria-label="搜索命令历史"
+              aria-label={t("commandHistory.searchAria")}
               autoFocus
             />
           </div>
@@ -116,8 +118,8 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
           ) : entries.length === 0 ? (
             <EmptyState
               icon={<Clock size={20} strokeWidth={1.5} />}
-              title={searchQuery ? "无匹配命令" : "暂无命令历史"}
-              description={searchQuery ? "尝试更短关键词重新搜索。" : "先在终端执行一条命令，历史会自动记录。"}
+              title={searchQuery ? t("commandHistory.emptySearchTitle") : t("commandHistory.emptyTitle")}
+              description={searchQuery ? t("commandHistory.emptySearchDescription") : t("commandHistory.emptyDescription")}
               className="px-3 py-6"
             />
           ) : (
@@ -128,7 +130,7 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
                   void handleReplay(entry.command);
                 }}
                 className="ui-interactive flex w-full items-start gap-2 px-3 py-1.5 text-left text-xs text-on-surface-variant"
-                title="点击重放此命令"
+                title={t("commandHistory.replayTitle")}
               >
                 <code className="flex-1 truncate font-mono text-text-primary">{entry.command}</code>
                 <span className="shrink-0 text-[10px] text-text-muted">{formatTime(entry.executed_at)}</span>

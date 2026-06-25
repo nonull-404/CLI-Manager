@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as Re
 import { getMaterialFileIcon, getMaterialFolderIcon } from "@baybreezy/file-extension-icon";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiPathBlock, formatAiRootTree, formatAiTree, formatTerminalDragPath, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
+import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { beginTerminalFileDrag, endTerminalFileDrag } from "../../lib/terminalFileDrag";
 import type { GitFileChange, ProjectFileEntry } from "../../lib/types";
 import { isDefaultCollapsedDirectoryName, useFileExplorerStore } from "../../stores/fileExplorerStore";
@@ -31,6 +32,7 @@ type FileDisplayStatus =
   | { kind: "git"; label: string; color: string };
 
 type DraggedFileEntry = Pick<ProjectFileEntry, "kind" | "name" | "path">;
+type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
 
@@ -42,27 +44,21 @@ interface AutoCollapseGroupState {
   unignorePath: (path: string) => void;
 }
 
-const EDITING_STATUS: FileDisplayStatus = {
-  kind: "editing",
-  label: "编辑",
-  color: "#7dcfff",
+const GIT_STATUS_LABELS: Record<GitFileChange["status"], TranslationKey> = {
+  M: "files.status.modified",
+  A: "files.status.added",
+  D: "files.status.deleted",
+  R: "files.status.renamed",
+  C: "files.status.conflict",
+  U: "files.status.untracked",
+  "??": "files.status.untracked",
 };
 
-const GIT_STATUS_LABELS: Record<GitFileChange["status"], string> = {
-  M: "修改",
-  A: "新增",
-  D: "删除",
-  R: "重命名",
-  C: "冲突",
-  U: "未提交",
-  "??": "未提交",
-};
-
-function makeGitDisplayStatus(change: GitFileChange): FileDisplayStatus {
+function makeGitDisplayStatus(change: GitFileChange, t: Translate): FileDisplayStatus {
   const config = STATUS_CONFIG[change.status] ?? STATUS_CONFIG.M;
   return {
     kind: "git",
-    label: GIT_STATUS_LABELS[change.status],
+    label: t(GIT_STATUS_LABELS[change.status]),
     color: config.color,
   };
 }
@@ -235,12 +231,13 @@ function AutoCollapsedGroupRow({
   isOpen: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
       className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px] text-text-muted"
       style={{ paddingLeft: 8 + depth * 14 }}
-      title={isOpen ? "收起自动折叠文件" : "展开自动折叠文件"}
+      title={isOpen ? t("files.autoCollapse.collapse") : t("files.autoCollapse.expand")}
       onClick={onToggle}
     >
       <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
@@ -249,7 +246,7 @@ function AutoCollapsedGroupRow({
       <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
         <Folder size={14} />
       </span>
-      <span className="min-w-0 flex-1 truncate">已折叠文件: {count}</span>
+      <span className="min-w-0 flex-1 truncate">{t("files.autoCollapse.count", { count })}</span>
     </button>
   );
 }
@@ -287,6 +284,7 @@ function FileNode({
   onFileDrop: (event: ReactDragEvent<HTMLElement>, targetEntry: ProjectFileEntry) => void;
   autoCollapseGroups: AutoCollapseGroupState;
 }) {
+  const { t } = useI18n();
   const project = useFileExplorerStore((s) => s.project);
   const expandedPaths = useFileExplorerStore((s) => s.expandedPaths);
   const toggleDir = useFileExplorerStore((s) => s.toggleDir);
@@ -420,51 +418,51 @@ function FileNode({
           {isDir && (
             <>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
-                <File size={13} /> 新建文件
+                <File size={13} /> {t("files.menu.newFile")}
               </ContextMenuItem>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-dir", parentPath: displayEntry.path })}>
-                <FolderPlus size={13} /> 新建文件夹
+                <FolderPlus size={13} /> {t("files.menu.newFolder")}
               </ContextMenuItem>
               <ContextMenuItem disabled={!clipboard} onSelect={() => void paste()}>
-                <Copy size={13} /> 粘贴
+                <Copy size={13} /> {t("files.menu.paste")}
               </ContextMenuItem>
               {isManuallyIgnored ? (
                 <ContextMenuItem onSelect={() => autoCollapseGroups.unignorePath(entry.path)}>
-                  <X size={13} /> 取消忽略
+                  <X size={13} /> {t("files.menu.unignore")}
                 </ContextMenuItem>
               ) : (
                 <ContextMenuItem onSelect={() => {
                   autoCollapseGroups.ignorePath(entry.path);
                   if (isChainExpanded) collapseDir(entry.path);
                 }}>
-                  <ChevronRight size={13} /> 忽略
+                  <ChevronRight size={13} /> {t("files.menu.ignore")}
                 </ContextMenuItem>
               )}
               <ContextMenuSeparator />
             </>
           )}
           <ContextMenuItem onSelect={() => onInput({ kind: "rename", path: displayEntry.path, currentName: displayEntry.name })}>
-            <Pencil size={13} /> 重命名
+            <Pencil size={13} /> {t("files.menu.rename")}
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => setClipboard({ mode: "copy", path: displayEntry.path, name: displayEntry.name })}>
-            <Copy size={13} /> 复制
+            <Copy size={13} /> {t("files.menu.copy")}
           </ContextMenuItem>
           {project && (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, displayEntry.path, displayEntry.kind), "AI 路径已复制")}>
-                <Copy size={13} /> 复制 AI 路径
+              <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, displayEntry.path, displayEntry.kind), t("files.toast.aiPathCopied"))}>
+                <Copy size={13} /> {t("files.menu.copyAiPath")}
               </ContextMenuItem>
               {isDir && (
-                <ContextMenuItem onSelect={() => void copyAiText(formatAiTree(project, displayEntry), "AI 目录树已复制")}>
-                  <Folder size={13} /> 复制 AI 树
+                <ContextMenuItem onSelect={() => void copyAiText(formatAiTree(project, displayEntry), t("files.toast.aiTreeCopied"))}>
+                  <Folder size={13} /> {t("files.menu.copyAiTree")}
                 </ContextMenuItem>
               )}
             </>
           )}
           <ContextMenuSeparator />
           <ContextMenuItem danger onSelect={() => onConfirm({ kind: "delete", path: displayEntry.path, name: displayEntry.name })}>
-            <Trash2 size={13} /> 删除
+            <Trash2 size={13} /> {t("files.menu.delete")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -573,6 +571,7 @@ function FileTreeRows({
 }
 
 export function FileExplorerSidebar() {
+  const { t } = useI18n();
   const project = useFileExplorerStore((s) => s.project);
   const tree = useFileExplorerStore((s) => s.tree);
   const searchQuery = useFileExplorerStore((s) => s.searchQuery);
@@ -662,10 +661,12 @@ export function FileExplorerSidebar() {
 
   const getDisplayStatus = useCallback((entry: ProjectFileEntry): FileDisplayStatus | null => {
     if (entry.kind !== "file") return null;
-    if (dirtyFilePaths.has(entry.path)) return EDITING_STATUS;
+    if (dirtyFilePaths.has(entry.path)) {
+      return { kind: "editing", label: t("files.status.editing"), color: "#7dcfff" };
+    }
     const change = gitChangeByPath.get(entry.path);
-    return change ? makeGitDisplayStatus(change) : null;
-  }, [dirtyFilePaths, gitChangeByPath]);
+    return change ? makeGitDisplayStatus(change, t) : null;
+  }, [dirtyFilePaths, gitChangeByPath, t]);
 
   const openInput = (action: InputAction) => {
     if (action.kind === "rename") {
@@ -893,29 +894,29 @@ export function FileExplorerSidebar() {
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, entry.path, entry.kind), "AI 路径已复制")}>
-            <Copy size={13} /> 复制 AI 路径
+          <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, entry.path, entry.kind), t("files.toast.aiPathCopied"))}>
+            <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>
           {entry.kind === "directory" && (
-            <ContextMenuItem onSelect={() => void copyAiText(formatAiTree(project, entry), "AI 目录树已复制")}>
-              <Folder size={13} /> 复制 AI 树
+            <ContextMenuItem onSelect={() => void copyAiText(formatAiTree(project, entry), t("files.toast.aiTreeCopied"))}>
+              <Folder size={13} /> {t("files.menu.copyAiTree")}
             </ContextMenuItem>
           )}
         </ContextMenuContent>
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, cancelRename, getDisplayStatus, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, openFile, project, renamingAction?.path, submitRename]);
+  }, [activeFile?.path, cancelRename, getDisplayStatus, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, openFile, project, renamingAction?.path, submitRename, t]);
 
   const copyRootAiPath = useCallback(() => {
     if (!project) return;
-    void copyAiText(formatAiPathBlock(project, "", "directory"), "AI 路径已复制");
-  }, [project]);
+    void copyAiText(formatAiPathBlock(project, "", "directory"), t("files.toast.aiPathCopied"));
+  }, [project, t]);
 
   const copyRootAiTree = useCallback(() => {
     if (!project) return;
-    void copyAiText(formatAiRootTree(project, tree), "AI 目录树已复制");
-  }, [project, tree]);
+    void copyAiText(formatAiRootTree(project, tree), t("files.toast.aiTreeCopied"));
+  }, [project, t, tree]);
 
   const renderRows = useMemo(() => (
     visibleRows.length > 0 ? (
@@ -943,10 +944,10 @@ export function FileExplorerSidebar() {
         />
       )
     ) : (
-      <div className="px-3 py-8 text-center text-xs text-text-muted">没有文件</div>
+      <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.empty")}</div>
     )
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [searchQuery, visibleRows, renderSearchRow, getDisplayStatus, autoCollapseGroups, handleFileKeyDown, handleFileDragStart, handleFileDragEnd, renamingAction?.path, submitRename, cancelRename]);
+  ), [searchQuery, visibleRows, renderSearchRow, getDisplayStatus, autoCollapseGroups, handleFileKeyDown, handleFileDragStart, handleFileDragEnd, renamingAction?.path, submitRename, cancelRename, t]);
 
   if (!project) return null;
 
@@ -959,10 +960,10 @@ export function FileExplorerSidebar() {
             <div className="truncate text-xs font-semibold text-on-surface">{project.name}</div>
             <div className="truncate text-[10px] text-text-muted">{project.path}</div>
           </div>
-          <button className="ui-icon-action" title="刷新" aria-label="刷新文件列表" onClick={() => void refresh()}>
+          <button className="ui-icon-action" title={t("common.refresh")} aria-label={t("files.refreshList")} onClick={() => void refresh()}>
             <RefreshCw size={13} />
           </button>
-          <button className="ui-icon-action" title="返回项目树" aria-label="返回项目树" onClick={closeProject}>
+          <button className="ui-icon-action" title={t("files.backToProjects")} aria-label={t("files.backToProjects")} onClick={closeProject}>
             <X size={14} />
           </button>
         </div>
@@ -971,11 +972,11 @@ export function FileExplorerSidebar() {
           <input
             className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-on-surface outline-none"
             value={searchQuery}
-            placeholder="搜索文件"
+            placeholder={t("files.searchPlaceholder")}
             onChange={(event) => void setSearchQuery(event.currentTarget.value)}
           />
         </div>
-        {clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? "复制" : "移动"}：{clipboard.name}</div>}
+        {clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{clipboard.name}</div>}
       </div>
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -991,27 +992,27 @@ export function FileExplorerSidebar() {
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={() => openInput({ kind: "create-file", parentPath: "" })}>
-            <File size={13} /> 新建文件
+            <File size={13} /> {t("files.menu.newFile")}
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => openInput({ kind: "create-dir", parentPath: "" })}>
-            <FolderPlus size={13} /> 新建文件夹
+            <FolderPlus size={13} /> {t("files.menu.newFolder")}
           </ContextMenuItem>
           <ContextMenuItem disabled={!clipboard} onSelect={() => void pasteIntoTarget("")}>
-            <Copy size={13} /> 粘贴
+            <Copy size={13} /> {t("files.menu.paste")}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={copyRootAiPath}>
-            <Copy size={13} /> 复制 AI 路径
+            <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>
           <ContextMenuItem onSelect={copyRootAiTree}>
-            <Folder size={13} /> 复制 AI 树
+            <Folder size={13} /> {t("files.menu.copyAiTree")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
 
       <Dialog open={inputAction !== null} onOpenChange={(open) => { if (!open) setInputAction(null); }}>
         <DialogContent className="max-w-[360px]">
-          <DialogTitle>{inputAction?.kind === "create-dir" ? "新建文件夹" : "新建文件"}</DialogTitle>
+          <DialogTitle>{inputAction?.kind === "create-dir" ? t("files.dialog.newFolder") : t("files.dialog.newFile")}</DialogTitle>
           <input
             className="ui-focus-ring mt-3 rounded-md border border-border bg-surface-container-lowest px-3 py-2 text-sm text-on-surface outline-none"
             value={inputValue}
@@ -1023,17 +1024,17 @@ export function FileExplorerSidebar() {
             }}
           />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setInputAction(null)}>取消</Button>
-            <Button onClick={() => void submitInput(false)}>确定</Button>
+            <Button variant="outline" onClick={() => setInputAction(null)}>{t("common.cancel")}</Button>
+            <Button onClick={() => void submitInput(false)}>{t("common.confirm")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <ConfirmDialog
         open={confirmAction?.kind === "delete"}
-        title="确认删除？"
-        message={confirmAction?.kind === "delete" ? `将删除 "${confirmAction.name}"。此操作不可撤销。` : undefined}
-        confirmText="删除"
+        title={t("files.confirm.deleteTitle")}
+        message={confirmAction?.kind === "delete" ? t("files.confirm.deleteMessage", { name: confirmAction.name }) : undefined}
+        confirmText={t("common.delete")}
         danger
         onClose={() => setConfirmAction(null)}
         onConfirm={() => {
@@ -1044,9 +1045,9 @@ export function FileExplorerSidebar() {
       />
       <ConfirmDialog
         open={confirmAction?.kind === "overwrite-create" || confirmAction?.kind === "overwrite-paste"}
-        title="目标已存在"
-        message="是否覆盖目标文件或目录？"
-        confirmText="覆盖"
+        title={t("files.confirm.targetExistsTitle")}
+        message={t("files.confirm.overwriteMessage")}
+        confirmText={t("files.confirm.overwrite")}
         danger
         onClose={() => setConfirmAction(null)}
         onConfirm={() => {

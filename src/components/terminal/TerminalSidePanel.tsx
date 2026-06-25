@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNod
 import { BarChart3, GitBranch } from "../icons";
 import { TERM } from "../stats/termStatsUi";
 import { TerminalStatsPanel } from "./TerminalStatsPanel";
+import { useI18n } from "../../lib/i18n";
 
 const GitChangesPanel = lazy(() =>
   import("../git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
@@ -147,19 +148,21 @@ export function ResizableTerminalPanelFrame({
 }
 
 export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPath, onTabChange }: TerminalSidePanelProps) {
+  const { t } = useI18n();
+
   if (!open) return null;
 
   const tabs = [
-    { key: "stats" as const, label: "实时统计", icon: <BarChart3 size={12} strokeWidth={1.8} /> },
-    { key: "git" as const, label: "Git 变更", icon: <GitBranch size={12} strokeWidth={1.8} /> },
+    { key: "stats" as const, label: t("terminal.panel.sideStats"), icon: <BarChart3 size={12} strokeWidth={1.8} /> },
+    { key: "git" as const, label: t("terminal.panel.gitChanges"), icon: <GitBranch size={12} strokeWidth={1.8} /> },
   ];
 
   return (
     <ResizableTerminalPanelFrame
       storageKey={MERGED_PANEL_WIDTH_STORAGE_KEY}
       defaultWidth={MERGED_PANEL_DEFAULT_WIDTH}
-      resizeLabel="调整终端侧边面板宽度"
-      resizeTitle="拖拽调整侧边面板宽度"
+      resizeLabel={t("terminal.panel.resizeSideLabel")}
+      resizeTitle={t("terminal.panel.resizeSideTitle")}
     >
       <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
         {tabs.map((tab) => {

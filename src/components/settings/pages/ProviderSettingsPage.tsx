@@ -42,6 +42,7 @@ import {
 import { ProviderBadge } from "@/components/provider/ProviderRow";
 import { VendorIcon, inferVendor, type VendorKey } from "@/components/VendorIcon";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useI18n, type AppLanguage } from "@/lib/i18n";
 
 // 深度合并对象（target 覆盖 source）
 function deepMerge(source: any, target: any): any {
@@ -201,17 +202,27 @@ const providerPageStyles = `
 }
 `;
 
-const ERROR_HINTS: Record<string, string> = {
-  db_not_found: "未找到 cc-switch 数据库文件，请确认已安装 cc-switch，或手动选择 cc-switch.db。",
-  unsupported_format: "所选文件不是 .db 数据库文件，请重新选择。",
+function pickText(language: AppLanguage, zh: string, en: string) {
+  return language === "zh-CN" ? zh : en;
+}
+
+const ERROR_HINTS: Record<string, { zh: string; en: string }> = {
+  db_not_found: {
+    zh: "未找到 cc-switch 数据库文件，请确认已安装 cc-switch，或手动选择 cc-switch.db。",
+    en: "cc-switch database file was not found. Install cc-switch or choose cc-switch.db manually.",
+  },
+  unsupported_format: {
+    zh: "所选文件不是 .db 数据库文件，请重新选择。",
+    en: "The selected file is not a .db database. Choose another file.",
+  },
 };
 
-function formatError(error: unknown): string {
+function formatError(error: unknown, language: AppLanguage): string {
   const message = error instanceof Error ? error.message : String(error);
   for (const [code, hint] of Object.entries(ERROR_HINTS)) {
-    if (message.startsWith(code)) return hint;
+    if (message.startsWith(code)) return pickText(language, hint.zh, hint.en);
   }
-  return `读取 cc-switch 数据库失败：${message}`;
+  return pickText(language, `读取 cc-switch 数据库失败：${message}`, `Failed to read cc-switch database: ${message}`);
 }
 
 // 苹果设置页标志性的圆角图标砖（filled / soft 两种）
@@ -271,7 +282,9 @@ function envIcon(key: string): LucideIcon {
   return Braces;
 }
 
-function CopyButton({ value, label = "已复制" }: { value: string; label?: string }) {
+function CopyButton({ value, label }: { value: string; label?: string }) {
+  const { language } = useI18n();
+  const copiedLabel = label ?? pickText(language, "已复制", "Copied");
   return (
     <ActionIcon
       size="xs"
@@ -279,9 +292,9 @@ function CopyButton({ value, label = "已复制" }: { value: string; label?: str
       className="shrink-0"
       onClick={() => {
         navigator.clipboard.writeText(value);
-        toast.success(label);
+        toast.success(copiedLabel);
       }}
-      title="复制"
+      title={pickText(language, "复制", "Copy")}
     >
       <Copy size={12} />
     </ActionIcon>
@@ -322,12 +335,13 @@ function ProviderListItem({
   isSelected: boolean;
   onClick: () => void;
 }) {
+  const { language } = useI18n();
   // 右侧徽章：优先显示 isCurrent，否则显示 category（若有）
   let badge: { label: string; tone: "primary" | "neutral" } | undefined;
   if (isSelected && provider.isCurrent) {
-    badge = { label: "ACTIVE", tone: "primary" };
+    badge = { label: pickText(language, "当前", "ACTIVE"), tone: "primary" };
   } else if (provider.isCurrent) {
-    badge = { label: "当前", tone: "primary" };
+    badge = { label: pickText(language, "当前", "Current"), tone: "primary" };
   } else if (provider.category) {
     badge = { label: provider.category, tone: "neutral" };
   }
@@ -385,6 +399,8 @@ function ProviderListItem({
 }
 
 function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => pickText(language, zh, en);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const envEntries = Object.entries(provider.maskedEnv);
   const websiteUrl = provider.websiteUrl;
@@ -456,29 +472,29 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
   const configTabs: { value: string; label: string; hint: string; json: string | null; copyLabel: string }[] = [
     {
       value: "merged",
-      label: "完整配置",
+      label: text("完整配置", "Merged Config"),
       hint:
         commonConfigsLoaded && commonConfig
-          ? "通用配置 + 供应商配置合并结果（供应商优先）"
-          : "供应商配置（无通用配置）",
+          ? text("通用配置 + 供应商配置合并结果（供应商优先）", "Common config + provider config merge result (provider wins)")
+          : text("供应商配置（无通用配置）", "Provider config (no common config)"),
       json: mergedConfig ? JSON.stringify(mergedConfig, null, 2) : null,
-      copyLabel: "已复制完整配置",
+      copyLabel: text("已复制完整配置", "Merged config copied"),
     },
     {
       value: "provider",
-      label: "供应商配置",
-      hint: "供应商原始配置",
+      label: text("供应商配置", "Provider Config"),
+      hint: text("供应商原始配置", "Provider raw config"),
       json: providerConfig ? JSON.stringify(providerConfig, null, 2) : null,
-      copyLabel: "已复制",
+      copyLabel: text("已复制", "Copied"),
     },
     ...(commonConfigsLoaded && commonConfig
       ? [
           {
             value: "common",
-            label: `通用配置 (${provider.appType})`,
-            hint: `common_config_${provider.appType}（来自 settings 表）`,
+            label: text(`通用配置 (${provider.appType})`, `Common Config (${provider.appType})`),
+            hint: text(`common_config_${provider.appType}（来自 settings 表）`, `common_config_${provider.appType} (from settings table)`),
             json: typeof commonConfig === "string" ? commonConfig : JSON.stringify(commonConfig, null, 2),
-            copyLabel: "已复制通用配置",
+            copyLabel: text("已复制通用配置", "Common config copied"),
           },
         ]
       : []),
@@ -510,8 +526,8 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
                   >
                     {provider.name}
                   </Text>
-                  {provider.isCurrent && <ProviderBadge tone="primary">全局当前</ProviderBadge>}
-                  {provider.configParseError && <ProviderBadge tone="danger">配置解析失败</ProviderBadge>}
+                  {provider.isCurrent && <ProviderBadge tone="primary">{text("全局当前", "Global Current")}</ProviderBadge>}
+                  {provider.configParseError && <ProviderBadge tone="danger">{text("配置解析失败", "Config Parse Failed")}</ProviderBadge>}
                 </Group>
                 <Group gap="xs" mt={8}>
                   {provider.category && <ProviderBadge tone="neutral">{provider.category}</ProviderBadge>}
@@ -527,11 +543,11 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
                 className="shrink-0"
                 onClick={() => {
                   void openUrl(websiteUrl).catch((err) => {
-                    toast.error("无法打开链接", { description: String(err) });
+                    toast.error(text("无法打开链接", "Failed to open link"), { description: String(err) });
                   });
                 }}
               >
-                官网
+                {text("官网", "Website")}
               </Button>
             )}
           </Group>
@@ -545,7 +561,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
               }}
             >
               <Text size="xs" c="var(--danger)">
-                该供应商配置解析失败，env 数据可能不完整，无法应用到项目。
+                {text("该供应商配置解析失败，env 数据可能不完整，无法应用到项目。", "This provider config failed to parse. Env data may be incomplete and cannot be applied to projects.")}
               </Text>
             </Box>
           )}
@@ -577,7 +593,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
               </MetaField>
             )}
             {provider.notes && (
-              <MetaField label="备注" icon={FileText}>
+              <MetaField label={text("备注", "Notes")} icon={FileText}>
                 <Text fz={13} c="var(--on-surface)" className="break-all leading-5">
                   {provider.notes}
                 </Text>
@@ -593,7 +609,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
           <Group gap="sm" mb="md" align="center">
             <IconTile icon={KeyRound} tone="primary" size={28} />
             <Text className="font-headline tracking-tight" fz={20} fw={800} c="var(--on-surface)">
-              环境变量
+              {text("环境变量", "Environment Variables")}
             </Text>
             <span
               className="inline-flex items-center rounded-lg px-2.5 py-0.5 text-sm font-bold"
@@ -641,7 +657,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
               rightSection={<ChevronDown size={16} />}
               onClick={() => setEnvExpanded(!envExpanded)}
             >
-              {envExpanded ? "收起" : `展开全部（还有 ${envEntries.length - 5} 个）`}
+              {envExpanded ? text("收起", "Collapse") : text(`展开全部（还有 ${envEntries.length - 5} 个）`, `Expand all (${envEntries.length - 5} more)`)}
             </Button>
           )}
         </Box>
@@ -652,7 +668,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
         <Group gap="sm" align="center" mb="md">
           <IconTile icon={Braces} tone="primary" size={28} />
           <Text className="font-headline tracking-tight" fz={16} fw={800} c="var(--on-surface)">
-            配置
+            {text("配置", "Configuration")}
           </Text>
         </Group>
         <Group gap={0} mb="md" wrap="wrap">
@@ -682,7 +698,7 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
             style={{ backgroundColor: "var(--surface-container-highest)" }}
           >
             <Text size="xs" c="var(--text-muted)">
-              {activeTab.value === "merged" ? "加载中..." : "配置解析失败"}
+              {activeTab.value === "merged" ? text("加载中...", "Loading...") : text("配置解析失败", "Config parse failed")}
             </Text>
           </Box>
         )}
@@ -712,10 +728,12 @@ function MetaField({ label, icon: Icon, children }: { label: string; icon?: Luci
 }
 
 function EmptyStateGuideCard() {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => pickText(language, zh, en);
   const steps: { icon: LucideIcon; text: string }[] = [
-    { icon: Download, text: "安装 cc-switch" },
-    { icon: Settings, text: "配置你的供应商" },
-    { icon: RefreshCw, text: "回到此页点击刷新" },
+    { icon: Download, text: text("安装 cc-switch", "Install cc-switch") },
+    { icon: Settings, text: text("配置你的供应商", "Configure your providers") },
+    { icon: RefreshCw, text: text("回到此页点击刷新", "Return here and click Refresh") },
   ];
 
   return (
@@ -725,10 +743,10 @@ function EmptyStateGuideCard() {
           <IconTile icon={Database} tone="primary" variant="solid" size={44} />
           <Box className="min-w-0">
             <Text size="lg" fw={700} c="var(--on-surface)">
-              欢迎使用供应商设置
+              {text("欢迎使用供应商设置", "Welcome to Provider Settings")}
             </Text>
             <Text size="sm" c="var(--text-muted)">
-              cc-switch 是一款供应商切换工具，可以帮助你管理多个 AI 服务提供商的配置。
+              {text("cc-switch 是一款供应商切换工具，可以帮助你管理多个 AI 服务提供商的配置。", "cc-switch helps manage configurations for multiple AI service providers.")}
             </Text>
           </Box>
         </Group>
@@ -737,7 +755,7 @@ function EmptyStateGuideCard() {
 
         <Box>
           <Text size="sm" fw={600} c="var(--on-surface)" mb="sm">
-            开始使用
+            {text("开始使用", "Getting Started")}
           </Text>
           <Stack gap="sm">
             {steps.map((step) => (
@@ -757,11 +775,11 @@ function EmptyStateGuideCard() {
           className="self-start"
           onClick={() => {
             void openUrl("https://github.com/deanxv/cc-switch").catch((err) => {
-              toast.error("无法打开链接", { description: String(err) });
+              toast.error(text("无法打开链接", "Failed to open link"), { description: String(err) });
             });
           }}
         >
-          访问 cc-switch 官网
+          {text("访问 cc-switch 官网", "Visit cc-switch Website")}
         </Button>
       </Stack>
     </section>
@@ -769,6 +787,8 @@ function EmptyStateGuideCard() {
 }
 
 export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
+  const { language } = useI18n();
+  const text = (zh: string, en: string) => pickText(language, zh, en);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const updateSetting = useSettingsStore((s) => s.update);
   const [data, setData] = useState<CcSwitchProvidersResponse | null>(null);
@@ -787,15 +807,15 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
       setData(response);
       // 优化 7: 刷新成功反馈（仅在手动刷新时显示）
       if (showToast) {
-        toast.success(`已刷新，共 ${response.providers.length} 个供应商`);
+        toast.success(text(`已刷新，共 ${response.providers.length} 个供应商`, `Refreshed. ${response.providers.length} providers found.`));
       }
     } catch (err) {
       setData(null);
-      setError(formatError(err));
+      setError(formatError(err, language));
     } finally {
       setLoading(false);
     }
-  }, [ccSwitchDbPath]);
+  }, [ccSwitchDbPath, language]);
 
   useEffect(() => {
     void loadProviders();
@@ -807,10 +827,10 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
       selected = await openDialog({
         multiple: false,
         directory: false,
-        filters: [{ name: "SQLite 数据库", extensions: ["db"] }],
+        filters: [{ name: text("SQLite 数据库", "SQLite Database"), extensions: ["db"] }],
       });
     } catch (err) {
-      toast.error("无法打开文件选择器", { description: String(err) });
+      toast.error(text("无法打开文件选择器", "Failed to open file picker"), { description: String(err) });
       return;
     }
     if (typeof selected === "string" && selected.trim()) {
@@ -890,7 +910,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
               <Box className="min-w-0 flex-1">
                 <Group gap="xs" mb={2} align="center">
                   <Text size="sm" fw={600} c="var(--on-surface)">
-                    cc-switch 数据库
+                    {text("cc-switch 数据库", "cc-switch Database")}
                   </Text>
                   <ProviderBadge tone={data ? "primary" : "neutral"}>
                     <span
@@ -903,26 +923,26 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
                         backgroundColor: data ? "var(--success)" : "var(--text-muted)",
                       }}
                     />
-                    {data ? "已连接" : "未连接"}
+                    {data ? text("已连接", "Connected") : text("未连接", "Disconnected")}
                   </ProviderBadge>
                 </Group>
                 <Text size="xs" c="var(--text-muted)">
-                  只读解析 cc-switch 的供应商配置；密钥已脱敏，留空使用默认路径
-                  ~/.cc-switch/cc-switch.db。
+                  {text("只读解析 cc-switch 的供应商配置；密钥已脱敏，留空使用默认路径", "Read-only parsing of cc-switch provider configs; keys are masked. Leave blank to use default path")}
+                  ~/.cc-switch/cc-switch.db{language === "zh-CN" ? "。" : "."}
                 </Text>
               </Box>
             </Group>
             <Group gap="xs" className="shrink-0">
               <Button size="compact-sm" variant="default" leftSection={<FolderOpen size={14} />} onClick={() => void pickDbFile()}>
-                选择文件
+                {text("选择文件", "Choose File")}
               </Button>
               {ccSwitchDbPath && (
                 <Button size="compact-sm" variant="subtle" color="gray" leftSection={<Undo2 size={14} />} onClick={() => void resetDbPath()}>
-                  使用默认路径
+                  {text("使用默认路径", "Use Default Path")}
                 </Button>
               )}
               <Button size="compact-sm" variant="default" leftSection={<RefreshCw size={14} />} onClick={() => void loadProviders(true)} loading={loading}>
-                刷新
+                {text("刷新", "Refresh")}
               </Button>
             </Group>
           </Group>
@@ -934,7 +954,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
               c="var(--on-surface)"
               className="break-all leading-5"
             >
-              {data?.dbPath ?? ccSwitchDbPath ?? "默认路径"}
+              {data?.dbPath ?? ccSwitchDbPath ?? text("默认路径", "Default path")}
             </Text>
           </Box>
         </Stack>
@@ -1014,15 +1034,15 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
       {/* 优化 8: 供应商数量提示 */}
       {data && visibleProviders.length > 0 && (
         <Text size="xs" c="var(--text-muted)">
-          共 {visibleProviders.length} 个供应商
+          {text(`共 ${visibleProviders.length} 个供应商`, `${visibleProviders.length} providers`)}
         </Text>
       )}
 
       {data && visibleProviders.length === 0 && !loading && (
         <Text size="sm" c="var(--text-muted)" py="md">
           {searchValue.trim()
-            ? `未找到匹配「${searchValue.trim()}」的供应商，已搜索：名称、BASE_URL、分类、模型、官网、备注`
-            : "该类型下没有供应商。"}
+            ? text(`未找到匹配「${searchValue.trim()}」的供应商，已搜索：名称、BASE_URL、分类、模型、官网、备注`, `No provider matched "${searchValue.trim()}". Searched name, BASE_URL, category, model, website, and notes.`)
+            : text("该类型下没有供应商。", "No providers under this type.")}
         </Text>
       )}
 
@@ -1043,7 +1063,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
               <ProviderDetailPanel provider={selectedProvider} />
             ) : (
               <Text size="sm" c="var(--text-muted)" py="md">
-                请选择一个供应商
+                {text("请选择一个供应商", "Select a provider")}
               </Text>
             )}
           </Box>

@@ -23,6 +23,7 @@ import {
   TERMINAL_THEME_PRESETS,
   getTerminalTheme,
   resolveAutoTerminalThemeId,
+  type TerminalThemeGroupId,
 } from "../../../lib/terminalThemes";
 import { normalizeShellKey, getOsPlatform } from "../../../lib/shell";
 import type { OsPlatform } from "../../../lib/shell";
@@ -42,14 +43,15 @@ import {
   type SystemFontFamily,
 } from "../../../lib/systemFonts";
 import { FontFamilySelect } from "../FontFamilySelect";
+import { useI18n } from "../../../lib/i18n";
 
 const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
 const FONT_SIZE_MIN = 10;
 const FONT_SIZE_MAX = 24;
 const TERMINAL_FONT_FALLBACK = "monospace";
 
-const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
-  { value: "Cascadia Code, Consolas, monospace", label: "Cascadia Code（推荐）" },
+const FONT_FAMILY_OPTIONS: { value: string; label: string; labelEn?: string }[] = [
+  { value: "Cascadia Code, Consolas, monospace", label: "Cascadia Code（推荐）", labelEn: "Cascadia Code (Recommended)" },
   { value: "\"JetBrains Mono\", \"Cascadia Code\", Consolas, monospace", label: "JetBrains Mono" },
   { value: "\"Fira Code\", \"Cascadia Code\", Consolas, monospace", label: "Fira Code" },
   { value: "\"Microsoft YaHei\", \"Cascadia Code\", Consolas, monospace", label: "微软雅黑" },
@@ -57,10 +59,40 @@ const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
   { value: "\"Courier New\", monospace", label: "Courier New" },
 ];
 
-const UNSPLIT_OPTIONS: { value: UnsplitBehavior; label: string }[] = [
-  { value: "merge", label: "合并到相邻 Pane" },
-  { value: "close", label: "关闭当前 Pane 内终端" },
+const UNSPLIT_OPTIONS: { value: UnsplitBehavior; label: string; labelEn: string }[] = [
+  { value: "merge", label: "合并到相邻 Pane", labelEn: "Merge into adjacent Pane" },
+  { value: "close", label: "关闭当前 Pane 内终端", labelEn: "Close terminals in current Pane" },
 ];
+
+const TERMINAL_THEME_GROUP_LABEL_KEYS: Record<TerminalThemeGroupId, {
+  label: Parameters<ReturnType<typeof useI18n>["t"]>[0];
+  description: Parameters<ReturnType<typeof useI18n>["t"]>[0];
+}> = {
+  cool: {
+    label: "settings.terminalTheme.group.cool.label",
+    description: "settings.terminalTheme.group.cool.description",
+  },
+  warm: {
+    label: "settings.terminalTheme.group.warm.label",
+    description: "settings.terminalTheme.group.warm.description",
+  },
+  nature: {
+    label: "settings.terminalTheme.group.nature.label",
+    description: "settings.terminalTheme.group.nature.description",
+  },
+  "pink-purple": {
+    label: "settings.terminalTheme.group.pinkPurple.label",
+    description: "settings.terminalTheme.group.pinkPurple.description",
+  },
+  "high-contrast": {
+    label: "settings.terminalTheme.group.highContrast.label",
+    description: "settings.terminalTheme.group.highContrast.description",
+  },
+  "light-office": {
+    label: "settings.terminalTheme.group.lightOffice.label",
+    description: "settings.terminalTheme.group.lightOffice.description",
+  },
+};
 
 function clampFontSize(value: number) {
   if (!Number.isFinite(value)) return FONT_SIZE_MIN;
@@ -73,6 +105,8 @@ function clampTerminalScrollbackRows(value: number) {
 }
 
 export function ThemeSettingsPage() {
+  const { language, t } = useI18n();
+  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
@@ -108,7 +142,7 @@ export function ThemeSettingsPage() {
       })
       .catch((err) => {
         console.warn("Failed to list system fonts:", err);
-        if (!cancelled) setSystemFontsError("系统字体读取失败，已使用内置字体选项。");
+        if (!cancelled) setSystemFontsError(text("系统字体读取失败，已使用内置字体选项。", "Failed to read system fonts. Built-in font options are used."));
       })
       .finally(() => {
         if (!cancelled) setSystemFontsLoading(false);
@@ -117,7 +151,7 @@ export function ThemeSettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [language]);
 
   useEffect(() => {
     void getOsPlatform().then(setOsPlatform);
@@ -160,25 +194,41 @@ export function ThemeSettingsPage() {
     return {
       label:
         terminalThemeMode === "follow-app"
-          ? `跟随应用主题（当前：${selectedPreset?.name ?? "Auto"}）`
-          : selectedPreset?.name ?? "独立终端主题",
+          ? text(`跟随应用主题（当前：${selectedPreset?.name ?? "Auto"}）`, `Following app theme (current: ${selectedPreset?.name ?? "Auto"})`)
+          : selectedPreset?.name ?? text("独立终端主题", "Independent terminal theme"),
       theme: effective,
     };
-  }, [autoThemeId, darkThemePalette, effectiveThemeName, lightThemePalette, resolvedTheme, terminalThemeMode]);
+  }, [autoThemeId, darkThemePalette, effectiveThemeName, language, lightThemePalette, resolvedTheme, terminalThemeMode]);
 
   const fontFamilyOptions = useMemo(
-    () => mergeFontFamilyOptions(fontFamily, FONT_FAMILY_OPTIONS, systemFonts, TERMINAL_FONT_FALLBACK),
-    [fontFamily, systemFonts]
+    () =>
+      mergeFontFamilyOptions(
+        fontFamily,
+        FONT_FAMILY_OPTIONS.map((option) => ({
+          value: option.value,
+          label: language === "zh-CN" ? option.label : option.labelEn ?? option.label,
+        })),
+        systemFonts,
+        TERMINAL_FONT_FALLBACK
+      ),
+    [fontFamily, language, systemFonts]
+  );
+  const unsplitOptions = useMemo(
+    () => UNSPLIT_OPTIONS.map((option) => ({
+      value: option.value,
+      label: language === "zh-CN" ? option.label : option.labelEn,
+    })),
+    [language]
   );
   const normalizedDefaultShell = normalizeShellKey(defaultShell);
   const shellSelectValue = normalizedDefaultShell ?? defaultShell;
   const isCustomShellValue = !normalizedDefaultShell;
   const shellOptions = useMemo(
     () => [
-      ...(isCustomShellValue ? [{ value: defaultShell, label: "当前自定义（保留）" }] : []),
+      ...(isCustomShellValue ? [{ value: defaultShell, label: text("当前自定义（保留）", "Current custom (keep)") }] : []),
       ...getShellOptions(osPlatform),
     ],
-    [defaultShell, isCustomShellValue, osPlatform]
+    [defaultShell, isCustomShellValue, language, osPlatform]
   );
   const commitFontSize = (value = fontSizeDraft) => {
     const next = clampFontSize(value);
@@ -204,7 +254,7 @@ export function ThemeSettingsPage() {
         <Stack gap="sm">
           <Box>
             <Text size="sm" fw={600} c="var(--on-surface)">
-              终端预览
+              {text("终端预览", "Terminal Preview")}
             </Text>
             <Text mt={4} size="xs" c="var(--on-surface-variant)">
               {selectedTheme.label}
@@ -240,7 +290,7 @@ export function ThemeSettingsPage() {
           </Box>
 
           <Text size="xs" fw={600} c="var(--on-surface-variant)">
-            实时字体预览
+            {text("实时字体预览", "Live Font Preview")}
           </Text>
           <Box
             className="rounded-xl border border-border p-4 font-mono"
@@ -263,13 +313,13 @@ export function ThemeSettingsPage() {
         <section className="ui-surface-card rounded-2xl border border-border p-4 xl:col-start-1 xl:row-start-1">
           <Stack gap="md">
             <Text size="sm" fw={600} c="var(--on-surface)">
-              终端行为
+              {text("终端行为", "Terminal Behavior")}
             </Text>
 
             <Stack gap={6}>
               <Group justify="space-between" align="center">
                 <Text size="xs" c="var(--on-surface-variant)">
-                  终端字体大小
+                  {text("终端字体大小", "Terminal Font Size")}
                 </Text>
                 <NumberInput
                   min={FONT_SIZE_MIN}
@@ -282,7 +332,7 @@ export function ThemeSettingsPage() {
                   }}
                   size="xs"
                   w={84}
-                  aria-label="终端字体大小数值"
+                  aria-label={text("终端字体大小数值", "Terminal font size value")}
                 />
               </Group>
               <Slider
@@ -293,10 +343,10 @@ export function ThemeSettingsPage() {
                 onChange={setFontSizeDraft}
                 onChangeEnd={(value) => commitFontSize(value)}
                 color="cliPrimary"
-                aria-label="终端字体大小滑杆"
+                aria-label={text("终端字体大小滑杆", "Terminal font size slider")}
               />
               <Text size="xs" c="var(--text-muted)">
-                仅影响内置终端，不改变应用界面字体。
+                {text("仅影响内置终端，不改变应用界面字体。", "Affects the built-in terminal only, not the app UI font.")}
               </Text>
             </Stack>
 
@@ -304,17 +354,17 @@ export function ThemeSettingsPage() {
               <Group justify="space-between" align="center">
                 <Group gap={6}>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    终端回滚行数
+                    {text("终端回滚行数", "Terminal Scrollback Rows")}
                   </Text>
                   <Tooltip
                     multiline
                     w={320}
                     label={
                       <Stack gap={4}>
-                        <Text size="xs" c="inherit">内存占用：行数越大，每个终端占用越高。</Text>
-                        <Text size="xs" c="inherit">多终端影响：同时开很多 Codex/Claude 会话时更明显。</Text>
+                        <Text size="xs" c="inherit">{text("内存占用：行数越大，每个终端占用越高。", "Memory: more rows consume more memory per terminal.")}</Text>
+                        <Text size="xs" c="inherit">{text("多终端影响：同时开很多 Codex/Claude 会话时更明显。", "Multi-terminal impact is more obvious when many Codex/Claude sessions are open.")}</Text>
                         <Text size="xs" c="inherit">
-                          Codex TUI 限制：Codex 主动清屏/重绘的内容不保证全部进 scrollback，但能明显改善普通回滚长度。
+                          {text("Codex TUI 限制：Codex 主动清屏/重绘的内容不保证全部进 scrollback，但能明显改善普通回滚长度。", "Codex TUI limitation: content cleared/redrawn by Codex may not fully enter scrollback, but normal scrollback length improves.")}
                         </Text>
                       </Stack>
                     }
@@ -324,7 +374,7 @@ export function ThemeSettingsPage() {
                       color="gray"
                       size="xs"
                       radius="xl"
-                      aria-label="终端回滚行数说明"
+                      aria-label={text("终端回滚行数说明", "Terminal scrollback help")}
                     >
                       <CircleHelp size={14} strokeWidth={1.8} />
                     </ActionIcon>
@@ -342,7 +392,7 @@ export function ThemeSettingsPage() {
                   }}
                   size="xs"
                   w={104}
-                  aria-label="终端回滚行数数值"
+                  aria-label={text("终端回滚行数数值", "Terminal scrollback rows value")}
                 />
               </Group>
               <Slider
@@ -353,32 +403,35 @@ export function ThemeSettingsPage() {
                 onChange={setTerminalScrollbackRowsDraft}
                 onChangeEnd={(value) => commitTerminalScrollbackRows(value)}
                 color="cliPrimary"
-                aria-label="终端回滚行数滑杆"
+                aria-label={text("终端回滚行数滑杆", "Terminal scrollback rows slider")}
               />
               <Text size="xs" c="var(--text-muted)">
-                控制内置终端可向上回看的历史行数。
+                {text("控制内置终端可向上回看的历史行数。", "Controls how many history rows the built-in terminal can scroll back.")}
               </Text>
             </Stack>
 
             <FontFamilySelect
-              label="终端字体族"
+              label={text("终端字体族", "Terminal Font Family")}
               value={fontFamily}
               onChange={(value) => {
                 if (value) void update("fontFamily", value);
               }}
               data={fontFamilyOptions}
               maxDropdownHeight={320}
-              nothingFoundMessage={systemFontsLoading ? "正在读取系统字体..." : "未找到匹配字体"}
+              nothingFoundMessage={systemFontsLoading ? text("正在读取系统字体...", "Reading system fonts...") : text("未找到匹配字体", "No matching font found")}
               size="xs"
-              aria-label="终端字体族"
+              aria-label={text("终端字体族", "Terminal Font Family")}
               description={
                 systemFontsError ??
-                `影响内置终端字体；已读取 ${systemFonts.length} 个系统字体。建议选择等宽字体。`
+                text(
+                  `影响内置终端字体；已读取 ${systemFonts.length} 个系统字体。建议选择等宽字体。`,
+                  `Affects built-in terminal font. ${systemFonts.length} system fonts loaded. Monospace fonts are recommended.`
+                )
               }
             />
 
             <Select<string>
-              label="默认 Shell"
+              label={text("默认 Shell", "Default Shell")}
               value={shellSelectValue}
               onChange={(value) => {
                 if (value) void update("defaultShell", value);
@@ -386,37 +439,37 @@ export function ThemeSettingsPage() {
               data={shellOptions}
               allowDeselect={false}
               size="xs"
-              aria-label="默认 Shell"
+              aria-label={text("默认 Shell", "Default Shell")}
             />
 
             <Select<UnsplitBehavior>
-              label="取消分屏行为"
+              label={text("取消分屏行为", "Unsplit Behavior")}
               value={unsplitBehavior}
               onChange={(value) => {
                 if (value) void update("unsplitBehavior", value);
               }}
-              data={UNSPLIT_OPTIONS}
+              data={unsplitOptions}
               allowDeselect={false}
               size="xs"
-              aria-label="取消分屏行为"
-              description="影响 Unsplit 时当前 Pane 内终端的处理方式。"
+              aria-label={text("取消分屏行为", "Unsplit Behavior")}
+              description={text("影响 Unsplit 时当前 Pane 内终端的处理方式。", "Controls how terminals in the current Pane are handled when unsplitting.")}
             />
 
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    外部 PowerShell
+                    {text("外部 PowerShell", "External PowerShell")}
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    启动项目时使用外部 PowerShell 窗口。
+                    {text("启动项目时使用外部 PowerShell 窗口。", "Use an external PowerShell window when launching projects.")}
                   </Text>
                 </Box>
                 <Switch
                   color="cliPrimary"
                   checked={useExternalTerminal}
                   onChange={(event) => void update("useExternalTerminal", event.currentTarget.checked)}
-                  aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
+                  aria-label={useExternalTerminal ? text("关闭外部 PowerShell", "Disable external PowerShell") : text("开启外部 PowerShell", "Enable external PowerShell")}
                 />
               </Group>
             </Card>
@@ -425,17 +478,17 @@ export function ThemeSettingsPage() {
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    通用 Shell 运行监控
+                    {text("通用 Shell 运行监控", "Generic Shell Runtime Monitoring")}
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    默认关闭；如需标签运行状态，可在此开启。开启后仅影响新建 PowerShell / pwsh 终端，并可能略微增加启动耗时。
+                    {text("默认关闭；如需标签运行状态，可在此开启。开启后仅影响新建 PowerShell / pwsh 终端，并可能略微增加启动耗时。", "Off by default. Enable for tab runtime status. Only affects new PowerShell / pwsh terminals and may slightly increase startup time.")}
                   </Text>
                 </Box>
                 <Switch
                   color="cliPrimary"
                   checked={shellRuntimeMonitoringEnabled}
                   onChange={(event) => void update("shellRuntimeMonitoringEnabled", event.currentTarget.checked)}
-                  aria-label={shellRuntimeMonitoringEnabled ? "关闭通用 Shell 运行监控" : "开启通用 Shell 运行监控"}
+                  aria-label={shellRuntimeMonitoringEnabled ? text("关闭通用 Shell 运行监控", "Disable generic Shell runtime monitoring") : text("开启通用 Shell 运行监控", "Enable generic Shell runtime monitoring")}
                 />
               </Group>
             </Card>
@@ -444,34 +497,34 @@ export function ThemeSettingsPage() {
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
                   <Text size="xs" c="var(--on-surface-variant)">
-                    批量启动分组 Pane
+                    {text("批量启动分组 Pane", "Batch Launch Group Panes")}
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    启用后，点击分组启动按钮时，同一分组的终端将放在同个 Pane 中（多标签），不同分组会创建到不同 Pane。嵌套分组按根目录区分。
+                    {text("启用后，点击分组启动按钮时，同一分组的终端将放在同个 Pane 中（多标签），不同分组会创建到不同 Pane。嵌套分组按根目录区分。", "When enabled, group launch puts terminals from the same group in one Pane as tabs; different groups open in separate Panes. Nested groups are split by root directory.")}
                   </Text>
                 </Box>
                 <Switch
                   color="cliPrimary"
                   checked={batchLaunchGroupInPane}
                   onChange={(event) => void update("batchLaunchGroupInPane", event.currentTarget.checked)}
-                  aria-label={batchLaunchGroupInPane ? "关闭批量启动分组 Pane" : "开启批量启动分组 Pane"}
+                  aria-label={batchLaunchGroupInPane ? text("关闭批量启动分组 Pane", "Disable batch group Panes") : text("开启批量启动分组 Pane", "Enable batch group Panes")}
                 />
               </Group>
               {batchLaunchGroupInPane && (
                 <Group mt="sm" justify="space-between" align="center">
                   <Text size="xs" c="var(--on-surface-variant)">
-                    分屏方向
+                    {text("分屏方向", "Split Direction")}
                   </Text>
                   <SegmentedControl<BatchLaunchPaneDirection>
                     value={batchLaunchPaneDirection}
                     onChange={(value) => void update("batchLaunchPaneDirection", value)}
                     data={[
-                      { value: "vertical", label: "上下" },
-                      { value: "horizontal", label: "左右" },
+                      { value: "vertical", label: text("上下", "Vertical") },
+                      { value: "horizontal", label: text("左右", "Horizontal") },
                     ]}
                     color="cliPrimary"
                     size="xs"
-                    aria-label="批量启动分屏方向"
+                    aria-label={text("批量启动分屏方向", "Batch launch split direction")}
                   />
                 </Group>
               )}
@@ -485,36 +538,36 @@ export function ThemeSettingsPage() {
           <Stack gap="md">
             <Stack gap={6}>
               <Text size="sm" fw={600} c="var(--on-surface)">
-                终端主题模式
+                {text("终端主题模式", "Terminal Theme Mode")}
               </Text>
               <SegmentedControl<"follow-app" | "independent">
                 value={terminalThemeMode}
                 onChange={(value) => void setTerminalThemeMode(value)}
                 data={[
-                  { value: "follow-app", label: "跟随应用" },
-                  { value: "independent", label: "独立设置" },
+                  { value: "follow-app", label: text("跟随应用", "Follow App") },
+                  { value: "independent", label: text("独立设置", "Independent") },
                 ]}
                 color="cliPrimary"
-                aria-label="终端主题模式切换"
+                aria-label={text("终端主题模式切换", "Terminal theme mode switch")}
               />
               <Text size="xs" c="var(--on-surface-variant)">
                 {terminalThemeMode === "follow-app"
-                  ? "终端会自动跟随应用浅/深主题与配色方案。"
-                  : "终端主题独立于应用主题，切换应用主题时保持不变。"}
+                  ? text("终端会自动跟随应用浅/深主题与配色方案。", "Terminal automatically follows the app light/dark theme and palette.")
+                  : text("终端主题独立于应用主题，切换应用主题时保持不变。", "Terminal theme is independent and stays fixed when the app theme changes.")}
               </Text>
             </Stack>
 
             <Group align="flex-end" justify="space-between" gap="md">
               <Text size="sm" fw={600} c="var(--on-surface)">
-                独立主题库
+                {text("独立主题库", "Independent Theme Library")}
               </Text>
               <TextInput
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}
-                placeholder="搜索主题..."
+                placeholder={text("搜索主题...", "Search themes...")}
                 size="xs"
                 w={220}
-                aria-label="终端主题搜索"
+                aria-label={text("终端主题搜索", "Terminal theme search")}
                 disabled={terminalThemeMode !== "independent"}
               />
             </Group>
@@ -524,10 +577,10 @@ export function ThemeSettingsPage() {
               <section key={group.id}>
                 <Group mb="xs" gap="xs" align="baseline">
                   <Text size="xs" fw={600} c="var(--on-surface)">
-                    {group.name}
+                    {t(TERMINAL_THEME_GROUP_LABEL_KEYS[group.id].label)}
                   </Text>
                   <Text size="xs" c="var(--text-muted)">
-                    {group.description}
+                    {t(TERMINAL_THEME_GROUP_LABEL_KEYS[group.id].description)}
                   </Text>
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="xs">
@@ -572,7 +625,7 @@ export function ThemeSettingsPage() {
                               color: "var(--primary)",
                             }}
                           >
-                            当前
+                            {text("当前", "Current")}
                           </Badge>
                         )}
                         <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
@@ -591,7 +644,7 @@ export function ThemeSettingsPage() {
                               c={active ? "var(--on-surface-variant)" : "var(--text-muted)"}
                               style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
                             >
-                              {preset.tone === "light" ? "浅色" : "深色"}{preset.family ? ` · ${preset.family}` : ""}
+                              {preset.tone === "light" ? text("浅色", "Light") : text("深色", "Dark")}{preset.family ? ` · ${preset.family}` : ""}
                             </Text>
                           </Stack>
                           <Group gap={6}>
@@ -622,7 +675,7 @@ export function ThemeSettingsPage() {
             {filtered.length === 0 && (
               <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
                 <Text size="xs" c="var(--on-surface-variant)">
-                未找到匹配主题
+                  {text("未找到匹配主题", "No matching themes")}
                 </Text>
               </Card>
             )}
@@ -630,7 +683,7 @@ export function ThemeSettingsPage() {
           {terminalThemeMode !== "independent" && (
             <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
               <Text size="xs" c="var(--on-surface-variant)">
-              当前为“跟随应用”模式，切换到“独立设置”后可选择固定终端主题。
+                {text("当前为“跟随应用”模式，切换到“独立设置”后可选择固定终端主题。", "Current mode follows the app. Switch to Independent to choose a fixed terminal theme.")}
               </Text>
             </Card>
           )}

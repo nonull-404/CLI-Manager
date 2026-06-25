@@ -1,4 +1,5 @@
 import { GitBranch, Info } from "lucide-react";
+import { useI18n } from "../../lib/i18n";
 import type { SessionProcessModel } from "./sessionEvents";
 
 interface SessionSubtaskTreeViewProps {
@@ -7,10 +8,11 @@ interface SessionSubtaskTreeViewProps {
 }
 
 export function SessionSubtaskTreeView({ model, onJumpToMessage }: SessionSubtaskTreeViewProps) {
+  const { t } = useI18n();
   if (model.subtaskEvents.length === 0) {
     return (
       <div className="ui-session-process-empty">
-        当前历史未解析到子任务事件。实时子 Agent 转录窗口仍由 Hook 事件打开；历史回放需要后端补 agent transcript 关联。
+        {t("history.subtasks.empty")}
       </div>
     );
   }
@@ -19,12 +21,12 @@ export function SessionSubtaskTreeView({ model, onJumpToMessage }: SessionSubtas
     <div className="ui-session-process-view">
       <div className="ui-session-process-note">
         <Info size={13} />
-        当前为基于历史消息识别的子任务线索；可点击定位原始消息。
+        {t("history.subtasks.note")}
       </div>
       <div className="ui-session-subtask-tree">
         <div className="ui-session-subtask-root">
           <GitBranch size={14} />
-          主会话
+          {t("history.subtasks.root")}
         </div>
         {model.subtaskEvents.map((event) => (
           <button

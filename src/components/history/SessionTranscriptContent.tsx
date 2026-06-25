@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useI18n } from "../../lib/i18n";
 import { HistoryMarkdownContent } from "./HistoryMarkdownContent";
 import {
   isGitStatusLine,
@@ -233,6 +234,7 @@ function TranscriptLines({ lines, query, sectionId }: { lines: string[]; query: 
 }
 
 function TranscriptBlock({ section, query }: { section: TranscriptSection; query: string }) {
+  const { t } = useI18n();
   const lines = normalizeLines(section.text);
   const collapsible = shouldCollapse(section, lines);
   const previewLines = collapsible ? lines.slice(0, PREVIEW_LINE_COUNT) : lines;
@@ -248,12 +250,12 @@ function TranscriptBlock({ section, query }: { section: TranscriptSection; query
             {section.status}
           </span>
         )}
-        <span className="ui-history-transcript-block-meta">{lines.length} 行</span>
+        <span className="ui-history-transcript-block-meta">{t("history.transcript.lineCount", { count: lines.length })}</span>
       </div>
       <TranscriptLines lines={previewLines} query={query} sectionId={`${section.id}-preview`} />
       {hiddenLines.length > 0 && (
         <details className="ui-history-transcript-collapse" open={hiddenLinesContainQuery(hiddenLines, query) || undefined}>
-          <summary>展开剩余 {hiddenLines.length} 行</summary>
+          <summary>{t("history.transcript.expandRemaining", { count: hiddenLines.length })}</summary>
           <TranscriptLines lines={hiddenLines} query={query} sectionId={`${section.id}-hidden`} />
         </details>
       )}

@@ -6,6 +6,7 @@ import { TERM } from "../stats/termStatsUi";
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "../ui/context-menu";
 import { getMaterialFileIcon, getMaterialFolderIcon } from "@baybreezy/file-extension-icon";
 import { StageCheckbox, type StageState } from "./StageCheckbox";
+import { useI18n } from "../../lib/i18n";
 
 // 收集某节点下所有文件变更（含子目录），用于目录级三态勾选框与批量操作。
 function collectFileChanges(node: GitTreeNode): GitFileChange[] {
@@ -47,6 +48,7 @@ interface GitTreeNodeProps {
 }
 
 export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onRequestDiscard, onToggleStage, onToggleStagePaths }: GitTreeNodeProps) {
+  const { t } = useI18n();
   const { collapsedDirs, toggleDir, selectedUntracked, toggleUntrackedSelection, deselectedAdded, toggleAddedDeselection, setAddedDeselection } = useGitStore();
   // 折叠 key 按分区前缀隔离：已跟踪树与未跟踪树同名目录互不影响。
   const indentPx = depth * 12 + 4;
@@ -123,14 +125,14 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               }}
               title={
                 isUntracked
-                  ? "选中以在提交时纳入（提交时才执行 git add）"
+                  ? t("git.tree.includeOnCommit")
                   : isAdded
                     ? addedSelected
-                      ? "取消勾选（保持跟踪，本次提交不包含）"
-                      : "勾选以本次提交包含"
+                      ? t("git.tree.uncheckAdded")
+                      : t("git.tree.includeThisCommit")
                     : node.change?.staged
-                      ? "取消暂存（移出暂存区）"
-                      : "暂存此文件（git add）"
+                      ? t("git.tree.unstageFile")
+                      : t("git.tree.stageFile")
               }
             />
             <img
@@ -150,8 +152,8 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
                 }}
                 className="ui-focus-ring shrink-0 rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
                 style={{ color: TERM.dim }}
-                title="回滚此文件改动"
-                aria-label="回滚此文件改动"
+                title={t("git.tree.revertFile")}
+                aria-label={t("git.tree.revertFile")}
               >
                 <Undo2 size={11} />
               </button>
@@ -184,7 +186,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               }}
             >
               <Check size={12} />
-              加入跟踪（git add）
+              {t("git.tree.trackFile")}
             </ContextMenuItem>
           ) : (
             <ContextMenuItem
@@ -194,7 +196,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               }}
             >
               {node.change?.staged ? <Minus size={12} /> : <Check size={12} />}
-              {node.change?.staged ? "取消暂存" : "暂存（git add）"}
+              {node.change?.staged ? t("git.tree.unstageFile") : t("git.tree.stage")}
             </ContextMenuItem>
           )}
           <ContextMenuItem
@@ -206,7 +208,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
             }}
           >
             <Undo2 size={12} />
-            回滚改动
+            {t("git.tree.revertChanges")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -288,7 +290,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               <StageCheckbox
                 state={dirState}
                 onToggle={handleDirToggle}
-                title={dirAllUntracked ? "选中以在提交时纳入（提交时才执行 git add）" : dirState === "checked" ? "取消勾选该目录（A 文件保持跟踪，仅本次不提交）" : "勾选该目录全部文件"}
+                title={dirAllUntracked ? t("git.tree.includeOnCommit") : dirState === "checked" ? t("git.tree.uncheckDirectory") : t("git.tree.checkDirectory")}
               />
             )}
             <img
@@ -336,10 +338,10 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               <Check size={12} />
             )}
             {dirAllUntracked
-              ? "加入跟踪该目录（git add）"
+              ? t("git.tree.trackDirectory")
               : dirTrackedState === "checked"
-                ? "取消勾选该目录"
-                : "勾选该目录"}
+                ? t("git.tree.uncheckDirectory")
+                : t("git.tree.checkDirectory")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

@@ -1,5 +1,6 @@
 import { Coins, Cpu, Database, Layers3, MessageSquare, TrendingUp } from "lucide-react";
 import type { HistorySessionDetail } from "../../lib/types";
+import { useI18n } from "../../lib/i18n";
 import {
   calculateTokenStats,
   Donut,
@@ -18,6 +19,7 @@ interface SessionContextViewProps {
 }
 
 export function SessionContextView({ session }: SessionContextViewProps) {
+  const { t } = useI18n();
   const stats = calculateTokenStats(session);
   const contextLimit = session?.usage?.context_window ?? getContextLimit(stats.dominantModel);
   const lastContextTokens = session?.usage?.last_context_tokens ?? null;
@@ -41,36 +43,36 @@ export function SessionContextView({ session }: SessionContextViewProps) {
   const remaining = contextLimit && lastContextTokens !== null ? Math.max(0, contextLimit - lastContextTokens) : null;
   const contextColor = usageRatio === null ? TERM.dim : usageRatio >= 0.8 ? TERM.red : usageRatio >= 0.5 ? TERM.yellow : TERM.green;
 
-  if (!session) return <div className="ui-session-process-empty">选择会话查看上下文</div>;
+  if (!session) return <div className="ui-session-process-empty">{t("history.context.selectSession")}</div>;
 
   return (
     <div className="ui-session-context-view">
       <section className="ui-session-process-card">
         <div className="ui-session-process-card-title">
           <Cpu size={14} />
-          上下文窗口
+          {t("history.context.window")}
         </div>
         <div className="ui-session-context-main">
           <span>{lastContextTokens !== null ? formatCompactCount(lastContextTokens) : "—"}</span>
-          <small>/ {contextLimit ? formatCompactCount(contextLimit) : "未知上限"}</small>
+          <small>/ {contextLimit ? formatCompactCount(contextLimit) : t("history.context.unknownLimit")}</small>
         </div>
         {usageRatio !== null ? (
           <>
             <ProgressBar ratio={usageRatio} color={contextColor} />
             <div className="ui-session-context-subline">
-              <span>占用 {(usageRatio * 100).toFixed(1)}%</span>
-              <span>剩余 {remaining !== null ? formatCompactCount(remaining) : "—"}</span>
+              <span>{t("history.context.usedPercent", { percent: (usageRatio * 100).toFixed(1) })}</span>
+              <span>{t("history.context.remaining", { value: remaining !== null ? formatCompactCount(remaining) : "—" })}</span>
             </div>
           </>
         ) : (
-          <div className="ui-session-process-empty compact">当前历史没有上下文窗口数据</div>
+          <div className="ui-session-process-empty compact">{t("history.context.noWindowData")}</div>
         )}
       </section>
 
       <section className="ui-session-process-card">
         <div className="ui-session-process-card-title">
           <Layers3 size={14} />
-          Token 构成
+          {t("history.context.tokenComposition")}
         </div>
         <div className="ui-session-context-token-card">
           <Donut
@@ -85,10 +87,10 @@ export function SessionContextView({ session }: SessionContextViewProps) {
             <span className="ui-session-context-donut-label">{formatCompactCount(stats.totalTokens)}</span>
           </Donut>
           <div className="ui-session-process-metrics">
-            <span>输入 <b>{formatCompactCount(stats.inputTokens)}</b></span>
-            <span>输出 <b>{formatCompactCount(stats.outputTokens)}</b></span>
-            <span>缓存命中 <b>{formatCompactCount(stats.cacheReadTokens)}</b></span>
-            <span>缓存写入 <b>{formatCompactCount(stats.cacheCreationTokens)}</b></span>
+            <span>{t("termStats.input")} <b>{formatCompactCount(stats.inputTokens)}</b></span>
+            <span>{t("termStats.output")} <b>{formatCompactCount(stats.outputTokens)}</b></span>
+            <span>{t("termStats.cacheHit")} <b>{formatCompactCount(stats.cacheReadTokens)}</b></span>
+            <span>{t("termStats.cacheWrite")} <b>{formatCompactCount(stats.cacheCreationTokens)}</b></span>
           </div>
         </div>
       </section>
@@ -96,57 +98,57 @@ export function SessionContextView({ session }: SessionContextViewProps) {
       <section className="ui-session-process-card">
         <div className="ui-session-process-card-title">
           <Database size={14} />
-          请求统计
+          {t("history.context.requestStats")}
         </div>
         <div className="ui-session-process-metrics">
-          <span>趋势点 <b>{trendPoints.length}</b></span>
-          <span>峰值 <b>{formatCompactCount(peakTokens)}</b></span>
-          <span>平均 <b>{formatCompactCount(averageTokens)}</b></span>
-          <span>模型 <b>{stats.dominantModel ?? "—"}</b></span>
+          <span>{t("history.context.trendPoints")} <b>{trendPoints.length}</b></span>
+          <span>{t("history.context.peak")} <b>{formatCompactCount(peakTokens)}</b></span>
+          <span>{t("history.context.average")} <b>{formatCompactCount(averageTokens)}</b></span>
+          <span>{t("termStats.model")} <b>{stats.dominantModel ?? "—"}</b></span>
         </div>
       </section>
 
       <section className="ui-session-process-card">
         <div className="ui-session-process-card-title">
           <Coins size={14} />
-          成本与消息
+          {t("history.context.costAndMessages")}
         </div>
         <div className="ui-session-process-metrics">
-          <span>估算费用 <b>{formatCost(stats.estimatedCost)}</b></span>
-          <span>消息数 <b>{session.messages.length}</b></span>
-          <span>工具调用 <b>{session.usage?.tool_call_count ?? 0}</b></span>
-          <span>总 Token <b>{formatCompactCount(stats.totalTokens)}</b></span>
+          <span>{t("termStats.estimatedCost")} <b>{formatCost(stats.estimatedCost)}</b></span>
+          <span>{t("termStats.messageCount")} <b>{session.messages.length}</b></span>
+          <span>{t("termStats.tools")} <b>{session.usage?.tool_call_count ?? 0}</b></span>
+          <span>{t("termStats.total")} Token <b>{formatCompactCount(stats.totalTokens)}</b></span>
         </div>
       </section>
 
       <section className="ui-session-process-card wide">
         <div className="ui-session-process-card-title">
           <TrendingUp size={14} />
-          请求 Token 趋势
+          {t("history.context.requestTokenTrend")}
         </div>
         {trendValues.length >= 2 ? (
           <Sparkline points={trendValues} details={trendPoints} color={TERM.cyan} height={86} />
         ) : (
-          <div className="ui-session-process-empty compact">暂无足够趋势点</div>
+          <div className="ui-session-process-empty compact">{t("history.context.noTrendPoints")}</div>
         )}
       </section>
 
       <section className="ui-session-process-card wide">
         <div className="ui-session-process-card-title">
           <MessageSquare size={14} />
-          输入 / 输出 / 缓存趋势
+          {t("history.context.ioCacheTrend")}
         </div>
         <div className="ui-session-context-mini-charts">
           <div>
-            <span>输入</span>
+            <span>{t("termStats.input")}</span>
             <Sparkline points={inputTrend} color={TERM.green} height={44} />
           </div>
           <div>
-            <span>输出</span>
+            <span>{t("termStats.output")}</span>
             <Sparkline points={outputTrend} color={TERM.yellow} height={44} />
           </div>
           <div>
-            <span>缓存</span>
+            <span>{t("history.context.cache")}</span>
             <Sparkline points={cacheTrend} color={TERM.blue} height={44} />
           </div>
         </div>
@@ -155,22 +157,22 @@ export function SessionContextView({ session }: SessionContextViewProps) {
       <section className="ui-session-process-card wide">
         <div className="ui-session-process-card-title">
           <Layers3 size={14} />
-          当前 Token 分布
+          {t("history.context.currentTokenDistribution")}
         </div>
         <SegmentedBar
           height={10}
           parts={[
-            { value: stats.inputTokens, color: TERM.green, label: "输入" },
-            { value: stats.outputTokens, color: TERM.yellow, label: "输出" },
-            { value: stats.cacheReadTokens, color: TERM.blue, label: "缓存命中" },
-            { value: stats.cacheCreationTokens, color: TERM.magenta, label: "缓存写入" },
+            { value: stats.inputTokens, color: TERM.green, label: t("termStats.input") },
+            { value: stats.outputTokens, color: TERM.yellow, label: t("termStats.output") },
+            { value: stats.cacheReadTokens, color: TERM.blue, label: t("termStats.cacheHit") },
+            { value: stats.cacheCreationTokens, color: TERM.magenta, label: t("termStats.cacheWrite") },
           ]}
         />
         <div className="ui-session-context-legend">
-          <span style={{ color: TERM.green }}>输入</span>
-          <span style={{ color: TERM.yellow }}>输出</span>
-          <span style={{ color: TERM.blue }}>缓存命中</span>
-          <span style={{ color: TERM.magenta }}>缓存写入</span>
+          <span style={{ color: TERM.green }}>{t("termStats.input")}</span>
+          <span style={{ color: TERM.yellow }}>{t("termStats.output")}</span>
+          <span style={{ color: TERM.blue }}>{t("termStats.cacheHit")}</span>
+          <span style={{ color: TERM.magenta }}>{t("termStats.cacheWrite")}</span>
         </div>
       </section>
     </div>

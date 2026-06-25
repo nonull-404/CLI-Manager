@@ -6,6 +6,7 @@ import { FileCode2, GitCompareArrows, X } from "lucide-react";
 import type { HistoryMessage } from "../../lib/types";
 import DiffWorker from "../../lib/diffParser.worker.ts?worker";
 import { isDiffCandidate, type ParsedDiffBlock } from "../../lib/diffParser";
+import { useI18n } from "../../lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface DiffModalProps {
@@ -109,6 +110,7 @@ function DiffBlockViewer({ block }: { block: ParsedDiffBlock }) {
 }
 
 export function DiffModal({ open, messages, container, onClose, onJumpToMessage }: DiffModalProps) {
+  const { t } = useI18n();
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const [blocks, setBlocks] = useState<ParsedDiffBlock[]>([]);
@@ -184,13 +186,13 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
                 style={{ color: "var(--text-primary)" }}
               >
                 <GitCompareArrows size={15} />
-                Diff 视图
+                {t("history.diff.title")}
               </DialogPrimitive.Title>
               <DialogPrimitive.Close
                 className="inline-flex items-center justify-center rounded-md border w-7 h-7"
                 style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-                title="关闭"
-                aria-label="关闭"
+                title={t("common.close")}
+                aria-label={t("common.close")}
               >
                 <X size={14} />
               </DialogPrimitive.Close>
@@ -199,13 +201,13 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
               {parsing && (
                 <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                  正在解析 diff...
+                  {t("history.diff.parsing")}
                 </div>
               )}
 
               {!parsing && blocks.length === 0 && (
                 <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                  当前会话暂未解析到 unified diff
+                  {t("history.diff.empty")}
                 </div>
               )}
 
@@ -223,7 +225,7 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
                           <span className="truncate">{block.filePath}</span>
                         </div>
                         <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                          来自消息 #{block.messageIndex + 1} · {block.timestamp ?? "-"}
+                          {t("history.diff.fromMessage", { index: block.messageIndex + 1 })} · {block.timestamp ?? "-"}
                         </div>
                       </div>
                       <button
@@ -234,7 +236,7 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
                         className="text-xs px-2 py-1 rounded-md shrink-0"
                         style={{ backgroundColor: "var(--accent)", color: "#fff" }}
                       >
-                        跳回消息
+                        {t("history.diff.jumpBack")}
                       </button>
                     </div>
                     <DiffBlockViewer block={block} />

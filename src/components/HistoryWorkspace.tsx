@@ -376,7 +376,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     [activeSession?.messages, visibleMessageCount]
   );
 
-  const processModel = useMemo(() => buildSessionProcessModel(activeSession), [activeSession]);
+  const processModel = useMemo(() => buildSessionProcessModel(activeSession, t), [activeSession, t]);
 
   const hasMoreMessages = visibleMessageCount < (activeSession?.messages.length ?? 0);
 

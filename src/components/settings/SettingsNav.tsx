@@ -1,3 +1,5 @@
+import { useI18n } from "../../lib/i18n";
+
 export interface SettingsNavTab<T extends string> {
   id: T;
   label: string;
@@ -10,10 +12,12 @@ interface SettingsNavProps<T extends string> {
 }
 
 export function SettingsNav<T extends string>({ tabs, activeTab, onChange }: SettingsNavProps<T>) {
+  const { t } = useI18n();
+
   return (
     <aside className="ui-surface-low flex w-[220px] shrink-0 flex-col border-r border-border p-3">
       <span className="px-2 pb-3 text-[12px] font-semibold tracking-[0.04em] text-on-surface-variant">
-        设置
+        {t("settings.navTitle")}
       </span>
       <nav className="ui-no-divider-list">
         {tabs.map((tab) => {

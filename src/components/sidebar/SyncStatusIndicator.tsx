@@ -42,7 +42,13 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
       case "conflict":
         return t("sidebar.sync.conflict");
       default:
-        return lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" }) : "--";
+        return lastSyncAt
+          ? new Date(lastSyncAt).toLocaleTimeString(language, {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })
+          : "--";
     }
   };
 

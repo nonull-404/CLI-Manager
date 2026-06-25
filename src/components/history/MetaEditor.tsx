@@ -1,6 +1,7 @@
 ﻿import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import type { RefObject } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface MetaEditorProps {
   aliasDraft: string;
@@ -31,28 +32,29 @@ export function MetaEditor({
   onJumpPrev,
   onJumpNext,
 }: MetaEditorProps) {
+  const { t } = useI18n();
   return (
     <>
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Input
           value={aliasDraft}
           onChange={(e) => onAliasDraftChange(e.target.value)}
-          aria-label="会话别名"
-          placeholder="会话别名（重命名）"
+          aria-label={t("history.meta.alias")}
+          placeholder={t("history.meta.aliasPlaceholder")}
           className="h-7 px-2 text-xs"
         />
         <Input
           value={tagsDraft}
           onChange={(e) => onTagsDraftChange(e.target.value)}
-          aria-label="会话标签（逗号分隔）"
-          placeholder="标签，逗号分隔"
+          aria-label={t("history.meta.tags")}
+          placeholder={t("history.meta.tagsPlaceholder")}
           className="h-7 px-2 text-xs"
         />
       </div>
 
       <div className="mt-2">
         <button onClick={onSaveMeta} className="ui-btn ui-btn-primary text-xs">
-          保存元数据
+          {t("history.meta.save")}
         </button>
       </div>
 
@@ -63,17 +65,17 @@ export function MetaEditor({
             ref={sessionSearchRef}
             value={sessionQuery}
             onChange={(e) => onSessionQueryChange(e.target.value)}
-            aria-label="会话内搜索"
-            placeholder="会话内搜索"
+            aria-label={t("history.meta.search")}
+            placeholder={t("history.meta.search")}
             className="flex-1 min-w-0 bg-transparent text-xs outline-none"
           />
         </div>
 
         <div className="mt-2 flex items-center justify-end gap-2">
-          <button onClick={onJumpPrev} aria-label="上一个匹配" className="ui-btn px-2 py-0.5 text-[11px]" title="上一个匹配">
+          <button onClick={onJumpPrev} aria-label={t("history.meta.prevMatch")} className="ui-btn px-2 py-0.5 text-[11px]" title={t("history.meta.prevMatch")}>
             ↑
           </button>
-          <button onClick={onJumpNext} aria-label="下一个匹配" className="ui-btn px-2 py-0.5 text-[11px]" title="下一个匹配">
+          <button onClick={onJumpNext} aria-label={t("history.meta.nextMatch")} className="ui-btn px-2 py-0.5 text-[11px]" title={t("history.meta.nextMatch")}>
             ↓
           </button>
           <span className="shrink-0 text-[10px] text-text-muted">

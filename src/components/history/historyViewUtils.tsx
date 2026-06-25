@@ -1,19 +1,29 @@
 ﻿import type { ReactNode } from "react";
+import type { AppLanguage } from "../../lib/i18n";
 import type { HistorySessionView } from "../../lib/types";
 
 export type TimeGroupLabel = "Today" | "Yesterday" | "This Week" | "This Month" | "Earlier";
 
-// 模块级 formatter 单例：toLocaleString 每次创建 ICU formatter，对长会话/列表的开销可观。
-const TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
+// 模块级 formatter 缓存：toLocaleString 每次创建 ICU formatter，对长会话/列表的开销可观。
+const TIME_FORMATTERS = new Map<AppLanguage, Intl.DateTimeFormat>();
 
-export function formatTime(ts: number): string {
+function getTimeFormatter(language: AppLanguage): Intl.DateTimeFormat {
+  const cached = TIME_FORMATTERS.get(language);
+  if (cached) return cached;
+  const formatter = new Intl.DateTimeFormat(language, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  TIME_FORMATTERS.set(language, formatter);
+  return formatter;
+}
+
+export function formatTime(ts: number, language: AppLanguage = "zh-CN"): string {
   if (!Number.isFinite(ts) || ts <= 0) return "-";
-  return TIME_FORMATTER.format(new Date(ts));
+  return getTimeFormatter(language).format(new Date(ts));
 }
 
 function escapeRegExp(input: string): string {

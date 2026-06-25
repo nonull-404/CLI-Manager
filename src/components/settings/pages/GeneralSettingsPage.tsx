@@ -29,7 +29,7 @@ import {
   type TerminalToolbarVisibilitySettings,
   type ThemeMode,
 } from "../../../stores/settingsStore";
-import { LANGUAGE_OPTIONS, useI18n } from "../../../lib/i18n";
+import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../../../lib/i18n";
 import {
   getContrastRatioFromHex,
   MIN_APPLY_CONTRAST_RATIO,
@@ -44,135 +44,135 @@ import { FontFamilySelect } from "../FontFamilySelect";
 
 const LIGHT_PALETTE_OPTIONS: {
   value: LightThemePalette;
-  label: string;
-  description: string;
+  labelKey: TranslationKey;
+  descriptionKey: TranslationKey;
   swatches: [string, string, string];
 }[] = [
   {
     value: "warm-paper",
-    label: "暖米纸",
-    description: "温暖纸感，橙棕强调",
+    labelKey: "settings.palette.light.warmPaper.label",
+    descriptionKey: "settings.palette.light.warmPaper.description",
     swatches: ["#f8f4ec", "#2d261d", "#c46a2d"],
   },
   {
     value: "cream-green",
-    label: "奶油绿",
-    description: "清新中性，绿色强调",
+    labelKey: "settings.palette.light.creamGreen.label",
+    descriptionKey: "settings.palette.light.creamGreen.description",
     swatches: ["#f6f7f1", "#1f2a20", "#3f7a4f"],
   },
   {
     value: "ink-red",
-    label: "黑白朱砂",
-    description: "高对比中性，红色强调",
+    labelKey: "settings.palette.light.inkRed.label",
+    descriptionKey: "settings.palette.light.inkRed.description",
     swatches: ["#f7f7f5", "#1f1f1c", "#c43d2f"],
   },
   {
     value: "emerald-mist",
-    label: "翡翠雾",
-    description: "微冷雾白，翡翠绿强调",
+    labelKey: "settings.palette.light.emeraldMist.label",
+    descriptionKey: "settings.palette.light.emeraldMist.description",
     swatches: ["#fbfdfc", "#18211d", "#039d74"],
   },
   {
     value: "saas-analytics-dashboard",
-    label: "SaaS Dashboard",
-    description: "冷静浅色，适合数据驾驶舱与 Bento 卡片层级",
+    labelKey: "settings.palette.light.saasAnalyticsDashboard.label",
+    descriptionKey: "settings.palette.light.saasAnalyticsDashboard.description",
     swatches: ["#f8fbff", "#1e293b", "#3b82f6"],
   },
   {
     value: "apple-pure",
-    label: "Apple Pure",
-    description: "纯白基底 + SF System Blue，最贴近 macOS 原生扁平",
+    labelKey: "settings.palette.light.applePure.label",
+    descriptionKey: "settings.palette.light.applePure.description",
     swatches: ["#ffffff", "#1d1d1f", "#007aff"],
   },
   {
     value: "apple-mist",
-    label: "Apple Mist",
-    description: "微冷雾白，长时间盯屏更柔和",
+    labelKey: "settings.palette.light.appleMist.label",
+    descriptionKey: "settings.palette.light.appleMist.description",
     swatches: ["#fcfcfd", "#1c1f23", "#0a84ff"],
   },
   {
     value: "apple-warm",
-    label: "Apple Warm",
-    description: "暖米白纸感，琥珀强调，低对比阅读友好",
+    labelKey: "settings.palette.light.appleWarm.label",
+    descriptionKey: "settings.palette.light.appleWarm.description",
     swatches: ["#fdfcf9", "#1f1d1a", "#ff9f0a"],
   },
   {
     value: "apple-mono",
-    label: "Apple Mono",
-    description: "极简单色，黑色强调，最克制的 Pro 工具气质",
+    labelKey: "settings.palette.light.appleMono.label",
+    descriptionKey: "settings.palette.light.appleMono.description",
     swatches: ["#ffffff", "#1d1d1f", "#3a3a3c"],
   },
 ];
 
 const DARK_PALETTE_OPTIONS: {
   value: DarkThemePalette;
-  label: string;
-  description: string;
+  labelKey: TranslationKey;
+  descriptionKey: TranslationKey;
   swatches: [string, string, string];
 }[] = [
   {
     value: "night-indigo",
-    label: "夜靛蓝",
-    description: "经典冷色，蓝系强调",
+    labelKey: "settings.palette.dark.nightIndigo.label",
+    descriptionKey: "settings.palette.dark.nightIndigo.description",
     swatches: ["#1a1b26", "#c0caf5", "#7aa2f7"],
   },
   {
     value: "forest-night",
-    label: "森林夜",
-    description: "深绿氛围，清爽不刺眼",
+    labelKey: "settings.palette.dark.forestNight.label",
+    descriptionKey: "settings.palette.dark.forestNight.description",
     swatches: ["#111714", "#d8e5dc", "#52a36e"],
   },
   {
     value: "graphite-red",
-    label: "石墨红",
-    description: "中性黑灰，朱红强调",
+    labelKey: "settings.palette.dark.graphiteRed.label",
+    descriptionKey: "settings.palette.dark.graphiteRed.description",
     swatches: ["#171616", "#e6dfdb", "#c95b4a"],
   },
   {
     value: "investment-platform",
-    label: "Investment Platform",
-    description: "深海军蓝与琥珀金，克制的专业金融终端气质",
+    labelKey: "settings.palette.dark.investmentPlatform.label",
+    descriptionKey: "settings.palette.dark.investmentPlatform.description",
     swatches: ["#0f172a", "#f8fafc", "#f59e0b"],
   },
   {
     value: "github-dark",
-    label: "GitHub Dark",
-    description: "中性深灰，蓝色强调，适合长时间阅读代码",
+    labelKey: "settings.palette.dark.githubDark.label",
+    descriptionKey: "settings.palette.dark.githubDark.description",
     swatches: ["#24292f", "#f0f3f6", "#58a6ff"],
   },
   {
     value: "catppuccin-mocha",
-    label: "Catppuccin Mocha",
-    description: "柔和紫黑，粉蓝强调，低刺激暗色",
+    labelKey: "settings.palette.dark.catppuccinMocha.label",
+    descriptionKey: "settings.palette.dark.catppuccinMocha.description",
     swatches: ["#1e1e2e", "#cdd6f4", "#89b4fa"],
   },
   {
     value: "terminal-green",
-    label: "终端监控绿",
-    description: "btop 监控风格碳黑，荧光绿强调，呼应实时统计面板",
+    labelKey: "settings.palette.dark.terminalGreen.label",
+    descriptionKey: "settings.palette.dark.terminalGreen.description",
     swatches: ["#0a0a0a", "#e2e2e2", "#3dd68c"],
   },
   {
     value: "dracula-purple",
-    label: "Dracula Purple",
-    description: "经典紫黑，高辨识度，强调色更鲜明",
+    labelKey: "settings.palette.dark.draculaPurple.label",
+    descriptionKey: "settings.palette.dark.draculaPurple.description",
     swatches: ["#282a36", "#f8f8f2", "#bd93f9"],
   },
   {
     value: "carbon-black",
-    label: "Carbon Black",
-    description: "近黑碳色，高对比蓝紫强调，适合沉浸工作",
+    labelKey: "settings.palette.dark.carbonBlack.label",
+    descriptionKey: "settings.palette.dark.carbonBlack.description",
     swatches: ["#161616", "#f2f4f8", "#78a9ff"],
   },
 ];
 
-const TERMINAL_TOOLBAR_OPTIONS: { key: TerminalToolbarOptionKey; label: string }[] = [
-  { key: "templates", label: "Templates" },
-  { key: "commandHistory", label: "历史命令" },
-  { key: "fullscreen", label: "全屏" },
-  { key: "sessionHistory", label: "历史会话" },
-  { key: "stats", label: "实时统计" },
-  { key: "gitChanges", label: "Git 变更" },
+const TERMINAL_TOOLBAR_OPTIONS: { key: TerminalToolbarOptionKey; labelKey: TranslationKey }[] = [
+  { key: "templates", labelKey: "settings.general.toolbar.templates" },
+  { key: "commandHistory", labelKey: "settings.general.toolbar.commandHistory" },
+  { key: "fullscreen", labelKey: "settings.general.toolbar.fullscreen" },
+  { key: "sessionHistory", labelKey: "settings.general.toolbar.sessionHistory" },
+  { key: "stats", labelKey: "settings.general.toolbar.stats" },
+  { key: "gitChanges", labelKey: "settings.general.toolbar.gitChanges" },
 ];
 
 type TerminalToolbarOptionKey = keyof TerminalToolbarVisibilitySettings;
@@ -253,11 +253,12 @@ function getDefaultUiBgColor(
 
 const UI_FONT_FALLBACK = "\"PingFang SC\", \"Microsoft YaHei\", sans-serif";
 
-const UI_FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
+const UI_FONT_FAMILY_OPTIONS: { value: string; label: string; labelKey?: TranslationKey }[] = [
   {
     value:
       "\"Segoe UI Variable\", \"Segoe UI\", -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
-    label: "系统默认（Segoe UI + 中文回退）",
+    label: "System Default (Segoe UI + CJK fallback)",
+    labelKey: "settings.uiFont.systemDefault",
   },
   {
     value: "Inter, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
@@ -270,18 +271,22 @@ const UI_FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
   {
     value: "\"PingFang SC\", \"Microsoft YaHei\", sans-serif",
     label: "苹方 PingFang SC",
+    labelKey: "settings.uiFont.pingFang",
   },
   {
     value: "\"Microsoft YaHei\", \"PingFang SC\", sans-serif",
     label: "微软雅黑 Microsoft YaHei",
+    labelKey: "settings.uiFont.microsoftYaHei",
   },
   {
     value: "\"Source Han Sans SC\", \"Noto Sans CJK SC\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
     label: "思源黑体 / Source Han Sans",
+    labelKey: "settings.uiFont.sourceHanSans",
   },
   {
     value: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
     label: "纯系统 UI 字体",
+    labelKey: "settings.uiFont.systemUi",
   },
   {
     value: "\"Cascadia Code\", \"PingFang SC\", \"Microsoft YaHei\", monospace",
@@ -309,12 +314,14 @@ function PaletteCard({
   active,
   label,
   description,
+  activeLabel,
   swatches,
   onClick,
 }: {
   active: boolean;
   label: string;
   description: string;
+  activeLabel: string;
   swatches: [string, string, string];
   onClick: () => void;
 }) {
@@ -354,7 +361,7 @@ function PaletteCard({
             color: "var(--primary)",
           }}
         >
-          当前
+          {activeLabel}
         </Badge>
       )}
       <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
@@ -521,8 +528,17 @@ export function GeneralSettingsPage() {
     uiTextColorHintColor = "var(--warning)";
   }
   const uiFontFamilyOptions = useMemo(
-    () => mergeFontFamilyOptions(uiFontFamily, UI_FONT_FAMILY_OPTIONS, systemFonts, UI_FONT_FALLBACK),
-    [systemFonts, uiFontFamily]
+    () =>
+      mergeFontFamilyOptions(
+        uiFontFamily,
+        UI_FONT_FAMILY_OPTIONS.map((option) => ({
+          value: option.value,
+          label: option.labelKey ? t(option.labelKey) : option.label,
+        })),
+        systemFonts,
+        UI_FONT_FALLBACK
+      ),
+    [systemFonts, t, uiFontFamily]
   );
   const updateToolbarVisibility = (key: keyof TerminalToolbarVisibilitySettings, checked: boolean) => {
     void update("terminalToolbarVisibility", { ...terminalToolbarVisibility, [key]: checked });
@@ -576,8 +592,9 @@ export function GeneralSettingsPage() {
                   <PaletteCard
                     key={option.value}
                     active={lightThemePalette === option.value}
-                    label={option.label}
-                    description={option.description}
+                    label={t(option.labelKey)}
+                    description={t(option.descriptionKey)}
+                    activeLabel={t("common.current")}
                     swatches={option.swatches}
                     onClick={() => void update("lightThemePalette", option.value)}
                   />
@@ -594,8 +611,9 @@ export function GeneralSettingsPage() {
                   <PaletteCard
                     key={option.value}
                     active={darkThemePalette === option.value}
-                    label={option.label}
-                    description={option.description}
+                    label={t(option.labelKey)}
+                    description={t(option.descriptionKey)}
+                    activeLabel={t("common.current")}
                     swatches={option.swatches}
                     onClick={() => void update("darkThemePalette", option.value)}
                   />
@@ -827,7 +845,7 @@ export function GeneralSettingsPage() {
                   color="cliPrimary"
                   checked={terminalSidePanelMerged}
                   onChange={(event) => void update("terminalSidePanelMerged", event.currentTarget.checked)}
-                  aria-label={terminalSidePanelMerged ? "关闭面板合并" : "开启面板合并"}
+                  aria-label={terminalSidePanelMerged ? t("settings.general.disableMergePanels") : t("settings.general.enableMergePanels")}
                 />
               </Group>
             </Card>
@@ -897,13 +915,17 @@ export function GeneralSettingsPage() {
                 <Card key={option.key} className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
                   <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                     <Text size="xs" c="var(--on-surface-variant)">
-                      {option.label}
+                      {t(option.labelKey)}
                     </Text>
                     <Switch
                       color="cliPrimary"
                       checked={terminalToolbarVisibility[option.key]}
                       onChange={(event) => updateToolbarVisibility(option.key, event.currentTarget.checked)}
-                      aria-label={`${terminalToolbarVisibility[option.key] ? "隐藏" : "显示"}${option.label}`}
+                      aria-label={
+                        terminalToolbarVisibility[option.key]
+                          ? t("settings.general.toolbar.hide", { item: t(option.labelKey) })
+                          : t("settings.general.toolbar.show", { item: t(option.labelKey) })
+                      }
                     />
                   </Group>
                 </Card>
@@ -926,7 +948,11 @@ export function GeneralSettingsPage() {
                   color="cliPrimary"
                   checked={sidebarToolbarVisibility.stats}
                   onChange={(event) => updateSidebarToolbarVisibility("stats", event.currentTarget.checked)}
-                  aria-label={sidebarToolbarVisibility.stats ? "隐藏用量分析按钮" : "显示用量分析按钮"}
+                  aria-label={
+                    sidebarToolbarVisibility.stats
+                      ? t("settings.general.hideStatsButton")
+                      : t("settings.general.showStatsButtonAria")
+                  }
                 />
               </Group>
             </Card>
@@ -952,7 +978,11 @@ export function GeneralSettingsPage() {
                   color="cliPrimary"
                   checked={ccusageAnalyticsEnabled}
                   onChange={(event) => void update("ccusageAnalyticsEnabled", event.currentTarget.checked)}
-                  aria-label={ccusageAnalyticsEnabled ? "关闭 ccusage 看板" : "开启 ccusage 看板"}
+                  aria-label={
+                    ccusageAnalyticsEnabled
+                      ? t("settings.general.disableCcusageDashboard")
+                      : t("settings.general.enableCcusageDashboard")
+                  }
                 />
               </Group>
             </Card>

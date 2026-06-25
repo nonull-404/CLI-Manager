@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { HistorySessionDetail } from "../../lib/types";
 import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
 import { VendorIcon, inferVendor } from "../VendorIcon";
+import { translateCurrent } from "../../lib/i18n";
 
 // 终端监控面板配色（btop / 系统监控风格，深色卡片 + 绿色点缀）
 export const TERM = {
@@ -60,10 +61,10 @@ export function formatDuration(ms: number): string {
 
 export function formatRelativeTime(timestampMs: number): string {
   const diff = Date.now() - timestampMs;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (diff < 60_000) return translateCurrent("termStats.justNow");
+  if (diff < 3_600_000) return translateCurrent("termStats.minutesAgo", { count: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return translateCurrent("termStats.hoursAgo", { count: Math.floor(diff / 3_600_000) });
+  return translateCurrent("termStats.daysAgo", { count: Math.floor(diff / 86_400_000) });
 }
 
 export interface TokenStats {
@@ -364,10 +365,10 @@ function SparkTooltip({
 }) {
   const rows = detail
     ? [
-        { label: "输入", value: detail.input ?? 0, color: TERM.green },
-        { label: "输出", value: detail.output ?? 0, color: TERM.yellow },
-        { label: "缓存命中", value: detail.cacheRead ?? 0, color: TERM.blue },
-        { label: "缓存写入", value: detail.cacheCreation ?? 0, color: TERM.magenta },
+        { label: translateCurrent("termStats.input"), value: detail.input ?? 0, color: TERM.green },
+        { label: translateCurrent("termStats.output"), value: detail.output ?? 0, color: TERM.yellow },
+        { label: translateCurrent("termStats.cacheHit"), value: detail.cacheRead ?? 0, color: TERM.blue },
+        { label: translateCurrent("termStats.cacheWrite"), value: detail.cacheCreation ?? 0, color: TERM.magenta },
       ]
     : [];
 
@@ -377,7 +378,7 @@ function SparkTooltip({
       style={{ backgroundColor: TERM.cardInner, borderColor: TERM.border, minWidth: 124 }}
     >
       <div className="mb-1 font-semibold" style={{ color: TERM.cyan }}>
-        第 {index + 1} / {count} 条
+        {translateCurrent("termStats.tooltipPoint", { index: index + 1, count })}
       </div>
       {rows.map((r) => (
         <div key={r.label} className="flex items-center justify-between gap-3 leading-4">
@@ -392,7 +393,7 @@ function SparkTooltip({
         className="mt-1 flex items-center justify-between gap-3 border-t pt-1 leading-4"
         style={{ borderColor: TERM.border }}
       >
-        <span style={{ color: TERM.dim }}>总计</span>
+        <span style={{ color: TERM.dim }}>{translateCurrent("termStats.total")}</span>
         <span className="font-bold" style={{ color: TERM.fg }}>
           {formatCount(total)}
         </span>
@@ -422,7 +423,7 @@ export function Sparkline({
         className="flex items-center justify-center rounded-md text-[10px]"
         style={{ height, color: TERM.dim, backgroundColor: TERM.cardInner }}
       >
-        暂无趋势数据
+        {translateCurrent("termStats.noTrendData")}
       </div>
     );
   }

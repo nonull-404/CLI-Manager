@@ -1,5 +1,6 @@
 import type { HistoryMessage, HistorySessionDetail } from "../../lib/types";
 import { parseDiffBlocksFromMessages, type ParsedDiffBlock } from "../../lib/diffParser";
+import type { TranslationKey } from "../../lib/i18n";
 
 export type SessionEventKind = "user" | "assistant" | "tool" | "file" | "test" | "error" | "context" | "subtask";
 
@@ -34,6 +35,8 @@ export interface SessionProcessModel {
   subtaskEvents: SessionEvent[];
 }
 
+type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
+
 const ERROR_PATTERN = /\b(error|failed|failure|exception|panic|traceback|denied|timeout|timed out|报错|失败|异常)\b/i;
 const TEST_PATTERN = /\b(npm run test|npm test|vitest|jest|cargo test|pytest|pnpm test|yarn test|tsc --noEmit|cargo check)\b/i;
 const SUBTASK_PATTERN = /\b(SubagentStart|SubagentStop|subagent|子 Agent|子任务|agentId|agentTranscriptPath)\b/i;
@@ -52,13 +55,14 @@ function compactText(text: string, maxLength = 220): string {
   return `${normalized.slice(0, maxLength - 1)}…`;
 }
 
-function messageTitle(role: string, index: number): string {
+function messageTitle(role: string, index: number, t: Translate): string {
   const normalized = role.toLowerCase();
-  if (normalized === "user") return `用户消息 #${index + 1}`;
-  if (normalized === "assistant") return `模型回复 #${index + 1}`;
-  if (normalized === "tool") return `工具结果 #${index + 1}`;
-  if (normalized === "system") return `系统消息 #${index + 1}`;
-  return `${normalized || "message"} #${index + 1}`;
+  const displayIndex = index + 1;
+  if (normalized === "user") return t("history.events.userMessage", { index: displayIndex });
+  if (normalized === "assistant") return t("history.events.assistantReply", { index: displayIndex });
+  if (normalized === "tool") return t("history.events.toolResult", { index: displayIndex });
+  if (normalized === "system") return t("history.events.systemMessage", { index: displayIndex });
+  return t("history.events.genericMessage", { role: normalized || "message", index: displayIndex });
 }
 
 function inferMessageKind(message: HistoryMessage): SessionEventKind {
@@ -90,15 +94,15 @@ function countPatchLines(patch: string): { additions: number; deletions: number 
   return { additions, deletions };
 }
 
-function buildMessageEvents(session: HistorySessionDetail): SessionEvent[] {
+function buildMessageEvents(session: HistorySessionDetail, t: Translate): SessionEvent[] {
   return session.messages.map((message, index) => {
     const input = message.input_tokens ?? 0;
     const output = message.output_tokens ?? 0;
     return {
       id: `message-${index}`,
       kind: inferMessageKind(message),
-      title: messageTitle(message.role, index),
-      detail: compactText(message.content) || "无文本内容",
+      title: messageTitle(message.role, index, t),
+      detail: compactText(message.content) || t("history.detail.noText"),
       messageIndex: index,
       timestamp: message.timestamp ?? null,
       toolName: inferToolName(message.content),
@@ -109,14 +113,18 @@ function buildMessageEvents(session: HistorySessionDetail): SessionEvent[] {
   });
 }
 
-function buildFileEvents(diffBlocks: ParsedDiffBlock[]): SessionEvent[] {
+function buildFileEvents(diffBlocks: ParsedDiffBlock[], t: Translate): SessionEvent[] {
   return diffBlocks.map((block) => {
     const changes = countPatchLines(block.patch);
     return {
       id: `file-${block.id}`,
       kind: "file",
-      title: `修改文件：${block.filePath}`,
-      detail: `来自消息 #${block.messageIndex + 1} · +${changes.additions} / -${changes.deletions}`,
+      title: t("history.events.fileChanged", { path: block.filePath }),
+      detail: t("history.files.eventFromMessage", {
+        index: block.messageIndex + 1,
+        additions: changes.additions,
+        deletions: changes.deletions,
+      }),
       messageIndex: block.messageIndex,
       timestamp: block.timestamp ?? null,
       filePath: block.filePath,
@@ -126,13 +134,17 @@ function buildFileEvents(diffBlocks: ParsedDiffBlock[]): SessionEvent[] {
   });
 }
 
-function buildContextEvents(session: HistorySessionDetail): SessionEvent[] {
+function buildContextEvents(session: HistorySessionDetail, t: Translate): SessionEvent[] {
   const trend = session.usage?.token_trend ?? [];
   return trend.map((point, index) => ({
     id: `context-${index}`,
     kind: "context",
-    title: `Token 增量 #${index + 1}`,
-    detail: `输入 ${point.input_tokens} · 输出 ${point.output_tokens} · 缓存 ${point.cache_read_tokens + point.cache_creation_tokens}`,
+    title: t("history.events.tokenDelta", { index: index + 1 }),
+    detail: t("history.events.contextDetail", {
+      input: point.input_tokens,
+      output: point.output_tokens,
+      cache: point.cache_read_tokens + point.cache_creation_tokens,
+    }),
     messageIndex: null,
     timestamp: null,
     inputTokens: point.input_tokens,
@@ -157,15 +169,15 @@ function buildFileGroups(fileEvents: SessionEvent[]): SessionFileChangeGroup[] {
   return Array.from(groups.values()).sort((a, b) => b.events.length - a.events.length || a.filePath.localeCompare(b.filePath));
 }
 
-export function buildSessionProcessModel(session: HistorySessionDetail | null): SessionProcessModel {
+export function buildSessionProcessModel(session: HistorySessionDetail | null, t: Translate): SessionProcessModel {
   if (!session) {
     return { events: [], diffBlocks: [], fileGroups: [], toolEvents: [], errorEvents: [], subtaskEvents: [] };
   }
 
   const diffBlocks = parseDiffBlocksFromMessages(session.messages);
-  const messageEvents = buildMessageEvents(session);
-  const fileEvents = buildFileEvents(diffBlocks);
-  const contextEvents = buildContextEvents(session);
+  const messageEvents = buildMessageEvents(session, t);
+  const fileEvents = buildFileEvents(diffBlocks, t);
+  const contextEvents = buildContextEvents(session, t);
   const events = [...messageEvents, ...fileEvents, ...contextEvents].sort((a, b) => {
     const ai = a.messageIndex ?? Number.MAX_SAFE_INTEGER;
     const bi = b.messageIndex ?? Number.MAX_SAFE_INTEGER;

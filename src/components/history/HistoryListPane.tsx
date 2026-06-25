@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bot, ChevronDown, ChevronRight, Folder, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
-import { useI18n } from "../../lib/i18n";
+import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { Portal } from "../ui/Portal";
@@ -75,8 +75,8 @@ interface HistoryListPaneProps {
   onStartResize: (e: ReactMouseEvent) => void;
 }
 
-const SOURCE_FILTER_OPTIONS: { value: HistorySourceFilter; label: string }[] = [
-  { value: "all", label: "全部" },
+const SOURCE_FILTER_OPTIONS: { value: HistorySourceFilter; labelKey?: TranslationKey; label?: string }[] = [
+  { value: "all", labelKey: "history.filter.all" },
   { value: "claude", label: "Claude" },
   { value: "codex", label: "Codex" },
 ];
@@ -283,9 +283,9 @@ export function HistoryListPane({
   onSessionListScroll,
   onStartResize,
 }: HistoryListPaneProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
-  const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || "未设置快捷键";
+  const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || t("history.shortcut.notSet");
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
   const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set());
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set());
@@ -312,29 +312,29 @@ export function HistoryListPane({
   );
   const selectedProjectLabel = useMemo(() => {
     if (selectedProject) return selectedProject.name;
-    if (!projectPathFilter) return "全部项目";
+    if (!projectPathFilter) return t("history.allProjects");
     return projectPathFilter.split(/[\\/]/).pop() || projectPathFilter;
-  }, [projectPathFilter, selectedProject]);
+  }, [projectPathFilter, selectedProject, t]);
 
   const emptySessionCopy = useMemo(() => {
     const sourceLabel = sourceFilter === "all" ? "Claude/Codex" : sourceFilter === "claude" ? "Claude" : "Codex";
     if (normalizedGlobal) {
       return {
-        title: "未找到匹配会话",
-        description: "换个关键词，或清空搜索后再看当前筛选范围",
+        title: t("history.empty.noMatchesTitle"),
+        description: t("history.empty.noMatchesDescription"),
       };
     }
     if (projectPathFilter) {
       return {
-        title: "暂无历史会话",
-        description: `${selectedProjectLabel} 下暂无 ${sourceLabel} 会话`,
+        title: t("history.empty.noHistoryTitle"),
+        description: t("history.empty.projectNoSessions", { project: selectedProjectLabel, source: sourceLabel }),
       };
     }
     return {
-      title: "暂无历史会话",
-      description: `当前来源暂无 ${sourceLabel} 会话`,
+      title: t("history.empty.noHistoryTitle"),
+      description: t("history.empty.sourceNoSessions", { source: sourceLabel }),
     };
-  }, [normalizedGlobal, projectPathFilter, selectedProjectLabel, sourceFilter]);
+  }, [normalizedGlobal, projectPathFilter, selectedProjectLabel, sourceFilter, t]);
 
   const toggleFilterGroup = useCallback((groupId: string) => {
     setCollapsedFilterGroups((prev) => {
@@ -541,7 +541,7 @@ export function HistoryListPane({
                   }}
                   aria-pressed={active}
                 >
-                  {option.label}
+                  {option.labelKey ? t(option.labelKey) : option.label}
                 </button>
               );
             })}
@@ -549,18 +549,18 @@ export function HistoryListPane({
 
           <button
             onClick={onRefresh}
-            aria-label="刷新历史会话列表"
+            aria-label={t("history.refreshList")}
             className="ui-flat-action ui-toolbar-button-compact ui-history-list-action h-8 w-8 shrink-0 px-0"
-            title="刷新会话列表"
+            title={t("history.refreshList")}
           >
             <RefreshCw size={12} />
           </button>
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭历史会话"
+            aria-label={t("history.close")}
             className="ui-flat-action ui-toolbar-button-compact ui-history-close-action h-8 w-8 shrink-0 px-0"
-            title="关闭历史会话"
+            title={t("history.close")}
           >
             <X size={13} />
           </button>
@@ -572,8 +572,8 @@ export function HistoryListPane({
             ref={globalSearchRef}
             value={globalQuery}
             onChange={(e) => onGlobalQueryChange(e.target.value)}
-            aria-label="全局搜索历史会话"
-            placeholder="全局搜索（标题/消息/标签）"
+            aria-label={t("history.search.globalAria")}
+            placeholder={t("history.search.globalPlaceholder")}
             className="flex-1 bg-transparent text-[12px] outline-none"
           />
         </div>
@@ -585,7 +585,7 @@ export function HistoryListPane({
             className="ui-focus-ring flex h-9 w-full items-center gap-2 rounded-xl border border-border/60 bg-surface-container-lowest px-2.5 text-left text-[12px] transition-colors hover:bg-surface-container-high"
             aria-haspopup="tree"
             aria-expanded={projectMenuOpen}
-            title={projectPathFilter ?? "全部项目"}
+            title={projectPathFilter ?? t("history.allProjects")}
           >
             {selectedProject ? (
               <span className="ui-tree-leading-icon">
@@ -595,7 +595,7 @@ export function HistoryListPane({
               <Folder size={13} className="shrink-0 text-text-muted" />
             )}
             <span className="min-w-0 flex-1 truncate">
-              <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">项目来源</span>
+              <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">{t("history.projectFilter.source")}</span>
               <span className="font-semibold text-text-primary">{selectedProjectLabel}</span>
             </span>
             <ChevronDown
@@ -612,8 +612,8 @@ export function HistoryListPane({
                 <input
                   value={projectSearchQuery}
                   onChange={(e) => setProjectSearchQuery(e.target.value)}
-                  aria-label="搜索项目来源"
-                  placeholder="输入项目名、路径或 CLI"
+                  aria-label={t("history.projectFilter.searchAria")}
+                  placeholder={t("history.projectFilter.searchPlaceholder")}
                   className="flex-1 bg-transparent text-[12px] outline-none"
                 />
                 {projectSearchQuery && (
@@ -621,14 +621,14 @@ export function HistoryListPane({
                     type="button"
                     onClick={() => setProjectSearchQuery("")}
                     className="ui-flat-action inline-flex h-5 w-5 items-center justify-center rounded-md px-0 text-text-muted"
-                    aria-label="清空项目来源搜索"
-                    title="清空搜索"
+                    aria-label={t("history.projectFilter.clearSearch")}
+                    title={t("history.projectFilter.clearSearch")}
                   >
                     <X size={12} />
                   </button>
                 )}
               </div>
-              <div className="ui-thin-scroll max-h-52 space-y-0.5 overflow-y-auto pr-1" role="tree" aria-label="历史项目过滤树">
+              <div className="ui-thin-scroll max-h-52 space-y-0.5 overflow-y-auto pr-1" role="tree" aria-label={t("history.projectFilter.treeAria")}>
                 <button
                   type="button"
                   onClick={() => handleProjectFilterChange(null)}
@@ -636,25 +636,25 @@ export function HistoryListPane({
                   data-selected={!projectPathFilter ? "true" : "false"}
                 >
                   <Folder size={13} className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate font-medium">全部项目</span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{t("history.allProjects")}</span>
                   <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{projects.length}</span>
                 </button>
                 {filteredProjectTree.length > 0 ? (
                   filteredProjectTree.map((node) => renderProjectNode(node))
                 ) : (
                   <div className="px-2 py-1.5 text-[11px] text-text-muted">
-                    {normalizedProjectSearch ? "未找到匹配项目" : "暂无项目"}
+                    {normalizedProjectSearch ? t("history.projectFilter.noMatches") : t("history.projectFilter.empty")}
                   </div>
                 )}
                 {normalizedProjectSearch && filteredProjectTree.length > 0 && (
-                  <div className="px-2 py-1 text-[10px] text-text-muted">匹配 {filteredProjectCount} 个项目</div>
+                  <div className="px-2 py-1 text-[10px] text-text-muted">{t("history.projectFilter.matchCount", { count: filteredProjectCount })}</div>
                 )}
               </div>
             </div>
           )}
         </div>
 
-        <div className="mt-1 text-[12px] text-text-muted">{sessionHistoryShortcutHint} 打开全局搜索</div>
+        <div className="mt-1 text-[12px] text-text-muted">{t("history.search.openGlobal", { shortcut: sessionHistoryShortcutHint })}</div>
       </div>
 
       <div ref={sessionListRef} onScroll={onSessionListScroll} className="flex-1 overflow-y-auto">
@@ -671,15 +671,15 @@ export function HistoryListPane({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                {row.type === "loading" && <div className="px-3 py-4 text-xs text-text-muted">正在加载会话...</div>}
+                {row.type === "loading" && <div className="px-3 py-4 text-xs text-text-muted">{t("history.loadingSessions")}</div>}
 
                 {row.type === "searching" && (
-                  <div className="px-3 py-2 text-[11px] text-text-muted">正在搜索...</div>
+                  <div className="px-3 py-2 text-[11px] text-text-muted">{t("history.searching")}</div>
                 )}
 
                 {row.type === "searchHeader" && (
                   <div className="px-3 py-2 text-[11px] font-semibold text-text-muted">
-                    搜索命中 {row.count} 条
+                    {t("history.searchHits", { count: row.count })}
                   </div>
                 )}
 
@@ -775,16 +775,18 @@ export function HistoryListPane({
                           )}
                         </div>
                         <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
-                          {row.item.source} · {makeSessionLabel(row.item)} · {row.item.message_count} 条消息
+                          {row.item.source} · {makeSessionLabel(row.item)} · {t("history.messageCount", { count: row.item.message_count })}
                         </div>
-                        <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">更新于 {formatTime(row.item.updated_at)}</div>
+                        <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
+                          {t("history.updatedAt", { time: formatTime(row.item.updated_at, language) })}
+                        </div>
                       </button>
                       <button
                         type="button"
                         onClick={() => onDeleteSession(row.item)}
                         className="ui-flat-action mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted hover:text-danger"
-                        aria-label={`删除历史会话 ${row.item.displayTitle}`}
-                        title="删除历史会话"
+                        aria-label={t("history.deleteSessionNamed", { title: row.item.displayTitle })}
+                        title={t("history.deleteSession")}
                       >
                         <X size={14} />
                       </button>
@@ -804,14 +806,14 @@ export function HistoryListPane({
                     <button
                       onClick={onLoadMoreSessions}
                       className="ui-btn w-full"
-                      aria-label="加载更多历史会话"
+                      aria-label={t("history.loadMore")}
                       disabled={loadingMoreSessions}
                     >
                       {loadingMoreSessions
-                        ? "正在加载更多..."
+                        ? t("history.loadingMore")
                         : loadMoreSessionMode === "local"
-                          ? `显示更多匹配会话（${visibleSessionCount}/${filteredSessionCount}）`
-                          : `继续扫描更多历史（已载入 ${filteredSessionCount} 条）`}
+                          ? t("history.showMoreMatches", { visible: visibleSessionCount, total: filteredSessionCount })
+                          : t("history.scanMore", { count: filteredSessionCount })}
                     </button>
                   </div>
                 )}
@@ -830,7 +832,7 @@ export function HistoryListPane({
             </button>
             <button className="context-menu-item danger" role="menuitem" onClick={handleContextMenuDelete}>
               <Trash2 size={13} aria-hidden="true" />
-              <span>删除</span>
+              <span>{t("common.delete")}</span>
             </button>
           </div>
         </Portal>
