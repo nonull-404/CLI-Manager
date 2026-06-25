@@ -477,3 +477,36 @@ Fixed xterm IME composition anchor fallback so candidate windows stay near the a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: History resume conversation
+
+**Date**: 2026-06-25
+**Task**: History resume conversation
+**Branch**: `feature/v1.1.9`
+
+### Summary
+
+Implemented #51: history session resume button, cwd detail payload, resume terminal launch commands, changelog and contract updates.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e2d2d2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
