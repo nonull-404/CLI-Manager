@@ -5,6 +5,7 @@ import type { TerminalPaneLeaf, TerminalPaneNode, TerminalPaneSplit } from "../s
 interface Props {
   node: TerminalPaneNode;
   renderLeaf: (leaf: TerminalPaneLeaf) => ReactNode;
+  fullscreenLeafId?: string | null;
 }
 
 interface Rect {
@@ -74,7 +75,7 @@ function rectStyle(rect: Rect): CSSProperties {
   };
 }
 
-export function SplitTerminalView({ node, renderLeaf }: Props) {
+export function SplitTerminalView({ node, renderLeaf, fullscreenLeafId }: Props) {
   const setSplitRatio = useTerminalStore((s) => s.setSplitRatio);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerRect, setContainerRect] = useState<Rect>({ left: 0, top: 0, width: 0, height: 0 });
@@ -104,6 +105,10 @@ export function SplitTerminalView({ node, renderLeaf }: Props) {
   }, []);
 
   const layout = useMemo(() => buildSplitLayout(node, containerRect), [containerRect, node]);
+  const fullscreenLeaf = fullscreenLeafId
+    ? layout.leaves.find(({ leaf }) => leaf.id === fullscreenLeafId)
+    : null;
+  const fullscreenRect: Rect = { left: 0, top: 0, width: containerRect.width, height: containerRect.height };
 
   const handleDragStart = useCallback(
     (split: TerminalPaneSplit, splitRect: Rect, e: MouseEvent) => {
@@ -147,12 +152,24 @@ export function SplitTerminalView({ node, renderLeaf }: Props) {
 
   return (
     <div ref={containerRef} className="ui-terminal-split-node relative h-full min-h-0 w-full min-w-0 overflow-hidden">
-      {layout.leaves.map(({ leaf, rect }) => (
-        <div key={leaf.id} className="ui-terminal-split-child absolute min-h-0 min-w-0 overflow-hidden" style={rectStyle(rect)}>
-          {renderLeaf(leaf)}
-        </div>
-      ))}
-      {layout.dividers.map(({ split, rect, splitRect }) => {
+      {layout.leaves.map(({ leaf, rect }) => {
+        const isFullscreenLeaf = fullscreenLeaf?.leaf.id === leaf.id;
+        const isHiddenByFullscreen = Boolean(fullscreenLeaf) && !isFullscreenLeaf;
+        return (
+          <div
+            key={leaf.id}
+            className="ui-terminal-split-child absolute min-h-0 min-w-0 overflow-hidden"
+            style={{
+              ...rectStyle(isFullscreenLeaf ? fullscreenRect : rect),
+              display: isHiddenByFullscreen ? "none" : undefined,
+              zIndex: isFullscreenLeaf ? 20 : undefined,
+            }}
+          >
+            {renderLeaf(leaf)}
+          </div>
+        );
+      })}
+      {!fullscreenLeaf && layout.dividers.map(({ split, rect, splitRect }) => {
         const isHorizontal = split.direction === "horizontal";
         return (
           <div

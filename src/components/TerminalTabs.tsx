@@ -635,6 +635,7 @@ interface PaneTabBarProps {
   terminalBackgroundEnabled: boolean;
   terminalBackgroundImagePath: string | null;
   hiddenBackgroundSessionIds: Set<string>;
+  isPaneFullscreen: boolean;
   onActivateSession: (sessionId: string) => void;
   onCloseSessions: (sessionIds: string[], anchor?: SplitPickerAnchor) => void;
   onStartEdit: (sessionId: string) => void;
@@ -647,6 +648,7 @@ interface PaneTabBarProps {
   onMoveToPane: (sessionId: string, paneId: string) => void;
   onHideBackground: (sessionId: string) => void;
   onShowBackground: (sessionId: string) => void;
+  onTogglePaneFullscreen: (paneId: string) => void;
   variant?: "global" | "pane";
 }
 
@@ -661,6 +663,7 @@ function PaneTabBar({
   terminalBackgroundEnabled,
   terminalBackgroundImagePath,
   hiddenBackgroundSessionIds,
+  isPaneFullscreen,
   onActivateSession,
   onCloseSessions,
   onStartEdit,
@@ -673,6 +676,7 @@ function PaneTabBar({
   onMoveToPane,
   onHideBackground,
   onShowBackground,
+  onTogglePaneFullscreen,
   variant = "pane",
   resolvedTheme,
   terminalThemeName,
@@ -706,6 +710,7 @@ function PaneTabBar({
     .map((id) => sessions.find((session) => session.id === id))
     .filter((session): session is TerminalSession => Boolean(session));
   const otherPanes = allPanes.filter((item) => item.id !== pane.id && item.sessionIds.length > 0);
+  const paneFullscreenLabel = isPaneFullscreen ? "退出沉浸式全屏" : "进入沉浸式全屏";
   const tabScrollSignature = paneSessions
     .map((session) => `${session.id}:${session.title}:${tabNotifications[session.id] ?? "none"}`)
     .join("|");
@@ -1029,6 +1034,21 @@ function PaneTabBar({
           </Popover>
         </>
       )}
+      {variant === "pane" && allPanes.length > 1 && (
+        <div className="ui-terminal-actions flex shrink-0 items-center">
+          <button
+            type="button"
+            className="ui-focus-ring ui-icon-action ui-action-fullscreen"
+            data-active={isPaneFullscreen ? "true" : "false"}
+            onClick={() => onTogglePaneFullscreen(pane.id)}
+            title={paneFullscreenLabel}
+            aria-label={paneFullscreenLabel}
+            aria-pressed={isPaneFullscreen}
+          >
+            {isPaneFullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1052,6 +1072,8 @@ interface PaneLeafViewProps {
   terminalBackgroundEnabled: boolean;
   terminalBackgroundImagePath: string | null;
   hiddenBackgroundSessionIds: Set<string>;
+  isPaneFullscreen: boolean;
+  isLayoutVisible: boolean;
   activeDropPreview?: PaneDropPreview;
   onActivateSession: (sessionId: string) => void;
   onCloseSessions: (sessionIds: string[], anchor?: SplitPickerAnchor) => void;
@@ -1065,6 +1087,7 @@ interface PaneLeafViewProps {
   onMoveToPane: (sessionId: string, paneId: string) => void;
   onHideBackground: (sessionId: string) => void;
   onShowBackground: (sessionId: string) => void;
+  onTogglePaneFullscreen: (paneId: string) => void;
   hideTabBar?: boolean;
 }
 
@@ -1087,6 +1110,8 @@ function PaneLeafView({
   terminalBackgroundEnabled,
   terminalBackgroundImagePath,
   hiddenBackgroundSessionIds,
+  isPaneFullscreen,
+  isLayoutVisible,
   activeDropPreview,
   onActivateSession,
   onCloseSessions,
@@ -1100,6 +1125,7 @@ function PaneLeafView({
   onMoveToPane,
   onHideBackground,
   onShowBackground,
+  onTogglePaneFullscreen,
   hideTabBar = false,
 }: PaneLeafViewProps) {
   const paneSessions = pane.sessionIds
@@ -1120,6 +1146,7 @@ function PaneLeafView({
           terminalBackgroundEnabled={terminalBackgroundEnabled}
           terminalBackgroundImagePath={terminalBackgroundImagePath}
           hiddenBackgroundSessionIds={hiddenBackgroundSessionIds}
+          isPaneFullscreen={isPaneFullscreen}
           onActivateSession={onActivateSession}
           onCloseSessions={onCloseSessions}
           onStartEdit={onStartEdit}
@@ -1132,6 +1159,7 @@ function PaneLeafView({
           onMoveToPane={onMoveToPane}
           onHideBackground={onHideBackground}
           onShowBackground={onShowBackground}
+          onTogglePaneFullscreen={onTogglePaneFullscreen}
           resolvedTheme={resolvedTheme}
           terminalThemeName={terminalThemeName}
           lightThemePalette={lightThemePalette}
@@ -1163,7 +1191,7 @@ function PaneLeafView({
               <XTermTerminal
                 sessionId={session.id}
                 isActive={!historyActive && session.id === activeSessionId}
-                isVisible={!historyActive && session.id === pane.activeSessionId}
+                isVisible={!historyActive && isLayoutVisible && session.id === pane.activeSessionId}
                 fontSize={fontSize}
                 fontFamily={fontFamily}
                 resolvedTheme={resolvedTheme}
@@ -1467,12 +1495,15 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const [closeConfirm, setCloseConfirm] = useState<TerminalCloseConfirmState>(null);
   const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null);
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
+  const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [sidePanelTab, setSidePanelTab] = useState<TerminalSidePanelTab>("stats");
   // 非合并模式：实时统计与 Git 变更各自独立开关，可并排显示
   const [statsOpen, setStatsOpen] = useState(false);
   const [gitOpen, setGitOpen] = useState(false);
   const [activeToolbarDragId, setActiveToolbarDragId] = useState<string | null>(null);
+  const paneFullscreenStartedFromGlobalRef = useRef(false);
+  const previousFullscreenRef = useRef(fullscreen);
   const splitPickerOpenFrameRef = useRef<number | null>(null);
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
@@ -1480,6 +1511,10 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const allPanes = useMemo(() => collectPaneLeaves(paneTree), [paneTree]);
+  const activeFullscreenPaneId = useMemo(() => {
+    if (!fullscreenPaneId) return null;
+    return allPanes.some((pane) => pane.id === fullscreenPaneId) ? fullscreenPaneId : null;
+  }, [allPanes, fullscreenPaneId]);
   const activeSession = useMemo(
     () => activeSessionId ? sessions.find((session) => session.id === activeSessionId) ?? null : null,
     [activeSessionId, sessions]
@@ -1538,6 +1573,24 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     if (!historyOpen) return;
     setActiveWorkspaceTab("history");
   }, [focusGlobalSearchSeq, historyOpen]);
+
+  useEffect(() => {
+    if (!fullscreenPaneId || activeFullscreenPaneId) return;
+
+    setFullscreenPaneId(null);
+    const shouldExitFullscreen = !paneFullscreenStartedFromGlobalRef.current && fullscreen;
+    paneFullscreenStartedFromGlobalRef.current = false;
+    if (shouldExitFullscreen) onToggleFullscreen?.();
+  }, [activeFullscreenPaneId, fullscreen, fullscreenPaneId, onToggleFullscreen]);
+
+  useEffect(() => {
+    const wasFullscreen = previousFullscreenRef.current;
+    previousFullscreenRef.current = fullscreen;
+    if (!wasFullscreen || fullscreen || !activeFullscreenPaneId) return;
+
+    setFullscreenPaneId(null);
+    paneFullscreenStartedFromGlobalRef.current = false;
+  }, [activeFullscreenPaneId, fullscreen]);
 
   const clearSplitPickerOpenSchedule = useCallback(() => {
     if (splitPickerOpenFrameRef.current !== null) {
@@ -1599,6 +1652,30 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     setActiveWorkspaceTab("terminal");
     setActive(sessionId);
   }, [closeHistory, setActive]);
+
+  const handleTogglePaneFullscreen = useCallback((paneId: string) => {
+    if (activeFullscreenPaneId === paneId) {
+      setFullscreenPaneId(null);
+      const shouldExitFullscreen = !paneFullscreenStartedFromGlobalRef.current && fullscreen;
+      paneFullscreenStartedFromGlobalRef.current = false;
+      if (shouldExitFullscreen) onToggleFullscreen?.();
+      return;
+    }
+
+    const targetPane = allPanes.find((pane) => pane.id === paneId);
+    if (!targetPane) return;
+
+    if (targetPane.activeSessionId && targetPane.activeSessionId !== activeSessionId) {
+      handleActivateSession(targetPane.activeSessionId);
+    } else {
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+    }
+
+    paneFullscreenStartedFromGlobalRef.current = fullscreen;
+    setFullscreenPaneId(paneId);
+    if (!fullscreen) onToggleFullscreen?.();
+  }, [activeFullscreenPaneId, activeSessionId, allPanes, closeHistory, fullscreen, handleActivateSession, onToggleFullscreen]);
 
   const resolveCloseConfirmAnchor = useCallback((anchor?: SplitPickerAnchor) => {
     const rawX = anchor ? ("right" in anchor ? anchor.right : anchor.x) : window.innerWidth - 72;
@@ -1896,6 +1973,14 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     setActiveToolbarDragId(null);
   }, []);
 
+  const handleToggleGlobalFullscreen = useCallback(() => {
+    if (activeFullscreenPaneId) {
+      setFullscreenPaneId(null);
+      paneFullscreenStartedFromGlobalRef.current = false;
+    }
+    onToggleFullscreen?.();
+  }, [activeFullscreenPaneId, onToggleFullscreen]);
+
   const renderToolbarActions = useCallback(() => {
     const buttonMap: Record<string, ReactNode> = {
       new: (
@@ -1912,7 +1997,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       commandHistory: <CommandHistoryPanel compact popoverSide="left" toneClassName="ui-action-command-history" />,
       fullscreen: onToggleFullscreen ? (
         <button
-          onClick={onToggleFullscreen}
+          onClick={handleToggleGlobalFullscreen}
           className="ui-focus-ring ui-icon-action ui-action-fullscreen"
           data-active={fullscreen ? "true" : "false"}
           title={fullscreen ? "退出沉浸式全屏" : "沉浸式全屏"}
@@ -2007,6 +2092,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     handleNewTab,
     handleOpenHistoryTab,
     handleToggleGitChangesPanel,
+    handleToggleGlobalFullscreen,
     handleToggleStatsPanel,
     handleToolbarDragCancel,
     handleToolbarDragEnd,
@@ -2041,6 +2127,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       terminalBackgroundEnabled={terminalBackgroundEnabled}
       terminalBackgroundImagePath={terminalBackgroundImagePath}
       hiddenBackgroundSessionIds={hiddenBackgroundSessionIds}
+      isPaneFullscreen={activeFullscreenPaneId === pane.id}
+      isLayoutVisible={!activeFullscreenPaneId || activeFullscreenPaneId === pane.id}
       activeDropPreview={activeDropPreview}
       onActivateSession={handleActivateSession}
       onCloseSessions={handleCloseSessions}
@@ -2057,9 +2145,11 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       onMoveToPane={moveSessionToPane}
       onHideBackground={hideBackgroundForSession}
       onShowBackground={showBackgroundForSession}
+      onTogglePaneFullscreen={handleTogglePaneFullscreen}
       hideTabBar={false}
     />
   ), [
+    activeFullscreenPaneId,
     activeSessionId,
     activeDropPreview,
     allPanes,
@@ -2073,6 +2163,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     handleNewTab,
     handleDuplicateSession,
     handleOpenSplitPicker,
+    handleTogglePaneFullscreen,
     hiddenBackgroundSessionIds,
     hideBackgroundForSession,
     historyActive,
@@ -2138,7 +2229,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
                 onDragCancel={clearDragState}
                 onDragEnd={handleDragEnd}
               >
-                <SplitTerminalView node={paneTree} renderLeaf={renderLeaf} />
+                <SplitTerminalView node={paneTree} renderLeaf={renderLeaf} fullscreenLeafId={activeFullscreenPaneId} />
                 <DragOverlay dropAnimation={null}>
                   {activeDragSession ? (
                     <DragOverlayTab

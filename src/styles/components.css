@@ -2355,6 +2355,14 @@
   color: var(--terminal-action-color, currentColor);
 }
 
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-icon-action[data-active="true"] {
+  color: #fff;
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-icon-action[data-active="true"] svg {
+  color: currentColor;
+}
+
 .ui-terminal-pane-chrome .ui-terminal-actions .ui-primary-action {
   background-image: none;
   background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 70%, var(--terminal-tab-accent) 30%);
