@@ -5,21 +5,15 @@ import { Copy, Minus, Square, X } from "lucide-react";
 import { logWarn } from "../lib/logger";
 import appIcon32 from "../assets/app-icon-32.png";
 import { useI18n } from "../lib/i18n";
-import { getOsPlatform } from "../lib/shell";
 
 const IN_TAURI = isTauri();
 
 export function WindowTitleBar() {
   const { t } = useI18n();
   const [maximized, setMaximized] = useState(false);
-  const [isMacos, setIsMacos] = useState(false);
 
   useEffect(() => {
     if (!IN_TAURI) return;
-    void getOsPlatform()
-      .then((platform) => setIsMacos(platform === "macos"))
-      .catch((err) => logWarn("Failed to read OS platform", err));
-
     const appWindow = getCurrentWindow();
     let mounted = true;
     let unlisten: (() => void) | null = null;
@@ -76,7 +70,7 @@ export function WindowTitleBar() {
         />
         <span className="truncate text-[13px] font-semibold tracking-[0.005em] text-on-surface">CLI-Manager</span>
       </div>
-      {IN_TAURI && !isMacos && (
+      {IN_TAURI && (
         <div className="flex items-center">
           <button
             type="button"

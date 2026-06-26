@@ -17,6 +17,14 @@ import { applyTransparency, getTerminalTheme, getTerminalBackground } from "../l
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { endTerminalFileDrag, getTerminalFileDragText } from "../lib/terminalFileDrag";
+import {
+  defaultShellForOs,
+  getOsPlatform,
+  normalizeShellForOs,
+  normalizeShellKey,
+  type OsPlatform,
+  type ShellKey,
+} from "../lib/shell";
 import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
@@ -131,9 +139,20 @@ const copyTextToClipboard = async (text: string) => {
   }
 };
 
-const quoteShellPath = (path: string) => `'${path.replace(/'/g, "''")}'`;
+const normalizeShellForKnownOs = (shell: string | null | undefined, os: OsPlatform): ShellKey | undefined => (
+  os === "unknown" ? normalizeShellKey(shell) : normalizeShellForOs(shell, os)
+);
 
-const formatShellPathList = (paths: string[]) => paths.filter(Boolean).map(quoteShellPath).join(" ");
+const quoteShellPath = (path: string, shell: string | null | undefined) => {
+  const normalized = normalizeShellKey(shell);
+  if (normalized === "cmd") return `"${path.replace(/"/g, "\"\"")}"`;
+  if (normalized === "powershell" || normalized === "pwsh") return `'${path.replace(/'/g, "''")}'`;
+  return `'${path.replace(/'/g, "'\\''")}'`;
+};
+
+const formatShellPathList = (paths: string[], shell: string | null | undefined) => (
+  paths.filter(Boolean).map((path) => quoteShellPath(path, shell)).join(" ")
+);
 
 const openHttpUrl = (sessionId: string, uri: string) => {
   if (!/^https?:\/\//i.test(uri)) return;
@@ -225,6 +244,26 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [searchResult, setSearchResult] = useState<SearchResultState>(EMPTY_SEARCH_RESULT);
   const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const osPlatformRef = useRef<OsPlatform>("unknown");
+
+  const getOsPlatformForPathQuoting = async () => {
+    if (osPlatformRef.current !== "unknown") return osPlatformRef.current;
+    const platform = await getOsPlatform();
+    osPlatformRef.current = platform;
+    return platform;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void getOsPlatform().then((platform) => {
+      if (!cancelled) {
+        osPlatformRef.current = platform;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -620,6 +659,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
       Boolean(getTerminalFileDragText()) || Boolean(dataTransfer?.types.includes(TERMINAL_FILE_PATH_MIME))
     );
+    const getShellForPathQuoting = async () => {
+      const os = await getOsPlatformForPathQuoting();
+      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
+      const sessionShell = normalizeShellForKnownOs(session?.shell, os);
+      if (sessionShell) return sessionShell;
+      const defaultShell = normalizeShellForKnownOs(useSettingsStore.getState().defaultShell, os);
+      return defaultShell ?? defaultShellForOs(os);
+    };
 
     const onDragOver = (e: DragEvent) => {
       const isActiveTerminalFileDrag = Boolean(getTerminalFileDragText());
@@ -653,7 +700,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       const position = payload.position.toLogical(scaleFactor);
       if (!isPointInsidePasteTarget(position.x, position.y)) return;
 
-      pasteIntoTerminal(formatShellPathList(payload.paths));
+      pasteIntoTerminal(formatShellPathList(payload.paths, await getShellForPathQuoting()));
       terminal.focus();
     }).then((fn) => {
       if (fileDropCancelled) {
