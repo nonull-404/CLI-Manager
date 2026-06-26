@@ -450,7 +450,7 @@ function App() {
         return;
       }
       if (event.payload.event === "SubagentStop") {
-        if (event.payload.agentTranscriptPath?.trim()) {
+        if (event.payload.agentTranscriptPath?.trim() || event.payload.source === "codex") {
           void useTerminalStore.getState().openSubagentTranscript(event.payload).finally(() => {
             useTerminalStore.getState().finishSubagentTranscript(event.payload);
           });

@@ -1,5 +1,14 @@
 # Changelog
 
+## [V1.2.1] - 2026-06-26
+
+### Codex 子 Agent Transcript 绑定修复
+
+- **修复 Codex 子 Agent 不自动进入右侧 Pane**：新增对 `~/.codex/sessions/**/rollout-*.jsonl` 的发现与订阅逻辑，按子会话 `session_meta.payload.parent_thread_id` 绑定父会话，解决 Codex sub-agent 没有 `agentTranscriptPath` 时无法自动打开 transcript 的问题。
+- **保持同 Pane 多 Tab 聚合**：同一父会话下的多个 Codex 子 Agent 继续复用已有 sub-agent pane，以多标签方式追加显示，不再错误拆出新分屏。
+- **补齐晚到 transcript 的兜底处理**：`SubagentStop` 阶段如果 Codex transcript 才可发现，也会继续尝试关联并订阅，减少空白 tab 或无内容面板。
+- **优化等待态提示文案**：子 Agent transcript 等待态改为通用描述，明确 CLI-Manager 只会按当前父会话关联对应 transcript，不会扫描无关终端输出。
+
 ## [V1.2.0] - 2026-06-25
 
 ### Codex 项目级供应商切换
