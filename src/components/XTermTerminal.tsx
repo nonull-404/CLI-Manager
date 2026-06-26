@@ -961,6 +961,33 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
 
     const estimateCellSize = () => {
+      const renderedCell = (
+        terminal as typeof terminal & {
+          _core?: {
+            _renderService?: {
+              dimensions?: {
+                css?: {
+                  cell?: {
+                    width?: number;
+                    height?: number;
+                  };
+                };
+              };
+            };
+          };
+        }
+      )._core?._renderService?.dimensions?.css?.cell;
+      const renderedWidth = renderedCell?.width;
+      const renderedHeight = renderedCell?.height;
+      if (
+        typeof renderedWidth === "number" && Number.isFinite(renderedWidth) && renderedWidth > 0
+        && typeof renderedHeight === "number" && Number.isFinite(renderedHeight) && renderedHeight > 0
+      ) {
+        return {
+          width: renderedWidth,
+          height: renderedHeight,
+        };
+      }
       const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
       const rect = (screen ?? terminalContainer).getBoundingClientRect();
       const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
@@ -1101,9 +1128,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (!textarea && !compositionView) return;
       const anchor = compositionAnchorCell ?? resolveCompositionAnchorCell();
       const cell = estimateCellSize();
-      const left = `${Math.max(0, anchor.x * cell.width)}px`;
-      const top = `${Math.max(0, anchor.y * cell.height)}px`;
-      const height = `${Math.max(1, cell.height)}px`;
+      const leftValue = Math.max(0, anchor.x * cell.width);
+      const topValue = Math.max(0, anchor.y * cell.height);
+      const heightValue = Math.max(1, cell.height);
+      const left = `${leftValue}px`;
+      const top = `${topValue}px`;
+      const height = `${heightValue}px`;
 
       if (compositionView) {
         compositionView.style.left = left;
@@ -1112,9 +1142,13 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         compositionView.style.lineHeight = height;
       }
       if (textarea) {
+        const compositionBounds = compositionView?.getBoundingClientRect();
+        const widthValue = compositionBounds && compositionBounds.width > 0
+          ? compositionBounds.width
+          : Math.max(1, cell.width);
         textarea.style.left = left;
         textarea.style.top = top;
-        textarea.style.width = `${Math.max(1, cell.width)}px`;
+        textarea.style.width = `${widthValue}px`;
         textarea.style.height = height;
         textarea.style.lineHeight = height;
       }

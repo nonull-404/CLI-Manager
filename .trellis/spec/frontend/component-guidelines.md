@@ -305,6 +305,71 @@ function buildSplitLayout(node: TerminalPaneNode, rect: Rect): { leaves: LeafLay
 - [ ] Divider drag resizing still works; nested splits resize correctly.
 - [ ] Pane tab switching and session activation unchanged.
 
+### Convention: Terminal resize drag uses local or DOM preview, then commits once
+
+**What**: For terminal split dividers and terminal-side resizable panels, the drag interaction must update only a local preview during `mousemove` and commit the final width/ratio to React/Zustand state on `mouseup`. Do not write heavy global state or rerender embedded stats / git panels on every drag frame.
+
+**Why**: Terminal panes contain xterm, realtime stats, and git views. Writing `paneTree` or panel width state every frame causes the whole terminal shell or panel subtree to rerender during drag, which makes width adjustment feel sticky and unsmooth.
+
+**Correct**:
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  pendingWidthRef.current = nextWidth;
+  if (frameRef.current === null) {
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      panelRef.current!.style.width = `${pendingWidthRef.current}px`;
+    });
+  }
+};
+
+const onUp = () => {
+  const finalWidth = pendingWidthRef.current ?? widthRef.current;
+  setWidth(finalWidth);
+  localStorage.setItem(storageKey, String(finalWidth));
+};
+```
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  latestRatio = clampSplitRatio(rawRatio);
+  if (rafId === null) {
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      setDragPreview({ splitId, ratio: latestRatio });
+    });
+  }
+};
+
+const onUp = () => {
+  setDragPreview(null);
+  setSplitRatio(splitId, latestRatio);
+};
+```
+
+**Wrong**:
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  setWidth(nextWidth);
+};
+```
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  setSplitRatio(splitId, nextRatio);
+};
+```
+
+**Contracts**:
+
+- Drag preview may use local component state or direct DOM width updates, but the persistent width/ratio source of truth updates once on drag end.
+- For split panes, keep pane content component identity stable while only wrapper geometry changes.
+- For terminal-side panels, avoid rerendering `TerminalStatsPanel` / `GitChangesPanel` on every mousemove.
+
+**Tests**: Run `npx tsc --noEmit`; manually verify split drag, stats panel drag, and git panel drag remain smooth while persisted width/ratio still survives reopen.
+
 ### Convention: Git tree compresses consecutive single-child directory chains at render time
 
 **What**: In `GitTreeNodeComponent`, when rendering a directory node, walk consecutive single-child directory chains and compress them into a single display row showing the top directory name plus a weakened path suffix (JetBrains style).
@@ -567,6 +632,37 @@ textarea.style.display = "none";
 - [ ] If a TUI status/progress redraw owns the current cursor during composition, the candidate window falls back to the nearest visible prompt row.
 - [ ] Normal keyboard input, Enter, and paste still reach the PTY.
 - [ ] Chinese/IME composition still positions the candidate window correctly.
+
+### Common Mistake: Estimating xterm IME cell size from container bounds
+
+**Symptom**: IME candidate popup or composition caret drifts on secondary monitors, mixed-DPI displays, or after display-scale changes even though the terminal prompt row detection is correct.
+
+**Cause**: `getBoundingClientRect().width / terminal.cols` and `height / terminal.rows` are only rough estimates of the rendered cell size. On xterm, the real cell metrics come from the render service and can differ slightly due to font measurement, renderer rounding, and DPI scaling. Those small errors accumulate across columns/rows and move the helper textarea away from the real caret.
+
+**Fix**: When anchoring `.xterm-helper-textarea` or `.composition-view`, read xterm's rendered dimensions first and only fall back to DOM estimation if the internal metrics are unavailable.
+
+```tsx
+const renderedCell = (
+  terminal as typeof terminal & {
+    _core?: {
+      _renderService?: {
+        dimensions?: {
+          css?: { cell?: { width?: number; height?: number } };
+        };
+      };
+    };
+  }
+)._core?._renderService?.dimensions?.css?.cell;
+
+const width = renderedCell?.width ?? fallbackWidth;
+const height = renderedCell?.height ?? fallbackHeight;
+```
+
+**Prevention**:
+
+- [ ] For xterm cursor / IME positioning, prefer `_core._renderService.dimensions.css.cell`.
+- [ ] Keep DOM `getBoundingClientRect()`-based division only as fallback.
+- [ ] After changing IME anchoring, manually verify primary-screen and secondary-screen input behavior.
 
 ### Gotcha: xterm `write` is asynchronous for buffer cursor reads
 
