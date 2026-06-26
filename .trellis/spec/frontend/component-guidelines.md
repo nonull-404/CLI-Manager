@@ -528,6 +528,37 @@ textarea.style.display = "none";
 - [ ] Normal keyboard input, Enter, and paste still reach the PTY.
 - [ ] Chinese/IME composition still positions the candidate window correctly.
 
+### Common Mistake: Estimating xterm IME cell size from container bounds
+
+**Symptom**: IME candidate popup or composition caret drifts on secondary monitors, mixed-DPI displays, or after display-scale changes even though the terminal prompt row detection is correct.
+
+**Cause**: `getBoundingClientRect().width / terminal.cols` and `height / terminal.rows` are only rough estimates of the rendered cell size. On xterm, the real cell metrics come from the render service and can differ slightly due to font measurement, renderer rounding, and DPI scaling. Those small errors accumulate across columns/rows and move the helper textarea away from the real caret.
+
+**Fix**: When anchoring `.xterm-helper-textarea` or `.composition-view`, read xterm's rendered dimensions first and only fall back to DOM estimation if the internal metrics are unavailable.
+
+```tsx
+const renderedCell = (
+  terminal as typeof terminal & {
+    _core?: {
+      _renderService?: {
+        dimensions?: {
+          css?: { cell?: { width?: number; height?: number } };
+        };
+      };
+    };
+  }
+)._core?._renderService?.dimensions?.css?.cell;
+
+const width = renderedCell?.width ?? fallbackWidth;
+const height = renderedCell?.height ?? fallbackHeight;
+```
+
+**Prevention**:
+
+- [ ] For xterm cursor / IME positioning, prefer `_core._renderService.dimensions.css.cell`.
+- [ ] Keep DOM `getBoundingClientRect()`-based division only as fallback.
+- [ ] After changing IME anchoring, manually verify primary-screen and secondary-screen input behavior.
+
 ### Gotcha: xterm `write` is asynchronous for buffer cursor reads
 
 **Symptom**: IME fallback cursor sampling still occasionally anchors to a Claude/Codex status or animation row even though sampling waits for a short quiet period after output.
