@@ -611,3 +611,37 @@ Add project-level Codex provider switching with generated profiles, cleanup, sid
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 修复终端侧边面板切换异常
+
+**Date**: 2026-06-28
+**Task**: 修复终端侧边面板切换异常
+**Branch**: `master`
+
+### Summary
+
+修复终端右侧合并面板 Tab 宽度与实时统计切换 Hooks 崩溃，解耦右侧文件面板和左侧项目树，并补充 V1.2.1 changelog。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0f9e885` | (see git log) |
+| `d00f99f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
