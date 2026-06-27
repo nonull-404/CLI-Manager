@@ -29,7 +29,6 @@ export function WindowTitleBar() {
     if (!IN_TAURI || isMacOs) return;
     const appWindow = getCurrentWindow();
     let mounted = true;
-    let unlisten: (() => void) | null = null;
 
     const syncMaximized = async () => {
       try {
@@ -42,30 +41,26 @@ export function WindowTitleBar() {
       }
     };
 
-    void (async () => {
-      await syncMaximized();
-      try {
-        unlisten = await appWindow.onResized(() => {
-          void syncMaximized();
-        });
-      } catch (err) {
-        logWarn("Failed to listen to window resize event", err);
-      }
-    })();
+    void syncMaximized();
 
     return () => {
       mounted = false;
-      if (unlisten) {
-        unlisten();
-      }
     };
   }, [isMacOs]);
 
-  const runWindowAction = (action: () => Promise<void>) => {
+  const runWindowAction = (source: string, action: () => Promise<void>) => {
     if (!IN_TAURI) return;
-    void action().catch((err) => {
-      logWarn("Window title bar action failed", err);
-    });
+    void (async () => {
+      try {
+        await action();
+        if (source === "toggleMaximize") {
+          const next = await getCurrentWindow().isMaximized();
+          setMaximized(next);
+        }
+      } catch (err) {
+        logWarn("Window title bar action failed", { source, err });
+      }
+    })();
   };
 
   if (isMacOs) return null;
@@ -75,7 +70,7 @@ export function WindowTitleBar() {
       <div
         className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-[13px]"
         data-tauri-drag-region
-        onDoubleClick={() => runWindowAction(() => getCurrentWindow().toggleMaximize())}
+        onDoubleClick={() => runWindowAction("toggleMaximize", () => getCurrentWindow().toggleMaximize())}
       >
         <img
           src={appIcon32}
@@ -92,7 +87,7 @@ export function WindowTitleBar() {
             className="titlebar-btn"
             aria-label={t("window.minimize")}
             title={t("window.minimize")}
-            onClick={() => runWindowAction(() => getCurrentWindow().minimize())}
+            onClick={() => runWindowAction("minimize", () => getCurrentWindow().minimize())}
           >
             <Minus size={14} />
           </button>
@@ -101,7 +96,7 @@ export function WindowTitleBar() {
             className="titlebar-btn"
             aria-label={maximized ? t("window.restore") : t("window.maximize")}
             title={maximized ? t("window.restore") : t("window.maximize")}
-            onClick={() => runWindowAction(() => getCurrentWindow().toggleMaximize())}
+            onClick={() => runWindowAction("toggleMaximize", () => getCurrentWindow().toggleMaximize())}
           >
             {maximized ? <Copy size={12} /> : <Square size={12} />}
           </button>
@@ -110,7 +105,7 @@ export function WindowTitleBar() {
             className="titlebar-btn titlebar-btn-close"
             aria-label={t("window.close")}
             title={t("window.close")}
-            onClick={() => runWindowAction(() => getCurrentWindow().close())}
+            onClick={() => runWindowAction("close", () => getCurrentWindow().close())}
           >
             <X size={14} />
           </button>
