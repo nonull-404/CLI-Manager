@@ -33,6 +33,7 @@ import { useModelPricingStore } from "./stores/modelPricingStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
 import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contrast";
 import { translateCurrent, useI18n } from "./lib/i18n";
+import { getOsPlatform } from "./lib/shell";
 import "./App.css";
 
 const appStartAt =
@@ -50,6 +51,10 @@ const IN_TAURI = isTauri();
 const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
 let claudeHookToastSequence = 0;
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
+
+function isLikelyMacOs() {
+  return typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+}
 
 interface HookSettingsStatusPayload {
   claude: { status: HookInstallStatus };
@@ -344,6 +349,7 @@ function App() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [terminalFullscreen, setTerminalFullscreen] = useState(false);
+  const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
   const terminalFullscreenMaximizedRef = useRef(false);
   const restoreWindowWidthRef = useRef<number | null>(null);
   const closeBehaviorRef = useRef(closeBehavior);
@@ -357,6 +363,13 @@ function App() {
   useEffect(() => {
     closeBehaviorRef.current = closeBehavior;
   }, [closeBehavior]);
+
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    void getOsPlatform()
+      .then((platform) => setIsMacOs(platform === "macos"))
+      .catch((err) => logWarn("Failed to read OS platform for window sizing", err));
+  }, []);
 
   const runCloseAutoSync = useCallback(async () => {
     const result = await useSyncStore.getState().runAutoSync("close");
@@ -717,7 +730,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (!IN_TAURI) return;
+    if (!IN_TAURI || isMacOs) return;
     const appWindow = getCurrentWindow();
     void (async () => {
       try {
@@ -753,7 +766,7 @@ function App() {
         logWarn("Failed to adjust window size", err);
       }
     })();
-  }, [viewMode, settingsOpen]);
+  }, [isMacOs, viewMode, settingsOpen]);
 
   useEffect(() => {
     if (firstScreenPerfReported) return;

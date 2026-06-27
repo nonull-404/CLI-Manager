@@ -41,6 +41,7 @@ import {
 import { openPath } from "@tauri-apps/plugin-opener";
 import type { SettingsTab } from "../SettingsModal";
 import { useI18n } from "../../lib/i18n";
+import { getOsPlatform } from "../../lib/shell";
 
 interface SidebarProps {
   onOpenSettings: (tab?: SettingsTab) => void;
@@ -53,6 +54,11 @@ const SIDEBAR_COLLAPSE_THRESHOLD = 140;
 const SIDEBAR_MIN_WIDTH = 168;
 const SIDEBAR_MAX_WIDTH = 500;
 const SIDEBAR_AUTO_COLLAPSE_BREAKPOINT = 900;
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+function isLikelyMacOs() {
+  return typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+}
 
 function clampExpandedSidebarWidth(width: number): number {
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, width));
@@ -133,6 +139,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     initialSidebarWidth <= SIDEBAR_COLLAPSED_WIDTH
   );
   const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
 
   const liveSidebarWidthRef = useRef(initialSidebarWidth);
   const isResizingRef = useRef(false);
@@ -219,6 +226,13 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!IN_TAURI) return;
+    void getOsPlatform()
+      .then((platform) => setIsMacOs(platform === "macos"))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (compactMode) {
       setSidebarCollapsed(false);
       return;
@@ -300,7 +314,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   }, [sidebarCollapsed, expandSidebar]);
 
   useEffect(() => {
-    if (compactMode) return;
+    if (compactMode || isMacOs) return;
     const syncViewportCollapse = () => {
       if (window.innerWidth < SIDEBAR_AUTO_COLLAPSE_BREAKPOINT) {
         if (!sidebarCollapsed) {
@@ -323,7 +337,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     return () => {
       window.removeEventListener("resize", syncViewportCollapse);
     };
-  }, [compactMode, sidebarCollapsed, collapseSidebar, expandSidebar]);
+  }, [compactMode, isMacOs, sidebarCollapsed, collapseSidebar, expandSidebar]);
 
   const startResize = useCallback(
     (e: ReactMouseEvent) => {

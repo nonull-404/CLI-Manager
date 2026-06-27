@@ -3,17 +3,30 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { logWarn } from "../lib/logger";
+import { getOsPlatform } from "../lib/shell";
 import appIcon32 from "../assets/app-icon-32.png";
 import { useI18n } from "../lib/i18n";
 
 const IN_TAURI = isTauri();
 
+function isLikelyMacOs() {
+  return typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+}
+
 export function WindowTitleBar() {
   const { t } = useI18n();
+  const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
     if (!IN_TAURI) return;
+    void getOsPlatform()
+      .then((platform) => setIsMacOs(platform === "macos"))
+      .catch((err) => logWarn("Failed to read OS platform for title bar", err));
+  }, []);
+
+  useEffect(() => {
+    if (!IN_TAURI || isMacOs) return;
     const appWindow = getCurrentWindow();
     let mounted = true;
     let unlisten: (() => void) | null = null;
@@ -46,7 +59,7 @@ export function WindowTitleBar() {
         unlisten();
       }
     };
-  }, []);
+  }, [isMacOs]);
 
   const runWindowAction = (action: () => Promise<void>) => {
     if (!IN_TAURI) return;
@@ -54,6 +67,8 @@ export function WindowTitleBar() {
       logWarn("Window title bar action failed", err);
     });
   };
+
+  if (isMacOs) return null;
 
   return (
     <header className="window-titlebar flex h-[26px] shrink-0 items-center bg-surface-container-low">
@@ -70,7 +85,7 @@ export function WindowTitleBar() {
         />
         <span className="truncate text-[13px] font-semibold tracking-[0.005em] text-on-surface">CLI-Manager</span>
       </div>
-      {IN_TAURI && (
+      {!isMacOs && IN_TAURI && (
         <div className="flex items-center">
           <button
             type="button"
