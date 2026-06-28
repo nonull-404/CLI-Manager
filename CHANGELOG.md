@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## [V1.2.2] - 2026-06-28
+
+### Hook 通知
+
+- **系统通知点击跳转终端**：Claude / Codex Hook 系统级通知改为可交互通知，点击通知正文或“处理”按钮会唤起 CLI-Manager 并切回对应终端；目标终端已关闭时会聚焦应用并提示目标已关闭。
+- **跨平台通知回调收敛**：Windows / macOS / Linux 统一通过原生通知响应事件回到前端；WSL 仍保留 Windows Toast fallback，通知失败不会影响应用内 toast 和标签状态。
+
+### 开发体验
+
+- **开发版单实例兼容正式版**：`npm run tauri dev` 自动使用 dev Tauri 配置，并通过版本化单实例锁与已安装正式版共存；dev 仍共享正式版数据目录，避免项目和设置配置丢失。
+
 ## [V1.2.1] - 2026-06-26
 
 ### Codex 子 Agent Transcript 绑定修复

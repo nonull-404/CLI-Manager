@@ -27,6 +27,12 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+#[tauri::command]
+fn app_show_main_window(app: AppHandle) -> Result<(), String> {
+    show_main_window(&app);
+    Ok(())
+}
+
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -403,6 +409,8 @@ pub fn run() {
             commands::model_pricing::model_prices_sync,
             commands::system_notification::is_wsl,
             commands::system_notification::send_notification_via_windows,
+            commands::system_notification::send_interactive_system_notification,
+            app_show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
