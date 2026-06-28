@@ -908,6 +908,7 @@ function App() {
       <Toaster
         theme={resolvedTheme}
         position="bottom-right"
+        closeButton
         expand
         toastOptions={{
           classNames: {
