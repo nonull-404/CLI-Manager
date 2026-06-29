@@ -879,7 +879,7 @@ fn resolve_session_file_ref(
     let requested = requested
         .canonicalize()
         .map_err(|_| format!("Session file not found: {file_path}"))?;
-    if !requested.starts_with(history_base) {
+    if !path_within_history_scope(&requested, history_base) {
         return Err("session_file_outside_history_scope".to_string());
     }
 
@@ -900,6 +900,21 @@ fn resolve_session_file_ref(
     }
 
     Err("session_file_not_indexed".to_string())
+}
+
+fn path_within_history_scope(requested: &Path, history_base: &Path) -> bool {
+    let requested_str = requested.to_string_lossy();
+    let history_base_str = history_base.to_string_lossy();
+
+    if let (Some((requested_distro, requested_linux)), Some((base_distro, base_linux))) = (
+        crate::wsl::parse_wsl_unc_path(&requested_str),
+        crate::wsl::parse_wsl_unc_path(&history_base_str),
+    ) {
+        return requested_distro.eq_ignore_ascii_case(&base_distro)
+            && Path::new(&requested_linux).starts_with(Path::new(&base_linux));
+    }
+
+    requested.starts_with(history_base)
 }
 
 #[tauri::command]
@@ -6017,6 +6032,24 @@ mod tests {
         ));
 
         assert_eq!(err, "session_file_outside_history_scope");
+    }
+
+    #[test]
+    fn path_within_history_scope_accepts_equivalent_wsl_unc_prefixes() {
+        let requested =
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\silver\.codex\sessions\2026\06\29\rollout.jsonl");
+        let history_base = PathBuf::from(r"\\wsl$\Ubuntu\home\silver\.codex\sessions");
+
+        assert!(path_within_history_scope(&requested, &history_base));
+    }
+
+    #[test]
+    fn path_within_history_scope_rejects_wsl_paths_outside_base() {
+        let requested =
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\silver\.codex\other\rollout.jsonl");
+        let history_base = PathBuf::from(r"\\wsl$\Ubuntu\home\silver\.codex\sessions");
+
+        assert!(!path_within_history_scope(&requested, &history_base));
     }
 
     #[test]

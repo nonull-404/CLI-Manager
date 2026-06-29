@@ -462,9 +462,10 @@ export function GeneralSettingsPage() {
     setUiTextColorDraft(uiTextColor);
   }, [uiTextColor]);
 
+  const fallbackWslDistro = ccusageToolStatus?.wsl?.distro ?? null;
   const wslTarget = useMemo(
-    () => resolveCcusageWslTarget(claudeHookConfigDir, codexHookConfigDir),
-    [claudeHookConfigDir, codexHookConfigDir]
+    () => resolveCcusageWslTarget(claudeHookConfigDir, codexHookConfigDir, fallbackWslDistro),
+    [claudeHookConfigDir, codexHookConfigDir, fallbackWslDistro]
   );
   const hasWslSignal = Boolean(wslTarget.distro) || wslTarget.conflicts.length > 0;
   const matchedWslStatus =
@@ -506,9 +507,9 @@ export function GeneralSettingsPage() {
   }, [ccusageCheckingStatus, matchedWslStatus, wslTarget.conflicts.length, wslTarget.distro]);
 
   useEffect(() => {
-    if (!hasWslSignal) return;
+    if (!ccusageUseWsl && !hasWslSignal) return;
     void checkCcusageStatus().catch(() => {});
-  }, [checkCcusageStatus, hasWslSignal, claudeHookConfigDir, codexHookConfigDir]);
+  }, [checkCcusageStatus, ccusageUseWsl, hasWslSignal, claudeHookConfigDir, codexHookConfigDir]);
 
   const refreshCcusageWslStatus = () => {
     void checkCcusageStatus().catch(() => {});

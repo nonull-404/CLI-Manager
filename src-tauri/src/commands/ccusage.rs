@@ -46,7 +46,7 @@ pub struct CcusageReportResponse {
     refreshed_at: i64,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum RuntimeTarget {
     Host,
     Wsl { distro: String },
@@ -56,6 +56,12 @@ enum RuntimeTarget {
 struct ConfigDir {
     runtime: RuntimeTarget,
     path: String,
+}
+
+#[derive(Clone)]
+struct DefaultWslContext {
+    distro: String,
+    home: String,
 }
 
 fn now_millis() -> i64 {
@@ -78,6 +84,10 @@ fn base_envs() -> Vec<(&'static str, String)> {
         ("NPM_CONFIG_REGISTRY", REGISTRY_MIRROR.to_string()),
         ("npm_config_registry", REGISTRY_MIRROR.to_string()),
     ]
+}
+
+fn config_value_present(value: Option<&String>) -> bool {
+    value.map(|item| !item.trim().is_empty()).unwrap_or(false)
 }
 
 fn host_command_output(
@@ -120,6 +130,61 @@ fn wsl_command_output(
     command
         .output()
         .map_err(|err| format!("执行 wsl.exe -d {distro} --exec {program} 失败: {err}"))
+}
+
+fn detect_default_wsl_context() -> Result<Option<DefaultWslContext>, String> {
+    let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
+    let mut command = silent_command(&wsl_exe.to_string_lossy());
+    command.args([
+        "--exec",
+        "sh",
+        "-lc",
+        r#"printf '%s\n%s' "$WSL_DISTRO_NAME" "$HOME""#,
+    ]);
+    let output = command
+        .output()
+        .map_err(|err| format!("执行 wsl.exe 探测默认发行版失败: {err}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let distro = lines.next().map(str::trim).unwrap_or_default();
+    let home = lines.next().map(str::trim).unwrap_or_default();
+    if distro.is_empty() || home.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(DefaultWslContext {
+        distro: distro.to_string(),
+        home: home.to_string(),
+    }))
+}
+
+fn default_wsl_config_dir(context: &DefaultWslContext, leaf: &str) -> ConfigDir {
+    let home = context.home.trim_end_matches('/');
+    let leaf = leaf.trim_start_matches('/');
+    ConfigDir {
+        runtime: RuntimeTarget::Wsl {
+            distro: context.distro.clone(),
+        },
+        path: format!("{home}/{leaf}"),
+    }
+}
+
+fn fallback_default_wsl_context(
+    claude_config_dir: Option<&String>,
+    codex_config_dir: Option<&String>,
+    use_wsl: bool,
+) -> Result<Option<DefaultWslContext>, String> {
+    if !use_wsl
+        || config_value_present(claude_config_dir)
+        || config_value_present(codex_config_dir)
+    {
+        return Ok(None);
+    }
+    detect_default_wsl_context()
 }
 
 fn shell_escape(value: &str) -> String {
@@ -203,6 +268,11 @@ fn tool_status(
     codex_config_dir: Option<String>,
 ) -> Result<CcusageToolStatus, String> {
     let host = runtime_status(&RuntimeTarget::Host);
+    let default_wsl = fallback_default_wsl_context(
+        claude_config_dir.as_ref(),
+        codex_config_dir.as_ref(),
+        true,
+    )?;
     let claude = resolve_config_dir(claude_config_dir, "Claude")?;
     let codex = resolve_config_dir(codex_config_dir, "Codex")?;
     let mut distros = Vec::new();
@@ -215,6 +285,8 @@ fn tool_status(
     }
     let wsl = if distros.len() == 1 {
         distros.into_iter().next().map(wsl_tool_status)
+    } else if distros.is_empty() {
+        default_wsl.map(|context| wsl_tool_status(context.distro))
     } else {
         None
     };
@@ -293,17 +365,28 @@ fn resolve_runtime_for_source(
     codex_config_dir: Option<String>,
     use_wsl: bool,
 ) -> Result<(RuntimeTarget, Vec<(&'static str, String)>), String> {
+    let default_wsl = fallback_default_wsl_context(
+        claude_config_dir.as_ref(),
+        codex_config_dir.as_ref(),
+        use_wsl,
+    )?;
     let claude = resolve_config_dir_for_runtime(claude_config_dir, "Claude", use_wsl)?;
     let codex = resolve_config_dir_for_runtime(codex_config_dir, "Codex", use_wsl)?;
+    let fallback_claude = default_wsl
+        .as_ref()
+        .map(|context| default_wsl_config_dir(context, ".claude"));
+    let fallback_codex = default_wsl
+        .as_ref()
+        .map(|context| default_wsl_config_dir(context, ".codex"));
     let mut envs = base_envs();
 
     if source != "codex" {
-        if let Some(path) = claude.as_ref() {
+        if let Some(path) = claude.as_ref().or(fallback_claude.as_ref()) {
             envs.push(("CLAUDE_CONFIG_DIR", path.path.clone()));
         }
     }
     if source != "claude" {
-        if let Some(path) = codex.as_ref() {
+        if let Some(path) = codex.as_ref().or(fallback_codex.as_ref()) {
             envs.push(("CODEX_HOME", path.path.clone()));
         }
     }
@@ -311,16 +394,24 @@ fn resolve_runtime_for_source(
     let target = match source {
         "claude" => claude
             .as_ref()
+            .or(fallback_claude.as_ref())
             .map(|config| config.runtime.clone())
             .unwrap_or(RuntimeTarget::Host),
         "codex" => codex
             .as_ref()
+            .or(fallback_codex.as_ref())
             .map(|config| config.runtime.clone())
             .unwrap_or(RuntimeTarget::Host),
         "all" => {
             let mut has_host = false;
             let mut wsl_distros = Vec::new();
-            for config in [claude.as_ref(), codex.as_ref()].into_iter().flatten() {
+            for config in [
+                claude.as_ref().or(fallback_claude.as_ref()),
+                codex.as_ref().or(fallback_codex.as_ref()),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 match &config.runtime {
                     RuntimeTarget::Host => has_host = true,
                     RuntimeTarget::Wsl { distro } => {
@@ -455,4 +546,36 @@ pub async fn ccusage_refresh_report(
     })
     .await
     .map_err(|err| format!("刷新 ccusage 报告失败: {err}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_value_present_only_accepts_non_empty_text() {
+        assert!(!config_value_present(None));
+        assert!(!config_value_present(Some(&"   ".to_string())));
+        assert!(config_value_present(Some(&"value".to_string())));
+    }
+
+    #[test]
+    fn default_wsl_config_dir_joins_home_and_leaf() {
+        let context = DefaultWslContext {
+            distro: "Ubuntu".to_string(),
+            home: "/home/silver/".to_string(),
+        };
+
+        let claude = default_wsl_config_dir(&context, ".claude");
+        let codex = default_wsl_config_dir(&context, "/.codex");
+
+        assert_eq!(claude.path, "/home/silver/.claude");
+        assert_eq!(codex.path, "/home/silver/.codex");
+        assert_eq!(
+            claude.runtime,
+            RuntimeTarget::Wsl {
+                distro: "Ubuntu".to_string()
+            }
+        );
+    }
 }
