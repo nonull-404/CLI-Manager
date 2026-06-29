@@ -62,6 +62,7 @@ function resolveCcusageRuntimeScope(
 - `ccusage_get_status` remains observational: it may still report both host and discovered WSL tool status regardless of the toggle, because the settings UI needs to show readiness before the user enables WSL execution.
 - `CcusageStatsPanel` must derive readiness, prepare-card warnings, mixed-runtime warnings, and WSL install hints from the explicit runtime scope, not merely from the existence of any WSL config path.
 - Host install CTA (`installTools()` without WSL target) must only show when the active runtime scope is `host`.
+- Report refresh execution must invoke `bun x ccusage ...`, not `bunx ccusage ...`. This avoids PATH / wrapper drift where WSL resolves `ccusage` through a Node global entrypoint that fails on locale JSON ESM imports.
 
 ### 4. Validation & Error Matrix
 
@@ -129,6 +130,7 @@ const runtimeScope = resolveCcusageRuntimeScope(source, claudeDir, codexDir);
   - Assert `ccusage_refresh_report(..., use_wsl = false)` keeps host runtime even for WSL UNC config dirs.
   - Assert `ccusage_refresh_report(..., use_wsl = true)` still converts WSL UNC config dirs to Linux paths and runs via WSL target.
   - Assert default fallback is used only when both config dirs are empty.
+  - Assert report command construction uses `bun` with `["x", "ccusage", ...]` so refresh does not depend on `bunx` / `ccusage` shell wrappers.
 
 ### 7. Wrong vs Correct
 

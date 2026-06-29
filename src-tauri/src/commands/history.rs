@@ -903,18 +903,37 @@ fn resolve_session_file_ref(
 }
 
 fn path_within_history_scope(requested: &Path, history_base: &Path) -> bool {
-    let requested_str = requested.to_string_lossy();
-    let history_base_str = history_base.to_string_lossy();
-
     if let (Some((requested_distro, requested_linux)), Some((base_distro, base_linux))) = (
-        crate::wsl::parse_wsl_unc_path(&requested_str),
-        crate::wsl::parse_wsl_unc_path(&history_base_str),
+        wsl_scope_path_parts(requested),
+        wsl_scope_path_parts(history_base),
     ) {
         return requested_distro.eq_ignore_ascii_case(&base_distro)
             && Path::new(&requested_linux).starts_with(Path::new(&base_linux));
     }
 
     requested.starts_with(history_base)
+}
+
+fn wsl_scope_path_parts(path: &Path) -> Option<(String, String)> {
+    let raw = path.to_string_lossy();
+    let normalized = normalize_wsl_scope_unc(&raw);
+    crate::wsl::parse_wsl_unc_path(&normalized)
+}
+
+fn normalize_wsl_scope_unc(path: &str) -> String {
+    let normalized = path.trim().replace('/', "\\");
+    let lower = normalized.to_ascii_lowercase();
+    const VERBATIM_WSL_LOCALHOST_PREFIX: &str = "\\\\?\\UNC\\wsl.localhost\\";
+    const VERBATIM_WSL_DOLLAR_PREFIX: &str = "\\\\?\\UNC\\wsl$\\";
+    const VERBATIM_UNC_PREFIX_LEN: usize = "\\\\?\\UNC\\".len();
+
+    if lower.starts_with(&VERBATIM_WSL_LOCALHOST_PREFIX.to_ascii_lowercase())
+        || lower.starts_with(&VERBATIM_WSL_DOLLAR_PREFIX.to_ascii_lowercase())
+    {
+        return format!("\\\\{}", &normalized[VERBATIM_UNC_PREFIX_LEN..]);
+    }
+
+    normalized
 }
 
 #[tauri::command]
@@ -6036,9 +6055,20 @@ mod tests {
 
     #[test]
     fn path_within_history_scope_accepts_equivalent_wsl_unc_prefixes() {
-        let requested =
-            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\silver\.codex\sessions\2026\06\29\rollout.jsonl");
+        let requested = PathBuf::from(
+            r"\\wsl.localhost\Ubuntu\home\silver\.codex\sessions\2026\06\29\rollout.jsonl",
+        );
         let history_base = PathBuf::from(r"\\wsl$\Ubuntu\home\silver\.codex\sessions");
+
+        assert!(path_within_history_scope(&requested, &history_base));
+    }
+
+    #[test]
+    fn path_within_history_scope_accepts_verbatim_wsl_unc_prefixes() {
+        let requested = PathBuf::from(
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\silver\.codex\sessions\2026\06\29\rollout.jsonl",
+        );
+        let history_base = PathBuf::from(r"\\?\UNC\wsl$\Ubuntu\home\silver\.codex\sessions");
 
         assert!(path_within_history_scope(&requested, &history_base));
     }

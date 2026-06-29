@@ -178,9 +178,7 @@ fn fallback_default_wsl_context(
     codex_config_dir: Option<&String>,
     use_wsl: bool,
 ) -> Result<Option<DefaultWslContext>, String> {
-    if !use_wsl
-        || config_value_present(claude_config_dir)
-        || config_value_present(codex_config_dir)
+    if !use_wsl || config_value_present(claude_config_dir) || config_value_present(codex_config_dir)
     {
         return Ok(None);
     }
@@ -268,11 +266,8 @@ fn tool_status(
     codex_config_dir: Option<String>,
 ) -> Result<CcusageToolStatus, String> {
     let host = runtime_status(&RuntimeTarget::Host);
-    let default_wsl = fallback_default_wsl_context(
-        claude_config_dir.as_ref(),
-        codex_config_dir.as_ref(),
-        true,
-    )?;
+    let default_wsl =
+        fallback_default_wsl_context(claude_config_dir.as_ref(), codex_config_dir.as_ref(), true)?;
     let claude = resolve_config_dir(claude_config_dir, "Claude")?;
     let codex = resolve_config_dir(codex_config_dir, "Codex")?;
     let mut distros = Vec::new();
@@ -452,16 +447,9 @@ fn ccusage_report_payload(
     envs: &[(&str, String)],
     include_breakdown: bool,
 ) -> Result<Value, String> {
-    let mut args = vec!["ccusage"];
-    if source == "claude" || source == "codex" {
-        args.push(source);
-    }
-    args.extend([report_kind, "--json", "--offline"]);
-    if include_breakdown {
-        args.push("--breakdown");
-    }
-
-    let output = command_output(target, "bunx", &args, envs)?;
+    let (program, args) = ccusage_command(source, report_kind, include_breakdown);
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = command_output(target, program, &arg_refs, envs)?;
     if !output.status.success() {
         return Err(format!(
             "运行 ccusage {report_kind} 失败: {}",
@@ -471,6 +459,26 @@ fn ccusage_report_payload(
 
     serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("解析 ccusage {report_kind} JSON 失败: {err}"))
+}
+
+fn ccusage_command(
+    source: &str,
+    report_kind: &str,
+    include_breakdown: bool,
+) -> (&'static str, Vec<String>) {
+    let mut args = vec!["x".to_string(), "ccusage".to_string()];
+    if source == "claude" || source == "codex" {
+        args.push(source.to_string());
+    }
+    args.extend([
+        report_kind.to_string(),
+        "--json".to_string(),
+        "--offline".to_string(),
+    ]);
+    if include_breakdown {
+        args.push("--breakdown".to_string());
+    }
+    ("bun", args)
 }
 
 #[tauri::command]
@@ -576,6 +584,25 @@ mod tests {
             RuntimeTarget::Wsl {
                 distro: "Ubuntu".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn ccusage_command_uses_bun_x_with_optional_source_and_breakdown() {
+        let (program, args) = ccusage_command("codex", DAILY_REPORT_KIND, true);
+
+        assert_eq!(program, "bun");
+        assert_eq!(
+            args,
+            vec![
+                "x".to_string(),
+                "ccusage".to_string(),
+                "codex".to_string(),
+                DAILY_REPORT_KIND.to_string(),
+                "--json".to_string(),
+                "--offline".to_string(),
+                "--breakdown".to_string(),
+            ]
         );
     }
 }
