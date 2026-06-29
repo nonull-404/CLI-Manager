@@ -876,10 +876,34 @@ fn resolve_session_file_ref(
         return Err("invalid_session_file".to_string());
     }
 
+    debug!(
+        "history session scope validation start: source={}, project_key={}, requested_raw={}, history_base_raw={}",
+        source,
+        project_key,
+        file_path,
+        history_base.to_string_lossy()
+    );
+
     let requested = requested
         .canonicalize()
         .map_err(|_| format!("Session file not found: {file_path}"))?;
+    debug!(
+        "history session scope canonicalized: source={}, project_key={}, requested={}, history_base={}",
+        source,
+        project_key,
+        requested.to_string_lossy(),
+        history_base.to_string_lossy()
+    );
     if !path_within_history_scope(&requested, history_base) {
+        warn!(
+            "history session scope rejected: source={}, project_key={}, requested={}, history_base={}, requested_scope={}, history_scope={}",
+            source,
+            project_key,
+            requested.to_string_lossy(),
+            history_base.to_string_lossy(),
+            history_scope_debug_string(&requested),
+            history_scope_debug_string(history_base)
+        );
         return Err("session_file_outside_history_scope".to_string());
     }
 
@@ -891,6 +915,13 @@ fn resolve_session_file_ref(
             continue;
         };
         if candidate_path == requested {
+            debug!(
+                "history session scope matched indexed candidate: source={}, project_key={}, requested={}, candidate={}",
+                source,
+                project_key,
+                requested.to_string_lossy(),
+                candidate_path.to_string_lossy()
+            );
             return Ok(SessionFileRef {
                 source: candidate.source,
                 project_key: candidate.project_key,
@@ -903,21 +934,59 @@ fn resolve_session_file_ref(
 }
 
 fn path_within_history_scope(requested: &Path, history_base: &Path) -> bool {
-    if let (Some((requested_distro, requested_linux)), Some((base_distro, base_linux))) = (
-        wsl_scope_path_parts(requested),
-        wsl_scope_path_parts(history_base),
-    ) {
-        return requested_distro.eq_ignore_ascii_case(&base_distro)
-            && Path::new(&requested_linux).starts_with(Path::new(&base_linux));
+    let requested_scope = wsl_scope_path_parts(requested);
+    let history_scope = wsl_scope_path_parts(history_base);
+
+    if let (Some((requested_distro, requested_linux)), Some((base_distro, base_linux))) =
+        (requested_scope.as_ref(), history_scope.as_ref())
+    {
+        let accepted = requested_distro.eq_ignore_ascii_case(base_distro)
+            && Path::new(requested_linux).starts_with(Path::new(base_linux));
+        debug!(
+            "history session scope wsl compare: requested_raw={}, history_base_raw={}, requested_scope={}, history_scope={}, accepted={}",
+            requested.to_string_lossy(),
+            history_base.to_string_lossy(),
+            format_wsl_scope_parts(requested_scope.as_ref()),
+            format_wsl_scope_parts(history_scope.as_ref()),
+            accepted
+        );
+        return accepted;
     }
 
-    requested.starts_with(history_base)
+    let accepted = requested.starts_with(history_base);
+    debug!(
+        "history session scope native compare: requested_raw={}, history_base_raw={}, requested_scope={}, history_scope={}, accepted={}",
+        requested.to_string_lossy(),
+        history_base.to_string_lossy(),
+        format_wsl_scope_parts(requested_scope.as_ref()),
+        format_wsl_scope_parts(history_scope.as_ref()),
+        accepted
+    );
+    accepted
 }
 
 fn wsl_scope_path_parts(path: &Path) -> Option<(String, String)> {
     let raw = path.to_string_lossy();
     let normalized = normalize_wsl_scope_unc(&raw);
     crate::wsl::parse_wsl_unc_path(&normalized)
+}
+
+fn history_scope_debug_string(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let normalized = normalize_wsl_scope_unc(&raw);
+    let parsed = crate::wsl::parse_wsl_unc_path(&normalized);
+    format!(
+        "raw={} | normalized={} | parsed={}",
+        raw,
+        normalized,
+        format_wsl_scope_parts(parsed.as_ref())
+    )
+}
+
+fn format_wsl_scope_parts(parts: Option<&(String, String)>) -> String {
+    parts
+        .map(|(distro, linux)| format!("Some(distro={distro}, linux={linux})"))
+        .unwrap_or_else(|| "None".to_string())
 }
 
 fn normalize_wsl_scope_unc(path: &str) -> String {
