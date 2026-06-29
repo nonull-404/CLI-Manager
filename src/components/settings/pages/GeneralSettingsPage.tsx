@@ -802,7 +802,15 @@ export function GeneralSettingsPage() {
                 <Switch
                   color="cliPrimary"
                   checked={ccusageAnalyticsEnabled}
-                  onChange={(event) => void update("ccusageAnalyticsEnabled", event.currentTarget.checked)}
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    void (async () => {
+                      await update("ccusageAnalyticsEnabled", checked);
+                      if (!checked && ccusageUseWsl) {
+                        await update("ccusageUseWsl", false);
+                      }
+                    })();
+                  }}
                   aria-label={
                     ccusageAnalyticsEnabled
                       ? t("settings.general.disableCcusageDashboard")
@@ -844,6 +852,7 @@ export function GeneralSettingsPage() {
                   <Switch
                     color="cliPrimary"
                     checked={ccusageUseWsl}
+                    disabled={!ccusageAnalyticsEnabled}
                     onChange={(event) => void update("ccusageUseWsl", event.currentTarget.checked)}
                     aria-label={
                       ccusageUseWsl
@@ -853,6 +862,11 @@ export function GeneralSettingsPage() {
                   />
                 </Group>
               </Group>
+              {!ccusageAnalyticsEnabled && (
+                <Text mt="sm" size="xs" lh={1.55} c="var(--text-muted)">
+                  {t("settings.general.ccusageUseWslRequiresDashboard")}
+                </Text>
+              )}
             </Card>
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
