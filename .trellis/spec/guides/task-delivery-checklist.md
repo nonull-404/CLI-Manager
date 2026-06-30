@@ -13,9 +13,12 @@ Use this checklist for any task that writes files, whether it goes through the f
 ## Before You Edit
 
 - Run `git status --short` to see current dirty files.
-- Run `git log --oneline -5` to see recent repo updates before trusting cached assumptions.
+- Run `git fetch --prune` to refresh the current branch's remote tracking state.
+- If the branch has an upstream, run `git rev-list --left-right --count HEAD...@{upstream}` to compare local vs remote.
+- If the remote side is ahead, pull before editing when the working tree is clean.
+- If the remote side is ahead but the working tree is already dirty, stop and resolve that state before continuing; do not keep coding on stale base assumptions.
 - If unrelated dirty files exist, keep them out of your task and surface them in the commit plan instead of silently bundling them.
-- Treat this as a freshness check, not an instruction to auto-pull from remote.
+- If there is no upstream configured for the current branch, surface that fact instead of pretending the remote-ahead check succeeded.
 
 ---
 
