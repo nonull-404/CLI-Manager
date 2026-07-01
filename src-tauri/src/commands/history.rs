@@ -1475,13 +1475,14 @@ fn build_history_stats_daily_index(
         let usage_events = stats_usage_events_or_fallback(&summary, &computed.stats);
         for event in usage_events {
             let occurred_at = event.timestamp_ms.unwrap_or(summary.updated_at);
+            let repriced_stats = reprice_usage_stats(event.model.as_deref(), event.usage);
             let day_start = stats_day_start_with_offset(occurred_at, day_offset);
             days.entry(day_start)
                 .or_default()
                 .push(HistoryStatsSessionFact {
                     summary: summary.clone(),
                     occurred_at,
-                    stats: event.usage,
+                    stats: repriced_stats,
                     model: event.model,
                 });
         }
@@ -1956,6 +1957,19 @@ fn stats_usage_events_or_fallback(
     }]
 }
 
+fn reprice_usage_stats(model: Option<&str>, usage: UsageStatsScan) -> UsageStatsScan {
+    calculate_usage_cost(
+        model,
+        UsageTokenScan {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_creation_tokens: usage.cache_creation_tokens,
+            explicit_cost_usd: None,
+        },
+    )
+}
+
 fn history_stats_session_key(summary: &HistorySessionSummary) -> String {
     format!(
         "{}|{}|{}|{}",
@@ -2083,12 +2097,7 @@ fn invalidate_history_caches() {
     if let Ok(mut cache) = get_project_cache().lock() {
         cache.entries.clear();
     }
-    if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
-        cache.entries.clear();
-    }
-    if let Ok(mut cache) = get_stats_daily_index_cache().lock() {
-        cache.entries.clear();
-    }
+    invalidate_history_stats_caches();
     if let Ok(mut cache) = get_wsl_session_fingerprint_cache().lock() {
         cache.clear();
     }
@@ -2096,6 +2105,15 @@ fn invalidate_history_caches() {
         *index = HistorySessionIndex::default();
     }
     clear_persisted_history_index();
+}
+
+pub(crate) fn invalidate_history_stats_caches() {
+    if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
+        cache.entries.clear();
+    }
+    if let Ok(mut cache) = get_stats_daily_index_cache().lock() {
+        cache.entries.clear();
+    }
 }
 
 // ===== 历史索引磁盘持久化 =====
@@ -6285,6 +6303,105 @@ mod tests {
         assert_eq!(response.project_ranking[0].sessions, 1);
         assert_eq!(response.source_distribution[0].sessions, 1);
         assert_eq!(response.model_distribution[0].sessions, 1);
+    }
+
+    #[test]
+    fn history_stats_reprices_cached_usage_events_with_current_model_prices() {
+        crate::commands::model_pricing::model_prices_set_cache(vec![
+            crate::commands::model_pricing::ModelPriceEntry {
+                model: "priced-model".to_string(),
+                input_per_1m: 2.5,
+                output_per_1m: 15.0,
+                cache_read_per_1m: 0.25,
+                cache_creation_per_1m: 0.0,
+                source: "manual".to_string(),
+                source_model_id: Some("priced-model".to_string()),
+                raw_json: None,
+                updated_at_ms: 1,
+                synced_at_ms: None,
+            },
+        ])
+        .unwrap();
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("session.jsonl");
+        write_text(&file, "{}");
+
+        let usage = UsageStatsScan {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            cache_read_tokens: 10_000_000,
+            cache_creation_tokens: 0,
+            total_cost_usd: 1.23,
+            unpriced_tokens: 11_100_000,
+        };
+        let entry = HistoryIndexEntry {
+            file_ref: SessionFileRef {
+                source: "codex".to_string(),
+                project_key: "CLI-Manager".to_string(),
+                path: file,
+            },
+            fingerprint: SessionFileFingerprint {
+                created_at: DAY_MS,
+                updated_at: DAY_MS,
+                size: 2,
+            },
+            computed: CachedSessionComputation {
+                created_at: DAY_MS,
+                updated_at: DAY_MS,
+                session_id: "session-1".to_string(),
+                title: "priced session".to_string(),
+                message_count: 1,
+                branch: None,
+                stats: SessionStatsScan {
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    cache_read_tokens: usage.cache_read_tokens,
+                    cache_creation_tokens: usage.cache_creation_tokens,
+                    total_cost_usd: usage.total_cost_usd,
+                    unpriced_tokens: usage.unpriced_tokens,
+                    dominant_model: Some("priced-model".to_string()),
+                    model_usage: HashMap::new(),
+                    context_window: None,
+                    last_context_tokens: None,
+                    reasoning_effort: None,
+                    token_trend: vec![usage_trend_point(UsageTokenScan {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        cache_read_tokens: usage.cache_read_tokens,
+                        cache_creation_tokens: usage.cache_creation_tokens,
+                        explicit_cost_usd: None,
+                    })],
+                    usage_events: vec![SessionUsageEventScan {
+                        timestamp_ms: Some(DAY_MS),
+                        model: Some("priced-model".to_string()),
+                        usage,
+                    }],
+                    tool_call_count: 0,
+                    mcp_calls: HashMap::new(),
+                    skill_calls: HashMap::new(),
+                    builtin_calls: HashMap::new(),
+                },
+            },
+        };
+        let bounds = StatsTimeBounds {
+            start_at: DAY_MS,
+            end_at: 2 * DAY_MS - 1,
+            start_day: DAY_MS,
+            range_days: 1,
+            explicit: true,
+        };
+
+        let daily_index = build_history_stats_daily_index(vec![entry], None, None, bounds);
+        let response = build_history_stats_response(&daily_index.days, bounds);
+
+        assert_eq!(response.total_input_tokens, 1_000_000);
+        assert_eq!(response.total_output_tokens, 100_000);
+        assert_eq!(response.total_cache_read_tokens, 10_000_000);
+        assert!((response.total_cost_usd - 6.5).abs() < 1e-9);
+        assert_eq!(response.total_unpriced_tokens, 0);
+        assert!((response.daily_series[0].total_cost_usd - 6.5).abs() < 1e-9);
+        assert_eq!(response.model_distribution[0].unpriced_tokens, 0);
     }
 
     #[test]

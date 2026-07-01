@@ -107,6 +107,12 @@ const MODEL_PRICE_COLUMNS = [
 
 let loadPromise: Promise<void> | null = null;
 
+const PRICE_UNIT_SCALE = 1_000_000;
+const OPENROUTER_CACHE_READ_KEYS = ["input_cache_read", "cache_read", "cache"] as const;
+const OPENROUTER_CACHE_CREATION_KEYS = ["input_cache_write", "cache_creation", "cache_write"] as const;
+const LITELLM_CACHE_READ_KEYS = ["cache_read_input_token_cost", "input_cost_per_token_cache_read"] as const;
+const LITELLM_CACHE_CREATION_KEYS = ["cache_creation_input_token_cost", "input_cost_per_token_cache_creation"] as const;
+
 function normalizePrice(price: ModelPrice): ModelPrice {
   const now = Date.now();
   return {
@@ -129,6 +135,85 @@ function sanitizePrice(value: number): number {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function parseRawPricePer1m(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value * PRICE_UNIT_SCALE : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed * PRICE_UNIT_SCALE : null;
+  }
+  return null;
+}
+
+function rawPricingRecord(source: string | null | undefined, rawJson: string | null): Record<string, unknown> | null {
+  if (!rawJson) return null;
+  try {
+    const parsed = asRecord(JSON.parse(rawJson) as unknown);
+    if (!parsed) return null;
+    if (source === "openrouter") {
+      return asRecord(parsed.pricing);
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function cachePriceKeys(source: string | null | undefined, kind: "read" | "creation"): readonly string[] {
+  if (source === "openrouter") {
+    return kind === "read" ? OPENROUTER_CACHE_READ_KEYS : OPENROUTER_CACHE_CREATION_KEYS;
+  }
+  if (source === "litellm") {
+    return kind === "read" ? LITELLM_CACHE_READ_KEYS : LITELLM_CACHE_CREATION_KEYS;
+  }
+  return [];
+}
+
+function readRawCachePrice(
+  source: string | null | undefined,
+  rawJson: string | null,
+  kind: "read" | "creation"
+): { present: boolean; value: number | null } {
+  const pricing = rawPricingRecord(source, rawJson);
+  if (!pricing) return { present: false, value: null };
+  for (const key of cachePriceKeys(source, kind)) {
+    if (!Object.prototype.hasOwnProperty.call(pricing, key)) continue;
+    return { present: true, value: parseRawPricePer1m(pricing[key]) };
+  }
+  return { present: false, value: null };
+}
+
+function hydrateStoredCachePrice(
+  source: string | null | undefined,
+  rawJson: string | null,
+  storedValue: number,
+  kind: "read" | "creation"
+): number {
+  const raw = readRawCachePrice(source, rawJson, kind);
+  if (raw.present) return sanitizePrice(raw.value ?? 0);
+  return sanitizePrice(storedValue);
+}
+
+function mergeRemoteCachePrice(
+  source: string | null | undefined,
+  rawJson: string | null,
+  remoteValue: number,
+  existingValue: number | undefined,
+  kind: "read" | "creation"
+): number {
+  const raw = readRawCachePrice(source, rawJson, kind);
+  if (raw.present) return sanitizePrice(raw.value ?? 0);
+  const next = sanitizePrice(remoteValue);
+  if (next > 0) return next;
+  return sanitizePrice(existingValue ?? next);
+}
+
 function resolvePriceContextWindow(source: string | null | undefined, rawJson: string | null, exact?: unknown): number | null {
   return normalizeContextLimit(exact) ?? extractModelContextWindow(rawJson, source ?? undefined);
 }
@@ -138,8 +223,8 @@ function rowToPrice(row: ModelPriceRow): ModelPrice {
     model: row.model,
     inputPer1m: row.input_per_1m,
     outputPer1m: row.output_per_1m,
-    cacheReadPer1m: row.cache_read_per_1m,
-    cacheCreationPer1m: row.cache_creation_per_1m,
+    cacheReadPer1m: hydrateStoredCachePrice(row.source, row.raw_json, row.cache_read_per_1m, "read"),
+    cacheCreationPer1m: hydrateStoredCachePrice(row.source, row.raw_json, row.cache_creation_per_1m, "creation"),
     contextWindow: resolvePriceContextWindow(row.source, row.raw_json),
     source: row.source,
     sourceModelId: row.source_model_id,
@@ -191,14 +276,14 @@ async function tryPushPricesToBackendCache(prices: ModelPrice[]): Promise<void> 
   }
 }
 
-function remoteToPrice(targetModel: string, remote: RemoteModelPrice): ModelPrice {
+function remoteToPrice(targetModel: string, remote: RemoteModelPrice, existing?: ModelPrice): ModelPrice {
   const now = Date.now();
   return {
     model: targetModel.trim(),
     inputPer1m: sanitizePrice(remote.inputPer1m),
     outputPer1m: sanitizePrice(remote.outputPer1m),
-    cacheReadPer1m: sanitizePrice(remote.cacheReadPer1m),
-    cacheCreationPer1m: sanitizePrice(remote.cacheCreationPer1m),
+    cacheReadPer1m: mergeRemoteCachePrice(remote.source, remote.rawJson, remote.cacheReadPer1m, existing?.cacheReadPer1m, "read"),
+    cacheCreationPer1m: mergeRemoteCachePrice(remote.source, remote.rawJson, remote.cacheCreationPer1m, existing?.cacheCreationPer1m, "creation"),
     contextWindow: resolvePriceContextWindow(remote.source, remote.rawJson, remote.contextWindow),
     source: remote.source,
     sourceModelId: remote.sourceModelId || remote.model,
@@ -333,7 +418,10 @@ export const useModelPricingStore = create<ModelPricingStore>((set, get) => ({
     set({ syncing: true, error: null });
     try {
       const result = await invoke<ModelPriceSyncResult>("model_prices_sync", { targets: effectiveTargets });
-      const matchedPrices = result.matched.map((match) => remoteToPrice(match.targetModel, match.remote));
+      const currentPrices = get().modelPrices;
+      const matchedPrices = result.matched.map((match) =>
+        remoteToPrice(match.targetModel, match.remote, currentPrices[match.targetModel])
+      );
       if (matchedPrices.length > 0) {
         await get().upsert(matchedPrices);
       }
@@ -352,7 +440,9 @@ export const useModelPricingStore = create<ModelPricingStore>((set, get) => ({
   },
 
   applyCandidate: async (candidate) => {
-    await get().upsert([remoteToPrice(candidate.targetModel, candidate.remote)]);
+    await get().upsert([
+      remoteToPrice(candidate.targetModel, candidate.remote, get().modelPrices[candidate.targetModel]),
+    ]);
     set((state) => ({
       candidates: state.candidates.filter((item) => item.targetModel !== candidate.targetModel),
       unmatchedModels: state.unmatchedModels.filter((model) => model !== candidate.targetModel),
@@ -367,7 +457,9 @@ export const useModelPricingStore = create<ModelPricingStore>((set, get) => ({
     for (const candidate of selected) {
       if (seenTargets.has(candidate.targetModel)) continue;
       seenTargets.add(candidate.targetModel);
-      prices.push(remoteToPrice(candidate.targetModel, candidate.remote));
+      prices.push(
+        remoteToPrice(candidate.targetModel, candidate.remote, get().modelPrices[candidate.targetModel])
+      );
     }
     if (prices.length === 0) return;
     await get().upsert(prices);

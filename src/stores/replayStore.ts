@@ -100,7 +100,7 @@ interface ReplayStore {
   ready: boolean;
   error: string | null;
   ensureReady: () => Promise<void>;
-  loadRecentSessions: (limit?: number) => Promise<void>;
+  loadRecentSessions: (limit?: number, preferredSessionKey?: string | null) => Promise<void>;
   loadSession: (sessionKey: string) => Promise<void>;
   selectSession: (sessionKey: string) => Promise<void>;
   recordCliHookEvent: (payload: CliHookPayload) => Promise<void>;
@@ -211,6 +211,21 @@ function mapEvent(row: ReplayEventRow): ReplayEvent {
     tags: parseJsonArray(row.tags_json),
     payload: parseJsonObject(row.payload_json),
   };
+}
+
+function buildPromptSessionTitle(message: string | null | undefined): string | null {
+  const trimmed = trimOptional(message);
+  if (!trimmed) return null;
+  const normalized = trimmed.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  const maxLength = 72;
+  return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function buildSourceSessionTitle(source: string | null | undefined): string {
+  if (source === "codex") return translateCurrent("aiReplay.source.codex");
+  if (source === "claude") return translateCurrent("aiReplay.source.claude");
+  return translateCurrent("aiReplay.source.default");
 }
 
 function classifyPayload(payload: CliHookPayload): Pick<ReplayEvent, "kind" | "title" | "detail" | "status" | "tags" | "durationMs"> {
@@ -614,7 +629,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
     }
   },
 
-  loadRecentSessions: async (limit = 12) => {
+  loadRecentSessions: async (limit = 12, preferredSessionKey = null) => {
     set({ loading: true });
     try {
       await ensureTables();
@@ -626,7 +641,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
       const sessions = rows.map(mapSession);
       set((state) => ({
         sessions,
-        selectedSessionKey: state.selectedSessionKey ?? sessions[0]?.sessionKey ?? null,
+        selectedSessionKey: preferredSessionKey ?? state.selectedSessionKey ?? sessions[0]?.sessionKey ?? null,
         loading: false,
         ready: true,
         error: null,
@@ -686,10 +701,12 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
       const timestamp = normalizeTimestamp(payload.timestamp);
       const classified = classifyPayload(payload);
       const existing = await fetchSession(sessionKey);
-      const title = trimOptional(payload.title) ?? existing?.title ?? `${payload.source ?? "CLI"} replay`;
+      const source = trimOptional(payload.source) ?? existing?.source ?? null;
+      const title = payload.event === "UserPromptSubmit"
+        ? buildPromptSessionTitle(payload.message) ?? existing?.title ?? buildSourceSessionTitle(source)
+        : existing?.title ?? buildSourceSessionTitle(source);
       const cliSessionId = trimOptional(payload.sessionId) ?? existing?.cliSessionId ?? null;
       const projectPath = trimOptional(payload.cwd) ?? existing?.projectPath ?? null;
-      const source = trimOptional(payload.source) ?? existing?.source ?? null;
       const rawPayload = payload as unknown as Record<string, unknown>;
       const rawPayloadBytes = stringByteLength(JSON.stringify(rawPayload));
       const willCaptureSnapshot = Boolean(projectPath && shouldCaptureSnapshot(payload.event));

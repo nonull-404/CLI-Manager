@@ -107,6 +107,7 @@ pub fn model_prices_set_cache(prices: Vec<ModelPriceEntry>) -> Result<(), String
         .write()
         .map_err(|_| "model price cache loaded flag lock poisoned".to_string())?;
     *loaded_guard = true;
+    super::history::invalidate_history_stats_caches();
     Ok(())
 }
 
@@ -356,14 +357,28 @@ async fn fetch_openrouter_prices(
             model: id.to_string(),
             input_per_1m: per_million(input),
             output_per_1m: per_million(output),
-            cache_read_per_1m: per_million(number_field(pricing, &["cache_read", "cache"])),
-            cache_creation_per_1m: per_million(number_field(pricing, &["cache_creation"])),
+            cache_read_per_1m: openrouter_cache_read_per_million(pricing),
+            cache_creation_per_1m: openrouter_cache_creation_per_million(pricing),
             source: "openrouter".to_string(),
             source_model_id: id.to_string(),
             raw_json: item.to_string(),
         });
     }
     Ok(prices)
+}
+
+fn openrouter_cache_read_per_million(pricing: &Value) -> f64 {
+    per_million(number_field(
+        pricing,
+        &["input_cache_read", "cache_read", "cache"],
+    ))
+}
+
+fn openrouter_cache_creation_per_million(pricing: &Value) -> f64 {
+    per_million(number_field(
+        pricing,
+        &["input_cache_write", "cache_creation", "cache_write"],
+    ))
 }
 
 fn rank_candidates(target: &str, remotes: &[RemoteModelPrice]) -> Vec<RankedRemotePrice> {
@@ -575,4 +590,34 @@ fn levenshtein(a: &str, b: &str) -> usize {
         }
     }
     costs[b_chars.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn openrouter_cache_prices_support_input_cache_fields() {
+        let pricing = json!({
+            "prompt": "0.000003",
+            "completion": "0.000015",
+            "input_cache_read": "0.0000003",
+            "input_cache_write": "0.00000375"
+        });
+
+        assert!((openrouter_cache_read_per_million(&pricing) - 0.3).abs() < 1e-9);
+        assert!((openrouter_cache_creation_per_million(&pricing) - 3.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn openrouter_cache_prices_keep_legacy_field_fallbacks() {
+        let pricing = json!({
+            "cache_read": "0.000001",
+            "cache_creation": "0.000002"
+        });
+
+        assert!((openrouter_cache_read_per_million(&pricing) - 1.0).abs() < 1e-9);
+        assert!((openrouter_cache_creation_per_million(&pricing) - 2.0).abs() < 1e-9);
+    }
 }
