@@ -4,6 +4,8 @@
 
 ## Core Principles
 
+Command guardrail: AI must not proactively run `npm run build`, `npm run dev`, `npm run tauri build`, or `npm run tauri dev`; run them only when the user explicitly asks in the current turn.
+
 1. **Plan before code** — figure out what to do before you start
 2. **Specs injected, not remembered** — guidelines are injected via hook/skill, not recalled from memory
 3. **Persist everything** — research, decisions, and lessons all go to files; conversations get compacted, files don't
@@ -150,6 +152,7 @@ Phase 3: Finish  → distill lessons + wrap-up
 <!-- Per-turn breadcrumb: shown when there is no active task (before Phase 1) -->
 
 [workflow-state:no_task]
+Command guardrail: do NOT proactively run `npm run build`, `npm run dev`, `npm run tauri build`, or `npm run tauri dev`; run them only when the user explicitly asks in the current turn.
 Before any file-writing work starts, first ask which `CHANGELOG.md` version should receive this task's notes. If the user does not provide a version number, use temporary version `[TEMP]` instead of guessing.
 If you create a task, record that answer in `prd.md` as `Changelog Target`; if the user has no version, record `[TEMP]`.
 No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; no file writes + one-line answer + repo reads ≤ 2 files → AI judges, no override needed.
@@ -169,6 +172,7 @@ No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 (status='planning') -->
 
 [workflow-state:planning]
+Command guardrail: do NOT proactively run `npm run build`, `npm run dev`, `npm run tauri build`, or `npm run tauri dev`; run them only when the user explicitly asks in the current turn.
 Before `task.py start`, you MUST record `Changelog Target` in `prd.md`. Use the user-provided version when available; otherwise set it to `[TEMP]`.
 Load the `trellis-brainstorm` skill and iterate on prd.md with the user.
 Phase 1.3 (required, once): before `task.py start`, you MUST curate `implement.jsonl` and `check.jsonl` — list the spec / research files sub-agents need so they get the right context injected. You may skip only if the jsonl already has agent-curated entries (the seed `_example` row alone doesn't count).
@@ -182,6 +186,7 @@ Then run `task.py start <task-dir>` to flip status to in_progress.
      into a sub-agent. -->
 
 [workflow-state:planning-inline]
+Command guardrail: do NOT proactively run `npm run build`, `npm run dev`, `npm run tauri build`, or `npm run tauri dev`; run them only when the user explicitly asks in the current turn.
 Before `task.py start`, you MUST record `Changelog Target` in `prd.md`. Use the user-provided version when available; otherwise set it to `[TEMP]`.
 Load the `trellis-brainstorm` skill and iterate on prd.md with the user.
 Phase 1.3 jsonl curation is **skipped** in inline dispatch mode — the main session loads `trellis-before-dev` directly in Phase 2 and reads spec context itself, so there is no sub-agent to inject jsonl into.
@@ -200,6 +205,7 @@ Then run `task.py start <task-dir>` to flip status to in_progress.
      commit, including Phase 3.3 spec update and Phase 3.4 commit. -->
 
 [workflow-state:in_progress]
+Command guardrail: do NOT proactively run `npm run build`, `npm run dev`, `npm run tauri build`, or `npm run tauri dev`; run them only when the user explicitly asks in the current turn.
 Before editing or drafting the commit plan, confirm which `CHANGELOG.md` version should receive this task's notes. Use the user-provided version when available; otherwise use `[TEMP]`, and update `CHANGELOG.md` under that target instead of guessing a release.
 **Tools**: `trellis-implement` / `trellis-research` are sub-agent types only (Task/Agent tool, NOT Skill — there is no skill by these names). `trellis-update-spec` is a skill. `trellis-check` exists as both; prefer the Agent form when verifying after code changes.
 **Flow**: remote-update check → trellis-implement → trellis-check → trellis-update-spec → commit (Phase 3.4) → `/trellis:finish-work`.
@@ -215,6 +221,7 @@ Before editing or drafting the commit plan, confirm which `CHANGELOG.md` version
      instead of dispatching sub-agents. -->
 
 [workflow-state:in_progress-inline]
+Command guardrail: do NOT proactively run `npm run build`, `npm run dev`, `npm run tauri build`, or `npm run tauri dev`; run them only when the user explicitly asks in the current turn.
 Before editing or drafting the commit plan, confirm which `CHANGELOG.md` version should receive this task's notes. Use the user-provided version when available; otherwise use `[TEMP]`, and update `CHANGELOG.md` under that target instead of guessing a release.
 **Flow** (inline mode): remote-update check → main session loads `trellis-before-dev` → main session edits code → main session loads `trellis-check` → run lint / type-check / tests → fix → `trellis-update-spec` → commit (Phase 3.4) → `/trellis:finish-work`.
 **Main-session default (inline dispatch_mode)**: the main agent edits code directly. Do NOT dispatch `trellis-implement` / `trellis-check` sub-agents. Load the `trellis-before-dev` skill before writing code; load the `trellis-check` skill before reporting completion.
