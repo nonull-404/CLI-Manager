@@ -653,51 +653,18 @@ function prepareStartupCommandForPty(command: string | undefined, shell: ShellKe
   return withCodexLightTuiTheme(command);
 }
 
-function buildDirectCodexLaunchCommand(command: string, shell: ShellKey | null | undefined): string {
+function buildDirectCodexLaunchCommand(command: string): string {
   const normalized = normalizeDirectCodexStartupCommand(command) ?? command.trim();
-  switch (shell) {
-    case "powershell":
-    case "pwsh":
-      return `Clear-Host; ${normalized}`;
-    case "cmd":
-      return `cls & ${normalized}`;
-    case "gitbash":
-    case "bash":
-    case "zsh":
-    case "sh":
-    case "fish":
-    case "wsl":
-      return `clear; ${normalized}`;
-    default:
-      return `\x0c${normalized}`;
-  }
+  return `\x0c${normalized}`;
 }
 
-export function formatStartupInputForPty(command: string, shell?: ShellKey | null): string {
+export function formatStartupInputForPty(command: string, _shell?: ShellKey | null): string {
   if (!isDirectCodexStartupCommand(command)) return `${command}\r`;
-  return `${buildDirectCodexLaunchCommand(command, shell ?? null)}\r`;
-}
-
-function buildCancelCurrentInputControl(shell: ShellKey | null | undefined): string {
-  switch (shell) {
-    case "powershell":
-    case "pwsh":
-    case "cmd":
-    case "gitbash":
-    case "bash":
-    case "zsh":
-    case "sh":
-    case "fish":
-    case "wsl":
-      return "\x03";
-    default:
-      return "";
-  }
+  return `${buildDirectCodexLaunchCommand(command)}\r`;
 }
 
 export function formatManualDirectCodexInputForPty(command: string, shell?: ShellKey | null): string {
-  const normalizedShell = shell ?? null;
-  return `${buildCancelCurrentInputControl(normalizedShell)}${formatStartupInputForPty(command, normalizedShell)}`;
+  return formatStartupInputForPty(command, shell ?? null);
 }
 
 // hook running 超时回退：Stop/StopFailure 丢失（hook 脚本失败、bridge 不可达）
