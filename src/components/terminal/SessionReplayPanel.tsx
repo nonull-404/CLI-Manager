@@ -560,15 +560,19 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     () => events.filter((event) => (filter === "all" || event.kind === filter) && eventMatches(event, query)),
     [events, filter, query]
   );
+  const timelineEvents = useMemo(
+    () => [...filteredEvents].sort((a, b) => b.eventIndex - a.eventIndex),
+    [filteredEvents]
+  );
 
   const selectedEvent = useMemo(() => {
-    if (filteredEvents.length === 0) return null;
+    if (timelineEvents.length === 0) return null;
     if (selectedEventIndex !== null) {
-      const exact = filteredEvents.find((event) => event.eventIndex === selectedEventIndex);
+      const exact = timelineEvents.find((event) => event.eventIndex === selectedEventIndex);
       if (exact) return exact;
     }
-    return filteredEvents[filteredEvents.length - 1];
-  }, [filteredEvents, selectedEventIndex]);
+    return timelineEvents[0];
+  }, [timelineEvents, selectedEventIndex]);
 
   useEffect(() => {
     if (!selectedEvent) return;
@@ -850,7 +854,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
         >
           {loading && events.length === 0 ? (
             <EmptyHint text={t("common.loading")} />
-          ) : filteredEvents.length === 0 ? (
+          ) : timelineEvents.length === 0 ? (
             <EmptyHint text={t(error ? "aiReplay.empty.error" : "aiReplay.empty.timeline")} />
           ) : (
             <div className="relative space-y-2">
@@ -858,7 +862,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
                 className="absolute bottom-3 top-3 w-px"
                 style={{ left: TIMELINE_LINE_LEFT, backgroundColor: panelColorTint(TERM_PANEL.border, 100) }}
               />
-              {filteredEvents.map((event) => {
+              {timelineEvents.map((event) => {
                 const meta = KIND_META[event.kind];
                 const Icon = meta.icon;
                 const selected = selectedEvent?.eventIndex === event.eventIndex;
