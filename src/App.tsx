@@ -374,6 +374,7 @@ function App() {
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
   const debugMode = useSettingsStore((s) => s.debugMode);
+  const projectScopedTerminalViewEnabled = useSettingsStore((s) => s.projectScopedTerminalViewEnabled);
   const lastSettingsTab = useSettingsStore((s) => s.lastSettingsTab);
   const updateSetting = useSettingsStore((s) => s.update);
   const openHistory = useHistoryStore((s) => s.openHistory);
@@ -411,6 +412,12 @@ function App() {
   useEffect(() => {
     closeBehaviorRef.current = closeBehavior;
   }, [closeBehavior]);
+
+  useEffect(() => {
+    if (!projectScopedTerminalViewEnabled) {
+      setTerminalScopeProjectId(null);
+    }
+  }, [projectScopedTerminalViewEnabled]);
 
   useEffect(() => {
     if (!IN_TAURI) return;
@@ -891,7 +898,7 @@ function App() {
             onOpenSettings={handleOpenSettings}
             onOpenStats={handleOpenStats}
             compactMode
-            projectScopedTerminalViewEnabled
+            projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
             terminalScopeProjectId={terminalScopeProjectId}
             onTerminalScopeChange={setTerminalScopeProjectId}
           />
@@ -902,7 +909,7 @@ function App() {
             <Sidebar
               onOpenSettings={handleOpenSettings}
               onOpenStats={handleOpenStats}
-              projectScopedTerminalViewEnabled
+              projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
               terminalScopeProjectId={terminalScopeProjectId}
               onTerminalScopeChange={setTerminalScopeProjectId}
             />
@@ -911,7 +918,7 @@ function App() {
             <TerminalTabs
               fullscreen={terminalFullscreen}
               onToggleFullscreen={handleToggleTerminalFullscreen}
-              projectScopedTerminalViewEnabled
+              projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
               projectScopeProjectId={terminalScopeProjectId}
             />
           </main>
