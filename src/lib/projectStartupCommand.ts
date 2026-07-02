@@ -1,7 +1,9 @@
 import type { Project } from "./types";
-import { getCodexProviderOverride, isExactCodexProject } from "./providerSwitching";
+import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject } from "./providerSwitching";
+import { normalizeShellKey } from "./shell";
 
 const CODEX_PROFILE_ARG = "--profile";
+const CLAUDE_SETTINGS_ARG = "--settings";
 const CODEX_LIGHT_TUI_THEME_ARG = "-c theme=catppuccin-latte";
 const DIRECT_CODEX_COMMAND_PATTERN = /^(\s*codex(?:\.(?:cmd|exe|ps1))?)(?=\s|$)/i;
 
@@ -16,6 +18,29 @@ export function isDirectCodexStartupCommand(command?: string): boolean {
 
 function hasProfileArg(command: string): boolean {
   return new RegExp(`(^|\\s)${CODEX_PROFILE_ARG}(\\s|$)`).test(command);
+}
+
+function hasClaudeSettingsArg(command: string): boolean {
+  return new RegExp(`(^|\\s)${CLAUDE_SETTINGS_ARG}(\\s|$)`).test(command);
+}
+
+function quoteCliArg(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function windowsPathToWsl(path: string): string | null {
+  const trimmed = path.trim();
+  const match = /^([A-Za-z]):[\\/](.*)$/.exec(trimmed);
+  if (!match) return null;
+  const drive = match[1].toLowerCase();
+  const tail = match[2].replace(/\\/g, "/").replace(/^\/+/, "");
+  return tail ? `/mnt/${drive}/${tail}` : `/mnt/${drive}`;
+}
+
+function settingsPathForShell(settingsPath: string, shell?: string | null): string {
+  const normalizedShell = normalizeShellKey(shell);
+  if (normalizedShell !== "wsl" && normalizedShell !== "bash") return settingsPath;
+  return windowsPathToWsl(settingsPath) ?? settingsPath;
 }
 
 function hasCodexThemeConfigArg(command: string): boolean {
@@ -39,7 +64,7 @@ export function withCodexLightTuiTheme(command?: string): string | undefined {
 }
 
 export function resolveProjectStartupCommand(
-  project: Pick<Project, "cli_tool" | "startup_cmd" | "provider_overrides">,
+  project: Pick<Project, "cli_tool" | "startup_cmd" | "provider_overrides" | "shell">,
   options: { includeCodexProviderProfile?: boolean } = {}
 ): string | undefined {
   const startupCmd = project.startup_cmd.trim();
@@ -53,6 +78,12 @@ export function resolveProjectStartupCommand(
     const override = getCodexProviderOverride(project);
     if (override && !hasProfileArg(command)) {
       command = `${command} ${CODEX_PROFILE_ARG} ${override.profileName}`;
+    }
+  }
+  if (getProviderSwitchAppType(project) === "claude") {
+    const override = getClaudeProviderOverride(project);
+    if (override && !hasClaudeSettingsArg(command)) {
+      command = `${command} ${CLAUDE_SETTINGS_ARG} ${quoteCliArg(settingsPathForShell(override.settingsPath, project.shell))}`;
     }
   }
   return command;

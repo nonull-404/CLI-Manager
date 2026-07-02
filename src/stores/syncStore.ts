@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb, batchInsert } from "../lib/db";
+import { getCliManagerDataPaths } from "../lib/appPaths";
 import { useProjectStore } from "./projectStore";
 import { logInfo } from "../lib/logger";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
@@ -109,7 +110,8 @@ interface SyncStore {
 let store: Store | null = null;
 async function getStore() {
   if (!store) {
-    store = await Store.load("sync-config.json", { autoSave: 100, defaults: {} });
+    const paths = await getCliManagerDataPaths();
+    store = await Store.load(paths.syncStorePath, { autoSave: 100, defaults: {} });
   }
   return store;
 }

@@ -9,7 +9,15 @@ export interface CodexProviderOverride {
   vendorHint?: string | null;
 }
 
+export interface ClaudeProviderOverride {
+  providerId: string;
+  providerName: string | null;
+  settingsPath: string;
+  vendorHint?: string | null;
+}
+
 export interface ProjectProviderOverrides {
+  claude?: ClaudeProviderOverride;
   codex?: CodexProviderOverride;
 }
 
@@ -41,13 +49,30 @@ function normalizeCodexOverride(value: unknown): CodexProviderOverride | undefin
   };
 }
 
+function normalizeClaudeOverride(value: unknown): ClaudeProviderOverride | undefined {
+  if (!isRecord(value)) return undefined;
+  const providerId = typeof value.providerId === "string" ? value.providerId.trim() : "";
+  const settingsPath = typeof value.settingsPath === "string" ? value.settingsPath.trim() : "";
+  if (!providerId || !settingsPath) return undefined;
+  return {
+    providerId,
+    settingsPath,
+    providerName: typeof value.providerName === "string" && value.providerName.trim() ? value.providerName : null,
+    vendorHint: typeof value.vendorHint === "string" && value.vendorHint.trim() ? value.vendorHint.trim() : null,
+  };
+}
+
 export function parseProjectProviderOverrides(raw: string | null | undefined): ProjectProviderOverrides {
   if (!raw?.trim()) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return {};
+    const claude = normalizeClaudeOverride(parsed.claude);
     const codex = normalizeCodexOverride(parsed.codex);
-    return codex ? { codex } : {};
+    return {
+      ...(claude ? { claude } : {}),
+      ...(codex ? { codex } : {}),
+    };
   } catch {
     return {};
   }
@@ -55,6 +80,16 @@ export function parseProjectProviderOverrides(raw: string | null | undefined): P
 
 export function stringifyProjectProviderOverrides(overrides: ProjectProviderOverrides): string {
   const next: Record<string, unknown> = {};
+  if (overrides.claude) {
+    next.claude = {
+      providerId: overrides.claude.providerId,
+      providerName: overrides.claude.providerName,
+      settingsPath: overrides.claude.settingsPath,
+    };
+    if (overrides.claude.vendorHint) {
+      (next.claude as Record<string, unknown>).vendorHint = overrides.claude.vendorHint;
+    }
+  }
   if (overrides.codex) {
     next.codex = {
       providerId: overrides.codex.providerId,
@@ -70,6 +105,23 @@ export function stringifyProjectProviderOverrides(overrides: ProjectProviderOver
 
 export function getCodexProviderOverride(project: Pick<Project, "provider_overrides">): CodexProviderOverride | undefined {
   return parseProjectProviderOverrides(project.provider_overrides).codex;
+}
+
+export function getClaudeProviderOverride(project: Pick<Project, "provider_overrides">): ClaudeProviderOverride | undefined {
+  return parseProjectProviderOverrides(project.provider_overrides).claude;
+}
+
+export function withClaudeProviderOverride(
+  raw: string | null | undefined,
+  override: ClaudeProviderOverride | null
+): string {
+  const overrides = parseProjectProviderOverrides(raw);
+  if (override) {
+    overrides.claude = override;
+  } else {
+    delete overrides.claude;
+  }
+  return stringifyProjectProviderOverrides(overrides);
 }
 
 export function withCodexProviderOverride(

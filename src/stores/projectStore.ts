@@ -4,7 +4,7 @@ import { getDb, batchUpdateSortOrder } from "../lib/db";
 import { resolveProjectFetchPolicy, type ProjectFetchReason } from "../lib/projectLoadPolicy";
 import { useSettingsStore } from "./settingsStore";
 import { logWarn } from "../lib/logger";
-import { getCodexProviderOverride, getProviderSwitchAppType } from "../lib/providerSwitching";
+import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType } from "../lib/providerSwitching";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs } from "../lib/shell";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
@@ -221,14 +221,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }
 
-    if (claudeProjects.length > 0) {
+    for (const project of claudeProjects) {
+      const override = getClaudeProviderOverride(project);
+      if (override) {
+        providerBadges[project.id] = {
+          providerName: override.providerName,
+          vendorHint: override.vendorHint,
+        };
+      }
+    }
+
+    const legacyClaudeProjects = claudeProjects.filter((project) => !getClaudeProviderOverride(project));
+    if (legacyClaudeProjects.length > 0) {
       try {
         const badges = await invoke<CcSwitchProjectBadge[]>("ccswitch_probe_projects", {
-          projectPaths: claudeProjects.map((p) => p.path),
+          projectPaths: legacyClaudeProjects.map((p) => p.path),
           dbPath: useSettingsStore.getState().ccSwitchDbPath ?? undefined,
         });
         const byPath = new Map(badges.map((b) => [b.path, b]));
-        for (const p of claudeProjects) {
+        for (const p of legacyClaudeProjects) {
           const badge = byPath.get(p.path);
           if (badge?.hasOverride) {
             providerBadges[p.id] = {

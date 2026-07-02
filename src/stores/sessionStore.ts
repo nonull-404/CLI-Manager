@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import type { TerminalSession, PersistedSplit } from "../lib/types";
+import { getCliManagerDataPaths } from "../lib/appPaths";
 
 interface SessionStore {
   sessions: TerminalSession[];
@@ -18,7 +19,8 @@ interface SessionStore {
 let store: Store | null = null;
 async function getStore() {
   if (!store) {
-    store = await Store.load("sessions.json", { autoSave: 100, defaults: {} });
+    const paths = await getCliManagerDataPaths();
+    store = await Store.load(paths.sessionsStorePath, { autoSave: 100, defaults: {} });
   }
   return store;
 }

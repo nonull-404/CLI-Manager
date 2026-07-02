@@ -9,7 +9,7 @@ import { getTerminalTheme } from "../lib/terminalThemes";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey, type OsPlatform, type ShellKey } from "../lib/shell";
-import { getCodexProviderOverride, isExactCodexProject } from "../lib/providerSwitching";
+import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject } from "../lib/providerSwitching";
 import { useProjectStore } from "./projectStore";
 import {
   addSessionToPaneTree,
@@ -738,6 +738,20 @@ function getCodexProviderLaunchConfig(projectId?: string, startupCmd?: string | 
   };
 }
 
+function getClaudeProviderLaunchConfig(projectId?: string) {
+  if (!projectId) return null;
+  const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
+  if (!project || getProviderSwitchAppType(project) !== "claude") return null;
+  const override = getClaudeProviderOverride(project);
+  if (!override) return null;
+  const settings = useSettingsStore.getState();
+  return {
+    projectId: project.id,
+    providerId: override.providerId,
+    dbPath: settings.ccSwitchDbPath ?? undefined,
+  };
+}
+
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
@@ -764,6 +778,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         envVars: buildPtyEnvVars(envVars ?? null, resolvedShell),
         shell: resolvedShell,
         hookEnvEnabled: await shouldEnableHookEnv(),
+        claudeProvider: getClaudeProviderLaunchConfig(projectId),
         codexProvider: getCodexProviderLaunchConfig(projectId, startupCmd),
       });
     } catch (err) {
@@ -1075,6 +1090,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         envVars: buildPtyEnvVars(options?.envVars ?? null, resolvedShell),
         shell: resolvedShell,
         hookEnvEnabled: await shouldEnableHookEnv(),
+        claudeProvider: getClaudeProviderLaunchConfig(options?.projectId),
         codexProvider: getCodexProviderLaunchConfig(options?.projectId, options?.startupCmd),
       });
     } catch (err) {
@@ -1318,6 +1334,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           envVars: buildPtyEnvVars(ps.envVars ?? null, resolvedShell),
           shell: resolvedShell,
           hookEnvEnabled: await shouldEnableHookEnv(),
+          claudeProvider: getClaudeProviderLaunchConfig(ps.projectId),
           codexProvider: getCodexProviderLaunchConfig(ps.projectId, ps.startupCmd),
         });
       } catch (err) {

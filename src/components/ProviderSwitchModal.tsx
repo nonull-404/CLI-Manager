@@ -2,7 +2,13 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { Project } from "../lib/types";
-import { getCodexProviderOverride, getProviderSwitchAppType, withCodexProviderOverride } from "../lib/providerSwitching";
+import {
+  getClaudeProviderOverride,
+  getCodexProviderOverride,
+  getProviderSwitchAppType,
+  withClaudeProviderOverride,
+  withCodexProviderOverride,
+} from "../lib/providerSwitching";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
@@ -39,6 +45,12 @@ interface CodexProviderProfileResponse {
   providerId: string;
   providerName: string;
   profileName: string;
+}
+
+interface ClaudeProviderSettingsResponse {
+  providerId: string;
+  providerName: string;
+  settingsPath: string;
 }
 
 /** applyingId 的哨兵值：标记"恢复跟随全局"操作进行中 */
@@ -192,6 +204,16 @@ function buildCodexProbe(project: Project): ProjectProviderProbe {
   };
 }
 
+function buildClaudeProbe(project: Project, legacyProbe?: ProjectProviderProbe | null): ProjectProviderProbe {
+  const override = getClaudeProviderOverride(project);
+  return {
+    matchedProviderId: override?.providerId ?? legacyProbe?.matchedProviderId ?? null,
+    hasSettingsFile: Boolean(override) || Boolean(legacyProbe?.hasSettingsFile),
+    baseUrl: override ? "claude-settings" : legacyProbe?.baseUrl ?? null,
+    localOverrideKeys: legacyProbe?.localOverrideKeys ?? [],
+  };
+}
+
 interface Props {
   project: Project;
   onClose: () => void;
@@ -235,7 +257,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           : Promise.resolve(buildCodexProbe(project)),
       ]);
       setProviders(listRes.providers.filter((p) => p.appType === appType));
-      setProbe(probeRes);
+      setProbe(appType === "claude" ? buildClaudeProbe(project, probeRes) : probeRes);
       if (appType === "codex") {
         setActiveCodexProfileName(getCodexProviderOverride(project)?.profileName ?? null);
       }
@@ -258,13 +280,28 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     let shouldReload = true;
     try {
       if (appType === "claude") {
-        await invoke("ccswitch_apply_provider", {
-          projectPath: project.path,
+        const result = await invoke<ClaudeProviderSettingsResponse>("ccswitch_prepare_claude_provider", {
+          projectId: project.id,
           providerId: provider.id,
           dbPath: ccSwitchDbPath ?? undefined,
         });
+        await useProjectStore.getState().updateProject(project.id, {
+          provider_overrides: withClaudeProviderOverride(project.provider_overrides, {
+            providerId: result.providerId,
+            providerName: result.providerName,
+            settingsPath: result.settingsPath,
+            vendorHint: providerVendorHint(provider),
+          }),
+        });
+        setProbe({
+          matchedProviderId: result.providerId,
+          hasSettingsFile: true,
+          baseUrl: "claude-settings",
+          localOverrideKeys: probe?.localOverrideKeys ?? [],
+        });
+        shouldReload = false;
         toast.success("已切换供应商", {
-          description: `${provider.name} 已写入 .claude/settings.json，新开终端后生效。`,
+          description: `${provider.name} 已生成 Claude settings，新开内部终端后生效。`,
         });
       } else {
         const result = await invoke<CodexProviderProfileResponse>("ccswitch_prepare_codex_provider", {
@@ -307,7 +344,16 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     let shouldReload = true;
     try {
       if (appType === "claude") {
-        await invoke("ccswitch_reset_project_provider", { projectPath: project.path });
+        await useProjectStore.getState().updateProject(project.id, {
+          provider_overrides: withClaudeProviderOverride(project.provider_overrides, null),
+        });
+        setProbe({
+          matchedProviderId: null,
+          hasSettingsFile: Boolean(probe?.hasSettingsFile),
+          baseUrl: null,
+          localOverrideKeys: probe?.localOverrideKeys ?? [],
+        });
+        shouldReload = false;
       } else {
         await useProjectStore.getState().updateProject(project.id, {
           provider_overrides: withCodexProviderOverride(project.provider_overrides, null),
@@ -328,12 +374,12 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     }
   };
 
-  // Claude 以 baseUrl 判断项目 env 覆盖；Codex 以 matchedProviderId 判断项目 profile 覆盖。
+  // Claude/Codex 都以 provider_overrides 记录判断项目级覆盖；legacy Claude path probe 只用于兼容显示。
   const hasOverride = probe != null && (probe.baseUrl != null || probe.matchedProviderId != null);
   const followGlobal = probe != null && !hasOverride;
   const globalCurrentName = providers.find((p) => p.isCurrent)?.name ?? null;
   const localOverrideKeys = appType === "claude" ? probe?.localOverrideKeys ?? [] : [];
-  const hasCustomCodexStartup = appType === "codex" && project.startup_cmd.trim().length > 0;
+  const hasCustomProviderStartup = (appType === "codex" || appType === "claude") && project.startup_cmd.trim().length > 0;
 
   return (
     <Dialog
@@ -364,11 +410,11 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           </div>
         )}
 
-        {!loading && hasCustomCodexStartup && probe?.matchedProviderId && (
+        {!loading && hasCustomProviderStartup && probe?.matchedProviderId && (
           <div className="mb-3 flex items-start gap-1.5 rounded border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-text-secondary">
             <AlertTriangle size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-warning" />
             <span className="min-w-0 break-all">
-              该 Codex 项目配置了自定义启动命令，CLI-Manager 不会自动改写；请手动在启动命令中加入 --profile {activeCodexProfileName ?? "cli-manager-..."}。
+              该项目配置了自定义启动命令，CLI-Manager 不会自动改写；请手动加入 {appType === "codex" ? `--profile ${activeCodexProfileName ?? "cli-manager-..."}` : `--settings ${getClaudeProviderOverride(project)?.settingsPath ?? "<settings-file>"}`}。
             </span>
           </div>
         )}
@@ -448,7 +494,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
 
         {!loading && appType === "claude" && probe && !probe.hasSettingsFile && (
           <p className="mt-3 text-xs text-text-muted">
-            该项目暂无 .claude/settings.json，切换时将自动创建。
+            该项目暂无项目级供应商配置，切换后将生成 CLI-Manager settings 文件。
           </p>
         )}
       </DialogContent>

@@ -4,10 +4,11 @@ use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::{BTreeMap, HashMap};
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
+
+use crate::app_paths;
 
 /// env key 中出现这些子串即视为机密，值只返回掩码。
 const SECRET_KEY_MARKERS: [&str; 5] = ["token", "key", "secret", "auth", "password"];
@@ -240,12 +241,28 @@ pub struct CcSwitchCodexProviderProfile {
     profile_name: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcSwitchClaudeProviderSettings {
+    provider_id: String,
+    provider_name: String,
+    settings_path: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexProviderLaunchConfig {
     pub provider_id: String,
     pub db_path: Option<String>,
     pub codex_config_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeProviderLaunchConfig {
+    pub project_id: String,
+    pub provider_id: String,
+    pub db_path: Option<String>,
 }
 
 struct CodexProviderRuntimeConfig {
@@ -332,6 +349,60 @@ pub(crate) fn merge_settings_text(
         .map_err(|err| format!("settings_write_failed: {err}"))?;
     text.push('\n');
     Ok(text)
+}
+
+async fn load_claude_provider_env(
+    app: &tauri::AppHandle,
+    provider_id: &str,
+    db_path: Option<String>,
+) -> Result<(String, Map<String, Value>), String> {
+    let path = resolve_db_path(app, db_path)?;
+    let mut conn = open_db_readonly(&path).await?;
+    let row =
+        sqlx::query("SELECT name, settings_config FROM providers WHERE id = ?1 AND app_type = 'claude'")
+            .bind(provider_id.trim())
+            .fetch_optional(&mut conn)
+            .await
+            .map_err(|err| format!("db_query_failed: {err}"))?;
+    let _ = conn.close().await;
+
+    let row = row.ok_or_else(|| "provider_not_found".to_string())?;
+    let name: String = row
+        .try_get("name")
+        .map_err(|err| format!("db_query_failed: {err}"))?;
+    let settings_config: String = row
+        .try_get("settings_config")
+        .map_err(|err| format!("db_query_failed: {err}"))?;
+    let parsed: Option<Value> = serde_json::from_str(&settings_config).ok();
+    let provider_env = parsed
+        .as_ref()
+        .and_then(env_object)
+        .cloned()
+        .ok_or_else(|| "provider_config_invalid".to_string())?;
+    Ok((name, provider_env))
+}
+
+fn claude_settings_file_name(project_id: &str, provider_id: &str) -> String {
+    format!(
+        "{}-{}.settings.json",
+        sanitize_codex_profile_slug(project_id),
+        short_sha256(provider_id, 10)
+    )
+}
+
+fn write_claude_provider_settings(
+    project_id: &str,
+    provider_id: &str,
+    provider_env: &Map<String, Value>,
+) -> Result<PathBuf, String> {
+    let dir = app_paths::claude_providers_dir()?;
+    fs::create_dir_all(&dir).map_err(|err| format!("settings_write_failed: {err}"))?;
+    let settings_path = dir.join(claude_settings_file_name(project_id, provider_id));
+    let text = merge_settings_text(None, provider_env)?;
+    let tmp_path = settings_path.with_extension("json.tmp");
+    fs::write(&tmp_path, text).map_err(|err| format!("settings_write_failed: {err}"))?;
+    replace_file_with_tmp(&tmp_path, &settings_path, "settings_write_failed")?;
+    Ok(settings_path)
 }
 
 #[tauri::command]
@@ -451,6 +522,27 @@ pub async fn ccswitch_apply_provider(
     atomic_write_settings(&claude_dir, &settings_path, &next_text)
 }
 
+#[tauri::command]
+pub async fn ccswitch_prepare_claude_provider(
+    app: tauri::AppHandle,
+    project_id: String,
+    provider_id: String,
+    db_path: Option<String>,
+) -> Result<CcSwitchClaudeProviderSettings, String> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err("project_not_found".to_string());
+    }
+    let provider_id = provider_id.trim();
+    let (provider_name, provider_env) = load_claude_provider_env(&app, provider_id, db_path).await?;
+    let settings_path = write_claude_provider_settings(project_id, provider_id, &provider_env)?;
+    Ok(CcSwitchClaudeProviderSettings {
+        provider_id: provider_id.to_string(),
+        provider_name,
+        settings_path: settings_path.to_string_lossy().into_owned(),
+    })
+}
+
 /// 原子写：同目录临时文件 + rename 覆盖，避免写一半留下损坏文件。
 fn atomic_write_settings(
     claude_dir: &Path,
@@ -460,11 +552,7 @@ fn atomic_write_settings(
     fs::create_dir_all(claude_dir).map_err(|err| format!("settings_write_failed: {err}"))?;
     let tmp_path = claude_dir.join("settings.json.tmp");
     fs::write(&tmp_path, text).map_err(|err| format!("settings_write_failed: {err}"))?;
-    if let Err(err) = fs::rename(&tmp_path, settings_path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(format!("settings_write_failed: {err}"));
-    }
-    Ok(())
+    replace_file_with_tmp(&tmp_path, settings_path, "settings_write_failed")
 }
 
 // ---------- Phase 3：恢复全局 + 项目树徽标 ----------
@@ -936,23 +1024,8 @@ fn resolve_codex_config_dir(
     app: &tauri::AppHandle,
     codex_config_dir: Option<String>,
 ) -> Result<PathBuf, String> {
-    if let Some(custom) = codex_config_dir
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-    {
-        return Ok(PathBuf::from(custom));
-    }
-    if let Ok(codex_home) = env::var("CODEX_HOME") {
-        let codex_home = codex_home.trim();
-        if !codex_home.is_empty() {
-            return Ok(PathBuf::from(codex_home));
-        }
-    }
-    Ok(app
-        .path()
-        .home_dir()
-        .map_err(|err| format!("home_dir_unavailable: {err}"))?
-        .join(".codex"))
+    let _ = (app, codex_config_dir);
+    app_paths::codex_providers_dir()
 }
 
 fn write_codex_profile(
@@ -966,11 +1039,36 @@ fn write_codex_profile(
     let tmp_path = codex_dir.join(format!("{}.config.toml.tmp", runtime.profile_name));
     fs::write(&tmp_path, &runtime.profile_text)
         .map_err(|err| format!("profile_write_failed: {err}"))?;
-    if let Err(err) = fs::rename(&tmp_path, &profile_path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(format!("profile_write_failed: {err}"));
+    replace_file_with_tmp(&tmp_path, &profile_path, "profile_write_failed")
+}
+
+fn replace_file_with_tmp(tmp_path: &Path, target_path: &Path, error_prefix: &str) -> Result<(), String> {
+    if target_path.exists() {
+        fs::remove_file(target_path).map_err(|err| format!("{error_prefix}: {err}"))?;
+    }
+    if let Err(err) = fs::rename(tmp_path, target_path) {
+        let _ = fs::remove_file(tmp_path);
+        return Err(format!("{error_prefix}: {err}"));
     }
     Ok(())
+}
+
+fn is_wsl_launch_shell(shell: Option<&str>) -> bool {
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
+    matches!(
+        shell.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("wsl") | Some("bash")
+    )
+}
+
+fn codex_home_for_shell(resolved_dir: &Path, shell: Option<&str>) -> String {
+    let path = resolved_dir.to_string_lossy().into_owned();
+    if is_wsl_launch_shell(shell) {
+        return crate::wsl::windows_path_to_wsl(&path).unwrap_or(path);
+    }
+    path
 }
 
 fn is_cli_manager_codex_profile_candidate(path: &Path) -> bool {
@@ -1072,33 +1170,37 @@ pub async fn ccswitch_prepare_codex_provider(
 pub(crate) async fn apply_codex_provider_launch_env(
     app: &tauri::AppHandle,
     launch_config: Option<CodexProviderLaunchConfig>,
+    shell: Option<&str>,
     env_vars: &mut HashMap<String, String>,
 ) -> Result<(), String> {
     let Some(launch_config) = launch_config else {
         return Ok(());
     };
     let codex_config_dir = launch_config.codex_config_dir;
-    let should_set_codex_home = codex_config_dir
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
     let runtime =
         load_codex_runtime_config(app, &launch_config.provider_id, launch_config.db_path).await?;
-    if should_set_codex_home {
-        let resolved_dir = resolve_codex_config_dir(app, codex_config_dir.clone())?;
-        env_vars.insert(
-            "CODEX_HOME".to_string(),
-            resolved_dir.to_string_lossy().into_owned(),
-        );
-        write_codex_profile(
-            app,
-            Some(resolved_dir.to_string_lossy().into_owned()),
-            &runtime,
-        )?;
-    } else {
-        write_codex_profile(app, codex_config_dir, &runtime)?;
-    }
+    let resolved_dir = resolve_codex_config_dir(app, codex_config_dir.clone())?;
+    env_vars.insert("CODEX_HOME".to_string(), codex_home_for_shell(&resolved_dir, shell));
+    write_codex_profile(app, codex_config_dir, &runtime)?;
     env_vars.insert(runtime.env_key, runtime.secret_value);
+    Ok(())
+}
+
+pub(crate) async fn refresh_claude_provider_launch_settings(
+    app: &tauri::AppHandle,
+    launch_config: Option<ClaudeProviderLaunchConfig>,
+) -> Result<(), String> {
+    let Some(launch_config) = launch_config else {
+        return Ok(());
+    };
+    let project_id = launch_config.project_id.trim();
+    if project_id.is_empty() {
+        return Err("project_not_found".to_string());
+    }
+    let provider_id = launch_config.provider_id.trim();
+    let (_provider_name, provider_env) =
+        load_claude_provider_env(app, provider_id, launch_config.db_path).await?;
+    write_claude_provider_settings(project_id, provider_id, &provider_env)?;
     Ok(())
 }
 
@@ -1518,6 +1620,38 @@ mod tests {
         // settings.json 不存在（连 .claude 都没有）→ no-op 成功
         assert_eq!(reset_settings_file(&dir), Ok(()));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replace_file_with_tmp_overwrites_existing_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target_path = tmp.path().join("settings.json");
+        let tmp_path = tmp.path().join("settings.json.tmp");
+        fs::write(&target_path, "old").unwrap();
+        fs::write(&tmp_path, "new").unwrap();
+
+        replace_file_with_tmp(&tmp_path, &target_path, "settings_write_failed").unwrap();
+
+        assert_eq!(fs::read_to_string(&target_path).unwrap(), "new");
+        assert!(!tmp_path.exists());
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn codex_home_for_shell_uses_wsl_path_for_wsl_shell() {
+        let path = Path::new(r"C:\Users\Administrator\.cli-manager\providers\codex");
+        assert_eq!(
+            codex_home_for_shell(path, Some("wsl")),
+            "/mnt/c/Users/Administrator/.cli-manager/providers/codex"
+        );
+        assert_eq!(
+            codex_home_for_shell(path, Some("bash")),
+            "/mnt/c/Users/Administrator/.cli-manager/providers/codex"
+        );
+        assert_eq!(
+            codex_home_for_shell(path, Some("powershell")),
+            r"C:\Users\Administrator\.cli-manager\providers\codex"
+        );
     }
 
     #[test]

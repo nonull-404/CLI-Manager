@@ -1,8 +1,16 @@
 ﻿# Changelog
 
 ## [TEMP] - 2026-07-01
+### 供应商切换与数据目录
+
+- **项目级配置文件启动**：Claude 供应商切换改为生成 CLI-Manager 独立 settings 文件，并在内部终端启动时追加 `claude --settings <file>`；Codex 继续生成独立 profile，并通过 `codex --profile <profile>` 启动。供应商覆盖记录绑定到项目 ID，同路径同 Shell 的两个项目可以分别选择不同供应商。
+- **Claude 启动前同步 cc-switch**：内部终端启动 Claude 项目时会按项目记录中的 `providerId` 重新读取 cc-switch 并刷新 settings 文件，避免 cc-switch 配置改动后继续使用旧快照。
+- **WSL 供应商配置路径修复**：WSL/Bash 终端启动 Claude 时会把 `--settings` 的 Windows 路径转换为 `/mnt/...`；Codex 在 WSL 终端下也会把 `CODEX_HOME` 转为 `/mnt/...`，避免 Linux 内提示配置文件不存在。
+- **统一用户数据目录**：数据库、Store 配置、日志、Claude settings 与 Codex profile 统一放到用户目录 `.cli-manager` 下；首次启动会从旧 Tauri 数据目录复制已有数据库和 Store 文件，目标已存在时不覆盖，避免升级丢失已有数据。
+
 ### 调试诊断
 
+- **PTY 滚动相关 VT 序列诊断**：调试模式下 PTY 输出会统计影响滚动条的关键控制序列（alt-screen 进出 `?1049h/l`、清屏 `2J`、清回滚 `3J`、滚动区域 DECSTBM、RI），首次出现即记 debug 日志，会话结束输出汇总；用于对比不同机器上 Codex 滚动条有无差异的字节流证据，正常模式零开销。
 - **OOM 诊断日志**：为 AI Replay 快照、历史详情/统计和子 Agent transcript 链路补充 WebView 控制台与后端日志，输出事件数、payload/patch 字节数、历史消息大小和耗时等指标，方便排查 V1.2.3 后的内存峰值问题。
 - **OOM 风险缓解**：为活动终端写入队列、子 Agent transcript、Replay 事件内存缓存和 Replay Git 快照增加硬上限；高吞吐输出或超大 diff 场景下优先保留最新内容并丢弃旧积压，避免少量窗口也能把 WebView 内存打满。
 

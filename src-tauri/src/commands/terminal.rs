@@ -1,5 +1,8 @@
 use crate::claude_hook::ClaudeHookBridge;
-use crate::commands::ccswitch::{apply_codex_provider_launch_env, CodexProviderLaunchConfig};
+use crate::commands::ccswitch::{
+    apply_codex_provider_launch_env, refresh_claude_provider_launch_settings,
+    ClaudeProviderLaunchConfig, CodexProviderLaunchConfig,
+};
 use crate::pty::manager::{PtyManager, PtyProcessStatus};
 use log::{debug, error, info};
 use std::collections::HashMap;
@@ -15,11 +18,14 @@ pub async fn pty_create(
     env_vars: Option<HashMap<String, String>>,
     shell: Option<String>,
     hook_env_enabled: Option<bool>,
+    claude_provider: Option<ClaudeProviderLaunchConfig>,
     codex_provider: Option<CodexProviderLaunchConfig>,
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let mut env_vars = env_vars.unwrap_or_default();
-    apply_codex_provider_launch_env(&app_handle, codex_provider, &mut env_vars).await?;
+    refresh_claude_provider_launch_settings(&app_handle, claude_provider).await?;
+    apply_codex_provider_launch_env(&app_handle, codex_provider, shell.as_deref(), &mut env_vars)
+        .await?;
     env_vars.insert("CLI_MANAGER_TAB_ID".to_string(), session_id.clone());
     if hook_env_enabled.unwrap_or(false) {
         claude_hook_bridge.apply_env(&session_id, &mut env_vars);

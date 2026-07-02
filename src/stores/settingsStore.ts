@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
 import { backgroundImageExists } from "../lib/assetUrl";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey } from "../lib/shell";
+import { getCliManagerDataPaths } from "../lib/appPaths";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type LightThemePalette =
@@ -604,7 +605,8 @@ export function migrateTerminalBackground(value: unknown): TerminalBackgroundSet
 let store: Store | null = null;
 async function getStore() {
   if (!store) {
-    store = await Store.load("settings.json", { autoSave: 100, defaults: {} });
+    const paths = await getCliManagerDataPaths();
+    store = await Store.load(paths.settingsStorePath, { autoSave: 100, defaults: {} });
   }
   return store;
 }

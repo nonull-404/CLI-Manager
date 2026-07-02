@@ -1,11 +1,13 @@
 import Database from "@tauri-apps/plugin-sql";
+import { getCliManagerDataPaths } from "./appPaths";
 
 let db: Database | null = null;
 let pragmaApplied = false;
 
 export async function getDb(): Promise<Database> {
   if (!db) {
-    db = await Database.load("sqlite:cli-manager.db");
+    const paths = await getCliManagerDataPaths();
+    db = await Database.load(paths.dbUrl);
   }
   // SQLite 默认是 DELETE journal + synchronous=FULL，每次写入都 fsync，对批量更新极不友好。
   // 切到 WAL + NORMAL，可显著降低同步、批量重排等场景的 fsync 频率。

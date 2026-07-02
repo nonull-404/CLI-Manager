@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_paths;
 mod claude_hook;
 mod commands;
 mod git_watcher;
@@ -243,13 +244,17 @@ pub fn run() {
     } else {
         "cli-manager.log"
     };
+    let data_db_url = app_paths::db_url().expect("failed to resolve CLI-Manager database path");
+    let log_dir = app_paths::logs_dir().expect("failed to resolve CLI-Manager log directory");
+    std::fs::create_dir_all(&log_dir).expect("failed to create CLI-Manager log directory");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
         .plugin({
-            let mut targets = vec![Target::new(TargetKind::LogDir {
+            let mut targets = vec![Target::new(TargetKind::Folder {
+                path: log_dir,
                 file_name: Some(log_file_name.into()),
             })];
             if debug_logs {
@@ -264,11 +269,14 @@ pub fn run() {
                 .build()
         })
         .setup(move |app| {
+            if let Err(err) = app_paths::migrate_legacy_app_files(app.handle()) {
+                log::warn!("CLI-Manager data migration skipped: {err}");
+            }
             // 保留应用自身调试日志，但压掉 sqlx 的逐条 SQL 输出。
             log::set_max_level(log_level);
             app.manage(claude_hook::ClaudeHookBridge::start(app.handle().clone()));
             // 注入 appLocalData 目录用于历史索引磁盘缓存（加速冷启动加载）。
-            if let Ok(dir) = app.path().app_local_data_dir() {
+            if let Ok(dir) = app_paths::history_cache_dir() {
                 commands::history::set_history_index_cache_dir(dir);
             }
             log::info!(
@@ -333,7 +341,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             SqlBuilder::default()
-                .add_migrations("sqlite:cli-manager.db", migrations())
+                .add_migrations(&data_db_url, migrations())
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
@@ -377,6 +385,7 @@ pub fn run() {
             commands::version::get_app_version,
             commands::version::get_os_platform,
             app_open_devtools,
+            app_paths::app_get_data_paths,
             commands::fonts::list_system_fonts,
             commands::background::save_background_image,
             commands::background::cleanup_unused_backgrounds,
@@ -394,6 +403,7 @@ pub fn run() {
             commands::ccswitch::ccswitch_get_project_provider,
             commands::ccswitch::ccswitch_apply_provider,
             commands::ccswitch::ccswitch_reset_project_provider,
+            commands::ccswitch::ccswitch_prepare_claude_provider,
             commands::ccswitch::ccswitch_prepare_codex_provider,
             commands::ccswitch::ccswitch_cleanup_codex_profiles,
             commands::ccswitch::ccswitch_probe_projects,

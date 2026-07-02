@@ -1,7 +1,8 @@
 # cc-switch Integration Contracts
 
 > Executable contracts for reading the external cc-switch SQLite db and writing
-> per-project `.claude/settings.json`. Implementation: `src-tauri/src/commands/ccswitch.rs`.
+> CLI-Manager-owned provider config files used by `claude --settings` and
+> `codex --profile`. Implementation: `src-tauri/src/commands/ccswitch.rs`.
 
 ---
 
@@ -75,40 +76,39 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 
 ---
 
-## Scenario: Writing provider env into `<project>/.claude/settings.json`
+## Scenario: Preparing Claude provider settings for `claude --settings`
 
 ### 1. Scope / Trigger
 
-- Trigger: switching a claude project's API provider (`ccswitch_apply_provider`); any
-  future command that rewrites a user-owned JSON config must follow the same posture.
+- Trigger: switching a claude project's API provider (`ccswitch_prepare_claude_provider`).
+- The active provider is stored in project metadata, not inferred from project path.
+  Same path + same shell may have multiple project records with different providers.
+- Legacy commands that read or rewrite `<project>/.claude/settings.json` remain only
+  for compatibility/probing. New switching must not write project-owned Claude config.
 
 ### 2. Signatures
 
 ```rust
 #[tauri::command]
-pub async fn ccswitch_get_project_provider(
+pub async fn ccswitch_prepare_claude_provider(
     app: tauri::AppHandle,
-    project_path: String,
-    db_path: Option<String>,
-) -> Result<CcSwitchProjectProvider, String>
-// { matchedProviderId, hasSettingsFile, baseUrl,
-//   localOverrideKeys }  // settings.local.json 中 ANTHROPIC_ 前缀 key 名（只 key 名不含值）
-
-#[tauri::command]
-pub async fn ccswitch_apply_provider(
-    app: tauri::AppHandle,
-    project_path: String,
+    project_id: String,
     provider_id: String,
     db_path: Option<String>,
-) -> Result<(), String>                        // unit：不向前端回传任何 env 内容
+) -> Result<CcSwitchClaudeProviderSettings, String>
+// { providerId, providerName, settingsPath }；不向前端回传任何 env 内容
 
-#[tauri::command]
-pub async fn ccswitch_reset_project_provider(
-    project_path: String,                      // 无 db_path：恢复全局不读 cc-switch.db
-) -> Result<(), String>
-// 删除项目 settings.json 的整个 env 字段（用户拍板，含用户自有 key）；
-// 删后顶层为空对象 → 删除 settings.json 文件本身（.claude/ 目录保留）；
-// 文件不存在 = no-op 成功；损坏 JSON → settings_parse_failed 不动文件
+Frontend project override shape:
+
+```json
+{
+  "claude": {
+    "providerId": "<cc-switch provider id>",
+    "providerName": "<display name or null>",
+    "settingsPath": "C:\\Users\\Administrator\\.cli-manager\\providers\\claude\\<project>-<hash>.settings.json"
+  }
+}
+```
 
 #[tauri::command]
 pub async fn ccswitch_probe_projects(
@@ -122,56 +122,70 @@ pub async fn ccswitch_probe_projects(
 
 ### 3. Contracts
 
-- **env replacement rule** (pure fn `replace_anthropic_env` / `merge_settings_text`):
-  1. remove every existing env key with prefix `ANTHROPIC_` (clears previous provider
-     residue, e.g. stale model mappings);
-  2. insert **all** keys from the provider's `settings_config.env` (overwrite on collision);
-  3. top-level fields other than `env` (hooks/permissions/...) stay untouched;
-  4. only the provider's `env` section is taken — never its `hooks` or other fields.
+- **Settings location**: generated Claude settings live under
+  `~/.cli-manager/providers/claude`, never under the project directory.
+- **Settings content**: generated JSON contains only `{"env": <provider settings_config.env>}`.
+  Do not copy provider hooks/permissions or merge with project `.claude/settings.json`.
+- **Startup refresh**: generated settings are a launch cache, not the source of truth.
+  Every internal Claude PTY launch with `provider_overrides.claude` must re-read the
+  cc-switch provider by `providerId` and overwrite the generated settings file before
+  the frontend writes the startup command.
+- **Launch command**: for Claude projects with empty `startup_cmd`, frontend appends
+  `--settings <settingsPath>` when `provider_overrides.claude` exists. If
+  `startup_cmd` is non-empty, do not rewrite it; surface a UI warning that the user
+  must manually add `--settings <settingsPath>`.
+- **WSL launch path**: when the project shell resolves to WSL/Bash on Windows,
+  `--settings` must use `/mnt/<drive>/...`, not a Windows `C:\...` path.
+- **Reset**: resetting Claude to global removes the `claude` object from
+  `provider_overrides`; it does not delete generated settings files or legacy
+  project `.claude/settings.json`.
 - **Match rule** (`provider_matches_project_env`): `ANTHROPIC_BASE_URL` equal AND
-  (`ANTHROPIC_AUTH_TOKEN` OR `ANTHROPIC_API_KEY`) equal. Comparison runs in Rust only.
-- **Atomic write**: serialize with `to_string_pretty`, write `settings.json.tmp` in the
-  same directory, then `fs::rename` over the target; clean up tmp on rename failure.
-  `create_dir_all` for `.claude/` first.
+  (`ANTHROPIC_AUTH_TOKEN` OR `ANTHROPIC_API_KEY`) equal. This is legacy probe
+  compatibility only; new project badges prefer `provider_overrides.claude`.
+- **Atomic-ish write on Windows**: serialize with `to_string_pretty`, write a temp file
+  in the same directory, remove the existing generated target if present, then
+  `fs::rename`; clean up tmp on rename failure.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Error (stable string) | File touched? |
 |-----------|----------------------|---------------|
-| `project_path` is not an existing dir | `project_not_found` | no |
+| blank `project_id` | `project_not_found` | no |
 | provider id not in db (app_type='claude') | `provider_not_found` | no |
 | provider settings_config invalid / no env object | `provider_config_invalid` | no |
-| existing settings.json is invalid JSON / non-object root | `settings_parse_failed` | **no — file left as-is** |
-| tmp write / rename failure | `settings_write_failed: <err>` | original intact |
+| tmp write / replace failure | `settings_write_failed: <err>` | no provider override update |
+| startup refresh fails | same stable error as prepare command | PTY launch is blocked |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: project with user env `HTTP_PROXY` + old provider's `ANTHROPIC_*` → after apply,
-  `HTTP_PROXY` survives, all `ANTHROPIC_*` come from the new provider, `hooks` unchanged.
-- Base: no `.claude/` or no settings.json → both created, result contains only provider env.
-- Bad: corrupted settings.json silently replaced with `{}` — forbidden; must error and
-  leave the file byte-identical.
+- Good: project A and project B share the same filesystem path and shell; applying different
+  Claude providers stores different `provider_overrides.claude` values and launches with
+  different `--settings` files.
+- Base: switching to the same provider again overwrites the generated settings file without
+  failing on Windows.
+- Base: cc-switch provider env changes after switching → next internal Claude terminal
+  launch refreshes the generated settings file before running `claude --settings`.
+- Bad: writing provider settings into `<project>/.claude/settings.json` for new switching —
+  forbidden because same-path projects would share one provider.
 
 ### 6. Tests Required (all in `ccswitch.rs::tests`, run `cargo test ccswitch`)
 
-- residue cleanup + user-key preservation (assert `HTTP_PROXY` survives, stale
-  `ANTHROPIC_DEFAULT_*` gone);
-- top-level fields untouched (assert `hooks` deep-equal before/after);
-- env missing / env non-object → rebuilt as object;
-- invalid JSON & non-object root → `Err("settings_parse_failed")`;
-- match rule: AUTH_TOKEN path, API_KEY path, and negative case.
+- Rust unit: generated settings/profile replacement works when the target file already exists.
+- Rust unit: legacy match rule still covers AUTH_TOKEN path, API_KEY path, and negative case.
+- Frontend helper: empty Claude `startup_cmd` appends `--settings`; custom
+  `startup_cmd` returns unchanged.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 ```rust
-// 整文件替换为 provider 的 settings_config —— 会抹掉项目自有 hooks/permissions
-fs::write(settings_path, provider_settings_config)?;
+// New switching must not write shared project path state.
+fs::write(project.join(".claude/settings.json"), provider_settings_config)?;
 ```
 #### Correct
 ```rust
-let merged = merge_settings_text(existing.as_deref(), &provider_env)?; // 只替换 env 段
-write_atomic(&settings_path, &merged)?;
+let settings_path = write_claude_provider_settings(project_id, provider_id, &provider_env)?;
+// frontend launches: claude --settings <settings_path>
 ```
 
 ---
@@ -240,10 +254,12 @@ Frontend project override shape:
   `model_provider`, `model_providers`, `openai_base_url`, `profile`, or auth keys
   into `<project>/.codex/config.toml`; Codex ignores these keys in project-local
   config and emits warnings.
-- **Profile location**: generated profiles are written under `CODEX_HOME` when
-  set, otherwise under `~/.codex`; if the app passes a custom Codex config dir,
-  PTY launch must also inject `CODEX_HOME=<that dir>` so `codex --profile` can
-  find the generated profile.
+- **Profile location**: generated profiles are written under
+  `~/.cli-manager/providers/codex`; PTY launch injects
+  `CODEX_HOME=<that dir>` so `codex --profile` can find the generated profile.
+  For WSL/Bash shells on Windows, injected `CODEX_HOME` must be converted to
+  `/mnt/<drive>/...` while the generated profile is still written through the
+  Windows filesystem path.
 - **Provider input shapes**: cc-switch Codex providers may not be shaped like
   Claude `settings_config.env`. The parser must accept both env-style and
   Codex/config-style shapes:
@@ -282,9 +298,10 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   `--no-alt-screen`. If `startup_cmd` is non-empty, do not rewrite it; surface a
   UI warning that the user must manually add `--profile <profileName>`.
 - **Reset**: resetting Codex to global removes the `codex` object from
-  `provider_overrides`; it does not delete generated profile files in MVP.
-- **Claude compatibility**: Claude switching remains `.claude/settings.json` env
-  replacement via `ANTHROPIC_*` rules from the previous scenario.
+  `provider_overrides`; cleanup may delete unused CLI-Manager-generated profiles
+  but must not delete user-owned profiles.
+- **Claude compatibility**: Claude switching uses generated settings files and
+  `claude --settings` as described in the previous scenario.
 
 ### 4. Validation & Error Matrix
 
