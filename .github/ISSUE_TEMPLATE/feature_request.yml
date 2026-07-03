@@ -24,32 +24,7 @@ body:
       description: Describe the smallest useful behavior.
       placeholder: "Add ... so that ..."
     validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives considered
-      description: Mention any workaround or simpler option you have tried.
-    validations:
       required: false
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: Affected area
-      description: Pick the closest product area.
-      options:
-        - Terminal
-        - Projects
-        - History sessions
-        - AI Replay
-        - Settings
-        - Hooks
-        - Statistics
-        - Other
-    validations:
-      required: true
 
   - type: textarea
     id: extra

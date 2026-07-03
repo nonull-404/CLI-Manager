@@ -24,32 +24,7 @@ body:
       description: 描述最小可用的行为，不要堆功能。
       placeholder: "增加 ...，这样可以 ..."
     validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: 已尝试的替代方案
-      description: 如果你已经用过临时方案或更简单的方案，请写在这里。
-    validations:
       required: false
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: 影响范围
-      description: 请选择最接近的产品区域。
-      options:
-        - 终端
-        - 项目管理
-        - 历史会话
-        - AI Replay
-        - 设置
-        - Hooks
-        - 统计分析
-        - 其他
-    validations:
-      required: true
 
   - type: textarea
     id: extra
