@@ -105,7 +105,7 @@ export function ModelContextCard({
     contextLimit && contextTokens !== null ? (contextTokens / contextLimit) * 100 : null;
   const remaining =
     contextLimit && contextTokens !== null ? Math.max(0, contextLimit - contextTokens) : null;
-  const displayedReasoningEffort = formatReasoningEffort(session?.usage?.reasoning_effort ?? reasoningEffort);
+  const displayedReasoningEffort = formatReasoningEffort(reasoningEffort ?? session?.usage?.reasoning_effort);
 
   const percentColor =
     usagePercent === null

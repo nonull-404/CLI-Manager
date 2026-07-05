@@ -247,6 +247,7 @@ function normalizeSessionUsage(raw: unknown): HistorySessionDetail["usage"] {
     cache_creation_tokens: asNumber(rec.cache_creation_tokens ?? rec.cacheCreationTokens),
     total_cost_usd: asNumber(rec.total_cost_usd ?? rec.totalCostUsd),
     dominant_model: asString(rec.dominant_model ?? rec.dominantModel ?? "") || null,
+    current_model: asString(rec.current_model ?? rec.currentModel ?? "") || null,
     context_window: asNumber(rec.context_window ?? rec.contextWindow) || null,
     last_context_tokens: asNumber(rec.last_context_tokens ?? rec.lastContextTokens) || null,
     reasoning_effort: asString(rec.reasoning_effort ?? rec.reasoningEffort ?? "") || null,

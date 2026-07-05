@@ -198,6 +198,7 @@ struct SessionStatsScan {
     total_cost_usd: f64,
     unpriced_tokens: u64,
     dominant_model: Option<String>,
+    current_model: Option<String>,
     model_usage: HashMap<String, UsageStatsScan>,
     /// 模型上下文窗口大小（日志显式字段，如 Codex model_context_window / Claude context_window）。
     context_window: Option<u64>,
@@ -451,6 +452,7 @@ pub struct HistorySessionUsage {
     pub cache_creation_tokens: u64,
     pub total_cost_usd: f64,
     pub dominant_model: Option<String>,
+    pub current_model: Option<String>,
     pub context_window: Option<u64>,
     pub last_context_tokens: Option<u64>,
     pub reasoning_effort: Option<String>,
@@ -2563,6 +2565,7 @@ fn finalize_session_detail(
         cache_creation_tokens: parts.computed.stats.cache_creation_tokens,
         total_cost_usd: parts.computed.stats.total_cost_usd,
         dominant_model: parts.computed.stats.dominant_model.clone(),
+        current_model: parts.computed.stats.current_model.clone(),
         context_window: parts.computed.stats.context_window,
         last_context_tokens: parts.computed.stats.last_context_tokens,
         reasoning_effort: parts.computed.stats.reasoning_effort.clone(),
@@ -2641,6 +2644,7 @@ fn merge_session_detail_parts(
     let mut latest_context_updated_at = i64::MIN;
     let mut context_window = None;
     let mut last_context_tokens = None;
+    let mut current_model = None;
     let mut reasoning_effort = None;
     let mut tool_call_count = 0u64;
     let mut mcp_calls: HashMap<String, u64> = HashMap::new();
@@ -2661,6 +2665,9 @@ fn merge_session_detail_parts(
             cwd = part.cwd.clone();
         }
         if part.computed.updated_at >= latest_context_updated_at {
+            if part.computed.stats.current_model.is_some() {
+                current_model = part.computed.stats.current_model.clone();
+            }
             if part.computed.stats.context_window.is_some() {
                 context_window = part.computed.stats.context_window;
             }
@@ -2752,6 +2759,7 @@ fn merge_session_detail_parts(
     let mut merged_stats = SessionStatsScan {
         context_window,
         last_context_tokens,
+        current_model,
         reasoning_effort,
         tool_call_count,
         mcp_calls,
@@ -2818,6 +2826,11 @@ fn merge_session_detail_parts(
                 .then_with(|| right_model.cmp(left_model))
         })
         .map(|(model, _)| model.clone());
+    merged_stats.current_model = usage_events
+        .iter()
+        .rev()
+        .find_map(|(_, _, event)| event.model.clone())
+        .or(merged_stats.current_model);
 
     let messages = message_rows
         .into_iter()
@@ -3938,6 +3951,7 @@ fn scan_session_inner(
             total_cost_usd,
             unpriced_tokens,
             dominant_model,
+            current_model,
             model_usage,
             context_window,
             last_context_tokens,
@@ -6536,6 +6550,7 @@ mod tests {
                     total_cost_usd: usage.total_cost_usd,
                     unpriced_tokens: usage.unpriced_tokens,
                     dominant_model: Some("priced-model".to_string()),
+                    current_model: Some("priced-model".to_string()),
                     model_usage: HashMap::new(),
                     context_window: None,
                     last_context_tokens: None,
@@ -7018,6 +7033,30 @@ mod tests {
 
         assert_eq!(stats.context_window, Some(1_000_000));
         assert_eq!(stats.last_context_tokens, Some(96_020));
+    }
+
+    #[test]
+    fn scan_session_combined_tracks_current_model_separately_from_dominant_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("claude-session.jsonl");
+        write_text(
+            &file,
+            concat!(
+                r#"{"type":"assistant","requestId":"r1","message":{"id":"m1","model":"claude-old","usage":{"input_tokens":10,"output_tokens":20}}}"#,
+                "\n",
+                r#"{"type":"assistant","requestId":"r2","message":{"id":"m2","model":"claude-old","usage":{"input_tokens":11,"output_tokens":21}}}"#,
+                "\n",
+                r#"{"type":"assistant","requestId":"r3","message":{"id":"m3","model":"claude-new","usage":{"input_tokens":12,"output_tokens":22,"context_window":300000}}}"#,
+                "\n",
+            ),
+        );
+
+        let (_, stats) = scan_session_combined(&file);
+
+        assert_eq!(stats.dominant_model.as_deref(), Some("claude-old"));
+        assert_eq!(stats.current_model.as_deref(), Some("claude-new"));
+        assert_eq!(stats.context_window, Some(300_000));
+        assert_eq!(stats.last_context_tokens, Some(12));
     }
 
     #[test]

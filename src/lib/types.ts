@@ -255,6 +255,7 @@ export interface HistorySessionUsage {
   cache_creation_tokens: number;
   total_cost_usd: number;
   dominant_model?: string | null;
+  current_model?: string | null;
   context_window?: number | null;
   last_context_tokens?: number | null;
   reasoning_effort?: string | null;

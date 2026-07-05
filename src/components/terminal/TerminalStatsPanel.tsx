@@ -543,7 +543,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             key={cardKey}
             stats={boundStats}
             session={boundSession}
-            displayModel={boundStats.dominantModel}
+            displayModel={boundSession?.usage?.current_model ?? boundStats.dominantModel}
             exactContextLimit={boundSession?.usage?.context_window ?? null}
             reasoningEffort={terminalSession?.cliReasoningEffort ?? null}
           />

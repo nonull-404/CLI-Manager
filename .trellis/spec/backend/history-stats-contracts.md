@@ -78,6 +78,11 @@ interface HistoryTokenTrendPoint {
 }
 
 interface HistorySessionUsage {
+  dominant_model?: string | null;
+  current_model?: string | null;
+  context_window?: number | null;
+  last_context_tokens?: number | null;
+  reasoning_effort?: string | null;
   token_trend: HistoryTokenTrendPoint[];
 }
 
@@ -112,6 +117,7 @@ interface TerminalSession {
 - `HistorySessionUsage.token_trend` exposes per-usage **delta** points after the same dedup/diff rules used for totals. Skip zero-token points. Do not synthesize frontend trend points from final totals.
 - Codex `input_tokens` **includes** `cached_input_tokens`. Extraction normalizes to non-cached input + `cache_read_tokens` (Claude semantics), so pricing applies uniformly with no source-specific input deduction.
 - Usage lines without a model (e.g. Codex `token_count` events) attribute to the most recent model seen in the session (e.g. from `turn_context.payload.model`).
+- `HistorySessionUsage.dominant_model` is an aggregate model signal and must not be reused as the realtime "current model". `HistorySessionUsage.current_model` tracks the latest non-synthetic model seen in the session; realtime model/context display should prefer it so same-session model switches update context-limit fallback and remaining-space calculation without changing historical model distribution semantics.
 - The `<synthetic>` model (Claude error placeholder lines) must never enter model distribution or model attribution.
 - Stats aggregates must include input, output, cache read, cache creation, estimated cost, and unpriced token counts at every exposed usage level: total, project, model, source, daily series, and hourly activity.
 - History stats token/cost/model aggregates must bucket by each deduped usage event timestamp (`timestamp`, `time`, `created_at`, `createdAt`, or `message.timestamp`), not by the session file `updated_at`. If a usage event has no parseable timestamp, fall back to the session `updated_at`. Range-level `sessions` must be counted by unique session identity so multiple usage events in one session do not inflate session counts.
@@ -164,6 +170,7 @@ interface TerminalSession {
 | Aggregated `tool_events` includes MCP end/error diagnostics | Keep them in diagnostics, but do not let them inflate `tool_call_count` / tool buckets. |
 | Claude log has usage tokens but no explicit context limit field | Return `context_window: null`; frontend resolver may display a metadata/local limit separately. |
 | Claude/Codex log exposes an explicit positive context limit field | Return that value as `context_window`; most recent exposed value wins during a scan. |
+| Same session switches model after earlier usage dominates totals | Keep `dominant_model` as the aggregate/dominant model, but return the latest model as `current_model` for realtime display. |
 | History cache invalidation runs | Clear file, stats, project, and aggregate caches together. |
 
 ### 5. Good/Base/Bad Cases
@@ -176,6 +183,7 @@ interface TerminalSession {
 - Good: a Codex rollout file with `session_meta.payload.id` returns that UUID as `session_id`, allowing realtime stats strict binding to match the hook session id; a Claude file with a similar metadata id still keeps its original file-stem identity.
 - Good: realtime stats requests `history_get_session(..., aggregate_subtasks = Some(true))` for a parent session with `subagents/agent-*.jsonl`, and the returned token totals / trend / tool counts equal parent + child aggregate while `session_id` still matches the parent hook session id.
 - Good: a Claude assistant usage row with `max_context_tokens` returns `usage.context_window`, while the same row without explicit context metadata leaves it `null`.
+- Good: a session where `claude-old` appears in more usage rows but the last assistant row uses `claude-new` returns `dominant_model = "claude-old"` and `current_model = "claude-new"`.
 - Base: a Codex session without model pricing still appears in stats with token totals and `unpriced_tokens`; a single-day stats view can map `hourly_activity` into 24 hourly trend and heatmap buckets.
 - Bad: frontend assumes a newly added numeric field is always present and renders `NaN` when older cached payloads omit it; realtime stats uses only project latest-session lookup and shows another window's current context.
 - Bad: realtime stats concatenates parent and child `token_trend` arrays directly or derives tool totals from merged `tool_events`, causing out-of-order trend points or inflated tool-call counts.
@@ -196,6 +204,7 @@ interface TerminalSession {
   - History stats bucket cross-day session usage by usage event timestamp while counting the session once for range totals.
   - Tool event extraction returns bounded diagnostic rows for Claude `tool_use`, Codex `function_call`, `function_call_output`, and MCP end/error events without changing aggregate tool counts.
   - Claude explicit context-window fields populate `SessionStatsScan.context_window`; Claude usage without those fields keeps it `None`.
+  - Same-session model switching keeps `dominant_model` unchanged for aggregate stats while exposing the latest model as `current_model`.
 - Frontend checks:
   - `npm run build` must pass after payload/type changes.
   - Stats UI must render missing token/cost fields as zero, not `NaN`.
