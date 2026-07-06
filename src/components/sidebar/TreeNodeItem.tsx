@@ -14,6 +14,20 @@ function preventSecondaryPointerFocus(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
 }
 
+const MAX_PROVIDER_BADGE_LABEL_LENGTH = 10;
+
+function compactProviderBadgeLabel(name: string) {
+  const value = name.trim();
+  const knownPrefix = value.match(/^(gpt-\d+(?:\.\d+)?|claude-\d+(?:\.\d+)?|claude-[a-z]+|deepseek|qwen\d*|gemini|kimi|doubao|openai|anthropic|azure)\b/i);
+  if (knownPrefix) return knownPrefix[1];
+
+  const separatorIndex = value.search(/[-_\s/]/);
+  const token = separatorIndex > 0 ? value.slice(0, separatorIndex) : value;
+  return token.length > MAX_PROVIDER_BADGE_LABEL_LENGTH
+    ? token.slice(0, MAX_PROVIDER_BADGE_LABEL_LENGTH)
+    : token;
+}
+
 function InlineRename({ initial, onConfirm, onCancel }: { initial: string; onConfirm: (name: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
@@ -84,6 +98,7 @@ function TreeNodeItemImpl({
     const pathInvalid = actions.isPathInvalid(p.id);
     const providerBadge = actions.providerBadges[p.id];
     const providerName = providerBadge?.providerName?.trim() || t("sidebar.tree.customProvider");
+    const providerBadgeLabel = compactProviderBadgeLabel(providerName);
     const providerVendor = providerBadge
       ? inferVendor(providerBadge.vendorHint) ?? inferVendor(providerBadge.providerName)
       : null;
@@ -129,12 +144,12 @@ function TreeNodeItemImpl({
             <span className="block truncate font-medium">{p.name}</span>
             {providerBadge && (
               <span
-                className="ui-tree-meta-chip ui-tree-provider-chip inline-flex max-w-[104px] shrink-0 items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[10px] leading-none"
+                className="ui-tree-meta-chip ui-tree-provider-chip inline-flex max-w-[64px] shrink-0 items-center gap-0.5 truncate rounded-full px-1 py-0.5 text-[10px] leading-none"
                 title={t("sidebar.tree.providerBadge", { name: providerName })}
                 aria-label={t("sidebar.tree.providerBadge", { name: providerName })}
               >
-                {providerVendor && <VendorIcon vendor={providerVendor} size={10} />}
-                <span className="truncate">{providerName}</span>
+                {providerVendor && <VendorIcon vendor={providerVendor} size={9} />}
+                <span className="truncate">{providerBadgeLabel}</span>
               </span>
             )}
             {terminalCount > 0 && (
