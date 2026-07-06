@@ -384,6 +384,7 @@ pub fn run() {
             commands::terminal::pty_resize,
             commands::terminal::pty_close,
             commands::terminal::pty_close_all,
+            commands::terminal::pty_reconcile_active_sessions,
             commands::terminal::pty_status,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
