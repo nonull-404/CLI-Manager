@@ -1,9 +1,11 @@
 pub mod background;
 pub mod ccswitch;
 pub mod ccusage;
+pub mod db_repair;
 pub mod fonts;
 pub mod fs;
 pub mod git;
+pub mod git_worktree;
 pub mod history;
 pub mod hook_settings;
 pub mod logging;
