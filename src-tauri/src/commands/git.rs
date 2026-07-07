@@ -497,8 +497,8 @@ fn run_wsl_git(distro: &str, linux_path: &str, git_args: &[&str]) -> Result<Vec<
         .unwrap_or_else(|| "wsl.exe".to_string());
 
     let mut cmd = silent_command(&program);
-    cmd.args(["-d", distro, "--exec", "git", "-C", linux_path]);
-    cmd.args(git_args);
+    let args = build_wsl_git_command_args(distro, linux_path, git_args);
+    cmd.args(&args);
 
     let output = cmd.output().map_err(|e| format!("spawn_failed: {e}"))?;
     if output.status.success() {
@@ -521,6 +521,21 @@ fn run_wsl_git(distro: &str, linux_path: &str, git_args: &[&str]) -> Result<Vec<
             .unwrap_or_else(|| "?".to_string()),
         snippet
     ))
+}
+
+fn build_wsl_git_command_args(distro: &str, linux_path: &str, git_args: &[&str]) -> Vec<String> {
+    let mut args = vec![
+        "-d".to_string(),
+        distro.to_string(),
+        "--exec".to_string(),
+        "git".to_string(),
+        "-c".to_string(),
+        format!("safe.directory={linux_path}"),
+        "-C".to_string(),
+        linux_path.to_string(),
+    ];
+    args.extend(git_args.iter().map(|arg| (*arg).to_string()));
+    args
 }
 
 fn parse_wsl_git_status(stdout: &[u8]) -> Vec<GitFileChange> {
@@ -907,11 +922,11 @@ pub async fn git_get_file_diff(
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
 
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err(format!("路径不存在: {}", project_path));
         }
 
-        let repo = Repository::open(path).map_err(|e| format!("打开仓库失败: {}", e))?;
+        let repo = open_git_repo(path).map_err(|e| format!("打开仓库失败: {}", e))?;
 
         // 针对不同状态使用不同策略
         match status.as_str() {
@@ -1281,7 +1296,7 @@ pub async fn git_discard_file(
 
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
 
@@ -1670,7 +1685,7 @@ pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(
     validate_repo_relative_path(&file_path)?;
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
@@ -1700,10 +1715,10 @@ pub async fn git_unstage_file(project_path: String, file_path: String) -> Result
     validate_repo_relative_path(&file_path)?;
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
         match repo.head().and_then(|h| h.peel_to_commit()) {
             Ok(commit) => {
                 repo.reset_default(Some(commit.as_object()), [file_path.as_str()])
@@ -1731,10 +1746,10 @@ pub async fn git_unstage_file(project_path: String, file_path: String) -> Result
 pub async fn git_stage_all(project_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         index
             .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
@@ -1756,10 +1771,10 @@ pub async fn git_stage_all(project_path: String) -> Result<(), String> {
 pub async fn git_unstage_all(project_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         match repo.head().and_then(|h| h.peel_to_tree()) {
             Ok(tree) => {
@@ -1790,10 +1805,10 @@ pub async fn git_stage_paths(project_path: String, paths: Vec<String>) -> Result
     }
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         for p in &paths {
             let rel = Path::new(p);
@@ -1824,10 +1839,10 @@ pub async fn git_unstage_paths(project_path: String, paths: Vec<String>) -> Resu
     }
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
         match repo.head().and_then(|h| h.peel_to_commit()) {
             Ok(commit) => {
                 repo.reset_default(Some(commit.as_object()), paths.iter().map(|s| s.as_str()))
@@ -1860,10 +1875,10 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
     }
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
 
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         let tree_oid = index
@@ -1991,7 +2006,7 @@ pub struct GitBranchInfo {
 pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, String> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
@@ -2112,39 +2127,47 @@ fn map_git_cli_error(stderr: &str) -> String {
     format!("{code}: {snippet}")
 }
 
-/// shell out 系统 `git` 执行网络操作，继承用户凭据管理器 / SSH / git config 代理。
-/// 用 args 数组（非 shell）避免注入；成功返回合并输出，失败返回映射错误码。
-fn run_git_cli(project_path: &str, args: &[&str]) -> Result<String, String> {
+fn git_command_output(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(project_path) {
+        let program = crate::wsl::find_wsl_exe()
+            .as_deref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "wsl.exe".to_string());
+        let mut cmd = silent_command(&program);
+        let wsl_args = build_wsl_git_command_args(&distro, &linux_path, args);
+        cmd.args(&wsl_args);
+        return cmd.output().map_err(|e| format!("spawn_failed: {e}"));
+    }
+
     let path = Path::new(project_path);
     if !path.exists() {
         return Err("path_not_found".to_string());
     }
 
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = silent_command("git");
     cmd.current_dir(path).args(args);
 
-    // Windows 上隐藏控制台窗口，避免推送/拉取时弹出 CMD 窗口
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let output = cmd.output().map_err(|e| {
+    cmd.output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             "git_not_found".to_string()
         } else {
             format!("spawn_failed: {e}")
         }
-    })?;
+    })
+}
+
+/// shell out 系统 `git` 执行网络操作，继承用户凭据管理器 / SSH / git config 代理。
+/// WSL UNC 路径改由 wsl.exe 内部执行 git，避免 Windows git 在 UNC/Plan 9 上失败。
+/// 用 args 数组（非 shell）避免注入；成功返回合并输出，失败返回映射错误码。
+fn run_git_cli(project_path: &str, args: &[&str]) -> Result<String, String> {
+    let output = git_command_output(project_path, args)?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {
         Ok(format!("{stdout}{stderr}").trim().to_string())
     } else {
-        Err(map_git_cli_error(&stderr))
+        Err(map_git_cli_error(&format!("{stderr}{stdout}")))
     }
 }
 
@@ -2205,7 +2228,7 @@ fn is_no_stash_created(output: &str) -> bool {
 pub async fn git_list_branches(project_path: String) -> Result<Vec<GitBranchInfo>, String> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
@@ -2383,21 +2406,7 @@ fn pull_args(strategy: &str) -> Result<Vec<&'static str>, String> {
 /// 故合并 stdout+stderr 检测；命中 → 稳定错误码 `pull_conflict`（前端引导解决/继续/中止），
 /// 否则回退通用错误映射。成功返回合并输出。
 fn run_git_conflict_aware(project_path: &str, args: &[&str]) -> Result<String, String> {
-    let path = Path::new(project_path);
-    if !path.exists() {
-        return Err("path_not_found".to_string());
-    }
-    let output = std::process::Command::new("git")
-        .current_dir(path)
-        .args(args)
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "git_not_found".to_string()
-            } else {
-                format!("spawn_failed: {e}")
-            }
-        })?;
+    let output = git_command_output(project_path, args)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {
@@ -2417,7 +2426,7 @@ fn run_git_conflict_aware(project_path: &str, args: &[&str]) -> Result<String, S
             .collect();
         return Err(format!("pull_conflict: {snippet}"));
     }
-    Err(map_git_cli_error(&stderr))
+    Err(map_git_cli_error(&format!("{stderr}{stdout}")))
 }
 
 /// 按策略拉取当前分支（merge / rebase / ff-only）。shell out 系统 git，继承凭据/代理/SSH。
@@ -2438,11 +2447,11 @@ pub async fn git_pull(project_path: String, strategy: String) -> Result<String, 
 pub async fn git_pull_abort(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&project_path);
-        if !path.exists() {
+        if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
         let rebasing = {
-            let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+            let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
             matches!(
                 repo.state(),
                 git2::RepositoryState::Rebase
@@ -2495,11 +2504,11 @@ pub async fn git_watch_stop(bridge: State<'_, GitWatcherBridge>) -> Result<(), S
 mod tests {
     use super::{
         build_reverse_hunk_patch, build_reverse_lines_patch, build_worktree_snapshot,
-        collect_git_changes_from_repo, git_fork_worktree_snapshot, git_restore_worktree_snapshot,
-        is_nested_repo_entry, is_no_stash_created, parse_wsl_git_status, parse_wsl_numstat,
-        remove_untracked_snapshot_file, scan_git_repository_paths, should_skip_diff_line_stats,
-        validate_branch_name, validate_repo_relative_path, validate_snapshot_branch_name,
-        GIT_DIFF_LINE_STATS_STATUS_LIMIT,
+        build_wsl_git_command_args, collect_git_changes_from_repo, git_fork_worktree_snapshot,
+        git_restore_worktree_snapshot, is_nested_repo_entry, is_no_stash_created,
+        parse_wsl_git_status, parse_wsl_numstat, remove_untracked_snapshot_file,
+        scan_git_repository_paths, should_skip_diff_line_stats, validate_branch_name,
+        validate_repo_relative_path, validate_snapshot_branch_name, GIT_DIFF_LINE_STATS_STATUS_LIMIT,
     };
     use git2::{IndexAddOption, Repository, Signature};
     use std::fs;
@@ -2670,6 +2679,31 @@ mod tests {
         assert!(should_skip_diff_line_stats(
             GIT_DIFF_LINE_STATS_STATUS_LIMIT + 1
         ));
+    }
+
+    #[test]
+    fn wsl_git_args_include_repo_safe_directory() {
+        let args = build_wsl_git_command_args(
+            "Ubuntu-22.04",
+            "/data/tabGo",
+            &["status", "--porcelain=v1"],
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "Ubuntu-22.04",
+                "--exec",
+                "git",
+                "-c",
+                "safe.directory=/data/tabGo",
+                "-C",
+                "/data/tabGo",
+                "status",
+                "--porcelain=v1",
+            ]
+        );
     }
 
     #[test]

@@ -16,6 +16,10 @@
 
 - **AI Replay 快照瘦身**：代码快照 Diff 改为写入 `.cli-manager/replay-snapshots/` 文件，SQLite 只保存快照文件引用和元数据；每个应用版本首次启动会自动检查并迁移旧内联快照，清理 DB 中的大型 `payload.patch` 字段，保留查看 Diff、回滚与 Fork 能力。
 
+### 修复
+
+- **WSL Git 操作兼容修复**：查看 WSL UNC 项目的文件 diff、暂存/取消暂存、提交、推拉、分支切换等 Git 操作统一复用 WSL 兼容仓库打开和 `wsl.exe git` 执行路径，避免 libgit2 Owner 校验或 Windows git 访问 UNC 路径失败。
+
 ## [V1.2.6] - 2026-07-07
 
 ### 设置
