@@ -158,6 +158,7 @@ export interface ProjectFileEntry {
   name: string;
   path: string;
   kind: "file" | "directory";
+  isSymlink?: boolean;
   sizeBytes: number;
   modifiedMs?: number | null;
   children?: ProjectFileEntry[];

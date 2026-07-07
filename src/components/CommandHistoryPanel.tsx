@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type CSSProperties } from "react";
 import { useShallow } from "zustand/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
@@ -15,9 +15,15 @@ interface CommandHistoryPanelProps {
   compact?: boolean;
   popoverSide?: "top" | "right" | "bottom" | "left";
   toneClassName?: string;
+  popoverStyle?: CSSProperties;
 }
 
-export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", toneClassName = "" }: CommandHistoryPanelProps) {
+export function CommandHistoryPanel({
+  compact = false,
+  popoverSide = "bottom",
+  toneClassName = "",
+  popoverStyle,
+}: CommandHistoryPanelProps) {
   const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const [panelLoading, setPanelLoading] = useState(false);
@@ -98,6 +104,7 @@ export function CommandHistoryPanel({ compact = false, popoverSide = "bottom", t
         align={popoverSide === "right" ? "start" : "end"}
         side={popoverSide}
         className="w-80"
+        style={popoverStyle}
       >
         <div className="p-2">
           <div className="ui-search-focus-shell flex items-center gap-2 rounded-lg bg-surface-container-highest px-2 py-1">

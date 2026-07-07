@@ -39,13 +39,14 @@
   -webkit-backdrop-filter: blur(20px);
 }
 
-#command-history-panel {
+#command-history-panel,
+#command-template-panel {
   --terminal-popover-fg: var(--term-panel-fg, #ececec);
   --terminal-popover-muted: color-mix(in srgb, var(--terminal-popover-fg) 74%, var(--term-panel-dim, #9ca0a6) 26%);
   --terminal-popover-soft: color-mix(in srgb, var(--terminal-popover-fg) 60%, var(--term-panel-dim, #9ca0a6) 40%);
   --surface: var(--term-panel-bg, #0a0a0a);
   --surface-container-low: var(--term-panel-bg, #0a0a0a);
-  --surface-container-lowest: var(--terminal-theme-background, #0c0e10);
+  --surface-container-lowest: var(--term-panel-bg, var(--terminal-theme-background, #0c0e10));
   --surface-container-high: var(--term-panel-card, #121212);
   --surface-container-highest: var(--term-panel-card-inner, #181818);
   --on-surface: var(--terminal-popover-fg);
@@ -61,26 +62,25 @@
   --interactive-selected-border: color-mix(in srgb, var(--terminal-theme-accent, #5b8def) 40%, var(--term-panel-border, #2e2e2e) 60%);
   --interactive-focus-ring: color-mix(in srgb, var(--terminal-theme-accent, #5b8def) 26%, transparent);
   --interactive-shadow: none;
-  background-color: var(--term-panel-bg, #0a0a0a);
+  background-color: color-mix(in srgb, var(--term-panel-bg, #0a0a0a) 99%, transparent);
   border-color: var(--term-panel-border, #2e2e2e);
   color: var(--term-panel-fg, #ececec);
-  box-shadow:
-    0 14px 34px color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 58%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--term-panel-border, #2e2e2e) 68%, transparent);
+  box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-#command-history-panel {
-  background-color: color-mix(in srgb, var(--term-panel-bg, #0a0a0a) 99%, transparent);
-}
-
 #command-template-panel .text-on-surface,
 #command-template-panel .text-text-primary,
+#command-template-panel .text-primary,
 #command-history-panel .text-on-surface,
 #command-history-panel .text-text-primary,
 #command-history-panel code {
   color: var(--terminal-popover-fg);
+}
+
+#command-template-panel code.text-primary {
+  color: color-mix(in srgb, var(--primary) 58%, var(--terminal-popover-muted) 42%);
 }
 
 #command-template-panel .text-on-surface-variant,
@@ -93,25 +93,44 @@
 #command-template-panel .ui-select-popover {
   background-color: var(--term-panel-card, #121212);
   border-color: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 72%, transparent);
-  box-shadow:
-    0 12px 30px color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 62%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--term-panel-border, #2e2e2e) 52%, transparent);
+  box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 #command-template-panel {
-  --terminal-popover-fg: var(--text-primary);
-  --terminal-popover-muted: var(--text-secondary);
-  --terminal-popover-soft: var(--text-muted);
-  background-color: color-mix(in srgb, var(--surface-container-lowest) 99%, transparent);
-  border-color: var(--border);
-  color: var(--text-primary);
-  box-shadow:
-    0 14px 34px color-mix(in srgb, var(--surface) 42%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--border) 64%, transparent);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  --primary: var(--term-panel-magenta, #c77dbb);
+  --interactive-focus-ring: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--terminal-popover-fg);
+}
+
+#command-history-panel .ui-search-focus-shell {
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 88%, var(--term-panel-bg, #0a0a0a) 12%);
+  color: var(--terminal-popover-muted);
+  box-shadow: none;
+}
+
+#command-history-panel .ui-search-focus-shell:focus-within {
+  border-color: color-mix(in srgb, var(--term-panel-cyan, #5ac8e0) 26%, var(--border) 74%);
+  background-color: color-mix(in srgb, var(--term-panel-card-inner, #181818) 84%, var(--term-panel-bg, #0a0a0a) 16%);
+  box-shadow: none;
+}
+
+#command-template-panel .ui-focus-ring:focus-visible,
+#command-history-panel .ui-focus-ring:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--border) 84%, transparent) !important;
+  outline-offset: 1px !important;
+  box-shadow: none;
+}
+
+#command-history-panel .ui-search-focus-shell input {
+  color: var(--terminal-popover-fg);
+  caret-color: var(--term-panel-cyan, #5ac8e0);
+}
+
+#command-history-panel .ui-search-focus-shell input::placeholder {
+  color: color-mix(in srgb, var(--terminal-popover-muted) 66%, transparent);
 }
 
 .command-template-panel__header {
@@ -167,15 +186,16 @@
   height: 30px;
   padding: 0 10px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border) 70%);
-  background-color: color-mix(in srgb, var(--surface-container-highest) 78%, var(--primary) 22%);
-  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border) 78%);
+  background-color: color-mix(in srgb, var(--surface-container-highest) 92%, var(--primary) 8%);
+  color: color-mix(in srgb, var(--primary) 82%, var(--terminal-popover-fg) 18%);
   font-size: 11px;
   font-weight: 600;
 }
 
 .command-template-panel__new-button:hover {
-  background-color: color-mix(in srgb, var(--surface-container-highest) 64%, var(--primary) 36%);
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--border) 66%);
+  background-color: color-mix(in srgb, var(--surface-container-highest) 86%, var(--primary) 14%);
 }
 
 .command-template-panel__filters {
@@ -240,6 +260,7 @@
   min-width: 0;
   height: 26px;
   border-radius: 6px;
+  border: 1px solid transparent;
   color: var(--terminal-popover-muted);
   font-size: 11px;
   font-weight: 600;
@@ -251,9 +272,10 @@
 }
 
 .command-template-panel__scope-tabs button[data-active="true"] {
-  color: var(--primary);
-  background-color: color-mix(in srgb, var(--surface-container-highest) 68%, var(--primary) 32%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 22%, var(--border) 78%);
+  color: color-mix(in srgb, var(--primary) 82%, var(--terminal-popover-fg) 18%);
+  background-color: color-mix(in srgb, var(--surface-container-highest) 88%, var(--primary) 12%);
+  box-shadow: none;
 }
 
 .command-template-panel__form {

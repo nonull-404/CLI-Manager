@@ -26,6 +26,25 @@ pub fn windows_path_to_wsl(path: &str) -> Option<String> {
     }
 }
 
+/// `/mnt/d/a/b` -> `D:\a\b`（盘符大写、正斜杠转反斜杠）。
+/// 仅处理 WSL 默认挂载的 Windows 盘路径，Linux 原生路径返回 None。
+pub fn wsl_mnt_path_to_windows(path: &str) -> Option<String> {
+    let path = path.trim();
+    let rest = path.strip_prefix("/mnt/")?;
+    let (drive, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    if drive.len() != 1 || !drive.as_bytes()[0].is_ascii_alphabetic() {
+        return None;
+    }
+
+    let drive = drive.to_ascii_uppercase();
+    let tail = tail.replace('/', "\\");
+    if tail.is_empty() {
+        Some(format!("{drive}:\\"))
+    } else {
+        Some(format!("{drive}:\\{tail}"))
+    }
+}
+
 /// 判断一个配置目录路径是否指向 WSL（`\\wsl.localhost\...` 或 `\\wsl$\...`，大小写不敏感）。
 pub fn is_wsl_config_dir(path: &str) -> bool {
     let normalized = path.trim().replace('/', "\\").to_ascii_lowercase();
@@ -102,6 +121,22 @@ mod tests {
         assert_eq!(windows_path_to_wsl(r"\\wsl.localhost\Ubuntu\home"), None);
         assert_eq!(windows_path_to_wsl("relative/path"), None);
         assert_eq!(windows_path_to_wsl("C:relative"), None);
+    }
+
+    #[test]
+    fn converts_wsl_mnt_paths_to_windows_paths() {
+        assert_eq!(
+            wsl_mnt_path_to_windows("/mnt/d/work/pythonProject/acGo").as_deref(),
+            Some(r"D:\work\pythonProject\acGo")
+        );
+        assert_eq!(wsl_mnt_path_to_windows("/mnt/c").as_deref(), Some(r"C:\"));
+    }
+
+    #[test]
+    fn rejects_non_wsl_mnt_paths_for_windows_conversion() {
+        assert_eq!(wsl_mnt_path_to_windows("/home/me/project"), None);
+        assert_eq!(wsl_mnt_path_to_windows("/mnt/dd/project"), None);
+        assert_eq!(wsl_mnt_path_to_windows(r"D:\work"), None);
     }
 
     #[test]

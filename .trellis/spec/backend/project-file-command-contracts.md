@@ -36,7 +36,7 @@ file_move(root_path: String, source_path: String, target_parent_path: String, na
 Payloads:
 
 ```rust
-FileEntry { name: String, path: String, kind: String, size_bytes: u64, modified_ms: Option<u64> }
+FileEntry { name: String, path: String, kind: String, is_symlink: bool, size_bytes: u64, modified_ms: Option<u64> }
 ContentSearchMatch { path: String, name: String, line_number: usize, line_text: String, before: Vec<String>, after: Vec<String> }
 TextFilePayload { content: String, size_bytes: u64 }
 ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
@@ -50,6 +50,9 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - `project-files-changed` emits `projectPath` plus project-relative `changedPaths` using forward slashes; frontend refresh logic must treat an omitted/empty `changedPaths` as a full visible refresh fallback.
 - Relative path fields use forward slashes only; empty string means project root where accepted.
 - `name` / `newName` are single child names only; they must not contain `/` or `\`.
+- `FileEntry.is_symlink` serializes to frontend `isSymlink`; it marks the entry itself as a symlink/reparse-style link, not whether the resolved target is a directory.
+- For WSL UNC roots, `file_list_dir` must avoid Windows Plan 9 directory enumeration and use `wsl.exe -d <distro> --exec find -H <path> -mindepth 1 -maxdepth 1 -printf "%f\0%y\0%Y\0%s\0%T@\0"` so command-line symlink roots are traversable and child directory symlinks can be reported as `kind="directory", is_symlink=true`.
+- The project-creation WSL symlink picker must filter entries to `kind === "directory" && isSymlink === true`; ordinary directories remain visible in the normal project file browser but are not shown in the symlink picker.
 - `file_read_text` only returns UTF-8 text and rejects files larger than `TEXT_FILE_MAX_BYTES`.
 - `file_read_image` returns base64 plus MIME type and rejects files larger than `IMAGE_FILE_MAX_BYTES`.
 - `file_search` and `file_search_content` must be bounded: skip known heavy/generated directories, cap returned results, and never broaden WebView file access.
@@ -84,11 +87,13 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 ### 5. Good/Base/Bad Cases
 
 - Good: `file_list_dir(rootPath, "")` returns sorted directories before files, with project-relative `path`.
+- Good: WSL `file_list_dir("\\wsl.localhost\\Ubuntu\\data", "")` returns a Linux symlink-to-directory as `kind="directory", isSymlink=true`, allowing the symlink picker to show it.
 - Good: `file_search_content(rootPath, "invoke")` returns bounded `{ path, line_number, line_text, before, after }` snippets for UTF-8 project files, with duplicate hits in the same file collapsed to the first match.
 - Good: `file_watch_start(projectPath)` uses a debounced recursive watcher for local Windows paths and returns a stable error such as `wsl_watch_unsupported` when notify cannot be used.
 - Good: watcher events for `src/main.ts` emit `changedPaths: ["src/main.ts"]`, allowing the frontend to refresh `src` instead of every expanded directory.
 - Base: `file_write_text(rootPath, "src/App.tsx", content)` writes only if `src` remains inside `rootPath`.
 - Base: `file_search(rootPath, "app")` can match file names or project-relative paths, but skips generated directories such as `node_modules`.
+- Bad: the WSL symlink picker must not show ordinary directories with `isSymlink=false`.
 - Bad: `file_delete(rootPath, "")` must fail with `cannot_delete_root`.
 - Bad: `file_copy(rootPath, "src", "src/nested", "src", true)` must fail with `target_inside_source`.
 - Bad: content search must not recurse into `.git`, `.trellis`, `node_modules`, `dist`, `build`, or `target`.
@@ -101,6 +106,7 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - Unit-test canonicalization rejects paths outside root.
 - Unit-test copy and move stay inside root and enforce `target_exists` / `target_inside_source`.
 - Unit-test file search skips heavy/generated directories.
+- Unit-test WSL `find` output parsing marks directory symlinks as `kind="directory", is_symlink=true` and ordinary directories/files as `is_symlink=false`.
 - Unit-test content search returns line/context data and skips heavy/generated directories.
 - Unit-test content search returns only one match per file even when a file contains multiple matching lines.
 - Unit-test watcher path filtering keeps project-relative paths stable and ignores generated/noisy directories.

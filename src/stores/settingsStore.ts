@@ -228,6 +228,7 @@ interface Settings {
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
   ccusageUseWsl: boolean;
+  symlinkCompatibilityEnabled: boolean;
   lowMemoryMode: boolean;
   disableHardwareAcceleration: boolean;
   terminalBackground: TerminalBackgroundSettings;
@@ -338,6 +339,7 @@ const DEFAULTS: Settings = {
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
   ccusageUseWsl: false,
+  symlinkCompatibilityEnabled: false,
   lowMemoryMode: false,
   disableHardwareAcceleration: false,
   terminalBackground: {
@@ -854,6 +856,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.ccusageUseWsl === "boolean"
         ? entries.ccusageUseWsl
         : DEFAULTS.ccusageUseWsl;
+    entries.symlinkCompatibilityEnabled =
+      typeof entries.symlinkCompatibilityEnabled === "boolean"
+        ? entries.symlinkCompatibilityEnabled
+        : DEFAULTS.symlinkCompatibilityEnabled;
     entries.lowMemoryMode =
       typeof entries.lowMemoryMode === "boolean"
         ? entries.lowMemoryMode

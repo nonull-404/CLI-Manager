@@ -2566,8 +2566,21 @@ export function TerminalTabs({
           <Plus size={15} strokeWidth={2} />
         </button>
       ),
-      templates: <CommandTemplatePanel popoverSide="left" toneClassName="ui-action-template" />,
-      commandHistory: <CommandHistoryPanel compact popoverSide="left" toneClassName="ui-action-command-history" />,
+      templates: (
+        <CommandTemplatePanel
+          popoverSide="left"
+          toneClassName="ui-action-template"
+          popoverStyle={terminalActionSidebarStyle}
+        />
+      ),
+      commandHistory: (
+        <CommandHistoryPanel
+          compact
+          popoverSide="left"
+          toneClassName="ui-action-command-history"
+          popoverStyle={terminalActionSidebarStyle}
+        />
+      ),
       fullscreen: onToggleFullscreen ? (
         <button
           onClick={handleToggleGlobalFullscreen}

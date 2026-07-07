@@ -54,6 +54,7 @@ pub struct FileEntry {
     pub name: String,
     pub path: String,
     pub kind: String,
+    pub is_symlink: bool,
     pub size_bytes: u64,
     pub modified_ms: Option<u64>,
 }
@@ -86,9 +87,25 @@ pub struct ContentSearchMatch {
 
 #[tauri::command]
 pub async fn check_paths_exist(paths: Vec<String>) -> Result<Vec<bool>, String> {
-    tokio::task::spawn_blocking(move || paths.iter().map(|p| Path::new(p).exists()).collect())
+    tokio::task::spawn_blocking(move || paths.iter().map(|p| path_exists(p)).collect())
         .await
         .map_err(|e| e.to_string())
+}
+
+fn path_exists(path: &str) -> bool {
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(path) {
+        return wsl_path_exists(&distro, &linux_path);
+    }
+    Path::new(path).exists()
+}
+
+fn wsl_path_exists(distro: &str, linux_path: &str) -> bool {
+    let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
+    silent_command(&wsl_exe.to_string_lossy())
+        .args(["-d", distro, "--exec", "test", "-e", linux_path])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -133,6 +150,9 @@ fn list_dir_entries(root_path: &str, relative_path: &str) -> Result<Vec<FileEntr
     for item in fs::read_dir(&dir).map_err(|err| format!("read_dir_failed: {err}"))? {
         let entry = item.map_err(|err| format!("read_dir_entry_failed: {err}"))?;
         let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("file_type_failed: {err}"))?;
         let metadata = entry
             .metadata()
             .map_err(|err| format!("metadata_failed: {err}"))?;
@@ -147,6 +167,7 @@ fn list_dir_entries(root_path: &str, relative_path: &str) -> Result<Vec<FileEntr
                 "file"
             }
             .into(),
+            is_symlink: file_type.is_symlink(),
             size_bytes: metadata.len(),
             modified_ms: metadata
                 .modified()
@@ -169,19 +190,8 @@ fn list_wsl_dir_entries(
     let linux_dir = join_linux_path(linux_root, relative_path);
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
     let output = silent_command(&wsl_exe.to_string_lossy())
-        .args([
-            "-d",
-            distro,
-            "--exec",
-            "find",
-            &linux_dir,
-            "-mindepth",
-            "1",
-            "-maxdepth",
-            "1",
-            "-printf",
-            "%f\\0%y\\0%s\\0%T@\\0",
-        ])
+        .args(["-d", distro, "--exec"])
+        .args(wsl_find_dir_args(&linux_dir))
         .output()
         .map_err(|err| format!("read_dir_failed: {err}"))?;
 
@@ -191,6 +201,20 @@ fn list_wsl_dir_entries(
     }
 
     parse_wsl_find_dir_entries(&output.stdout, relative_path)
+}
+
+fn wsl_find_dir_args(linux_dir: &str) -> [&str; 9] {
+    [
+        "find",
+        "-H",
+        linux_dir,
+        "-mindepth",
+        "1",
+        "-maxdepth",
+        "1",
+        "-printf",
+        "%f\\0%y\\0%Y\\0%s\\0%T@\\0",
+    ]
 }
 
 fn join_linux_path(root: &str, relative_path: &str) -> String {
@@ -218,6 +242,9 @@ fn parse_wsl_find_dir_entries(
         let kind_raw = fields
             .next()
             .ok_or_else(|| "read_dir_parse_failed".to_string())?;
+        let target_kind_raw = fields
+            .next()
+            .ok_or_else(|| "read_dir_parse_failed".to_string())?;
         let size_raw = fields
             .next()
             .ok_or_else(|| "read_dir_parse_failed".to_string())?;
@@ -226,7 +253,8 @@ fn parse_wsl_find_dir_entries(
             .ok_or_else(|| "read_dir_parse_failed".to_string())?;
 
         let name = String::from_utf8_lossy(name_raw).to_string();
-        let kind = if kind_raw == b"d" {
+        let is_symlink = kind_raw == b"l";
+        let kind = if kind_raw == b"d" || (kind_raw == b"l" && target_kind_raw == b"d") {
             "directory"
         } else {
             "file"
@@ -246,6 +274,7 @@ fn parse_wsl_find_dir_entries(
             name,
             path,
             kind,
+            is_symlink,
             size_bytes,
             modified_ms,
         });
@@ -800,6 +829,7 @@ fn collect_search_matches(
                     "file"
                 }
                 .into(),
+                is_symlink: file_type.is_symlink(),
                 size_bytes: metadata.len(),
                 modified_ms: metadata
                     .modified()
@@ -952,9 +982,16 @@ mod tests {
         let output = [
             b"z.txt\0".as_slice(),
             b"f\0",
+            b"f\0",
             b"12\0",
             b"1720000000.125\0",
+            b"linked\0",
+            b"l\0",
+            b"d\0",
+            b"30\0",
+            b"1720000002.5\0",
             b"src\0",
+            b"d\0",
             b"d\0",
             b"4096\0",
             b"1720000001.5\0",
@@ -963,15 +1000,22 @@ mod tests {
 
         let entries = parse_wsl_find_dir_entries(&output, "parent").unwrap();
 
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].name, "src");
-        assert_eq!(entries[0].path, "parent/src");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name, "linked");
+        assert_eq!(entries[0].path, "parent/linked");
         assert_eq!(entries[0].kind, "directory");
-        assert_eq!(entries[0].size_bytes, 4096);
-        assert_eq!(entries[0].modified_ms, Some(1_720_000_001_500));
-        assert_eq!(entries[1].name, "z.txt");
-        assert_eq!(entries[1].path, "parent/z.txt");
-        assert_eq!(entries[1].kind, "file");
+        assert!(entries[0].is_symlink);
+        assert_eq!(entries[0].size_bytes, 30);
+        assert_eq!(entries[1].name, "src");
+        assert_eq!(entries[1].path, "parent/src");
+        assert_eq!(entries[1].kind, "directory");
+        assert!(!entries[1].is_symlink);
+        assert_eq!(entries[1].size_bytes, 4096);
+        assert_eq!(entries[1].modified_ms, Some(1_720_000_001_500));
+        assert_eq!(entries[2].name, "z.txt");
+        assert_eq!(entries[2].path, "parent/z.txt");
+        assert_eq!(entries[2].kind, "file");
+        assert!(!entries[2].is_symlink);
     }
 
     #[test]
@@ -981,6 +1025,31 @@ mod tests {
             join_linux_path("/home/me/project/", "src/main.ts"),
             "/home/me/project/src/main.ts"
         );
+    }
+
+    #[test]
+    fn wsl_find_dir_args_follows_command_line_symlink_roots() {
+        let args = wsl_find_dir_args("/data/acGo");
+        assert_eq!(args[0], "find");
+        assert_eq!(args[1], "-H");
+        assert_eq!(args[2], "/data/acGo");
+    }
+
+    #[test]
+    fn path_exists_checks_native_paths() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("exists.txt");
+        fs::write(&file, "ok").unwrap();
+
+        assert!(path_exists(&file.to_string_lossy()));
+        assert!(!path_exists(
+            &tmp.path().join("missing.txt").to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn path_exists_rejects_invalid_wsl_unc_without_launching_wsl() {
+        assert!(!path_exists(r"\\wsl.localhost\Ubuntu"));
     }
 
     #[test]

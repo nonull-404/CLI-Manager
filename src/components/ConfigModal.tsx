@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback, useId, type Ref } from "react
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../stores/projectStore";
-import type { Project, Group, WorktreeIsolationStrategy } from "../lib/types";
+import { useSettingsStore } from "../stores/settingsStore";
+import type { Project, Group, ProjectFileEntry, WorktreeIsolationStrategy } from "../lib/types";
 import { getShellOptions } from "../lib/types";
 import { getOsPlatform, normalizeShellKey } from "../lib/shell";
 import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
@@ -40,10 +41,42 @@ const WORKTREE_STRATEGY_LABEL_KEYS: Record<WorktreeIsolationStrategy, Translatio
   autoParallel: "worktree.strategy.autoParallel",
   always: "worktree.strategy.always",
 };
+const DEFAULT_WSL_PICKER_PATH = "\\\\wsl.localhost\\Ubuntu-22.04\\data";
+
+function normalizeWslUncInput(value: string): string {
+  return value.trim().replace(/\//g, "\\").replace(/\\+$/, "");
+}
+
+function isWslUncPath(value: string): boolean {
+  const normalized = normalizeWslUncInput(value).toLowerCase();
+  return normalized.startsWith("\\\\wsl.localhost\\") || normalized.startsWith("\\\\wsl$\\");
+}
+
+function parentWslUncPath(value: string): string {
+  const normalized = normalizeWslUncInput(value);
+  const parts = normalized.split("\\").filter(Boolean);
+  if (parts.length <= 3) return normalized;
+  const index = normalized.lastIndexOf("\\");
+  return index > 0 ? normalized.slice(0, index) : normalized;
+}
+
+function childWslUncPath(root: string, name: string): string {
+  return `${normalizeWslUncInput(root)}\\${name}`;
+}
+
+function basenameFromPath(value: string): string {
+  return value.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
+}
+
+function initialWslPickerPath(currentPath: string): string {
+  const normalized = normalizeWslUncInput(currentPath);
+  return isWslUncPath(normalized) ? parentWslUncPath(normalized) : DEFAULT_WSL_PICKER_PATH;
+}
 
 export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Props) {
   const { t } = useI18n();
   const { createProject, updateProject, groups } = useProjectStore();
+  const symlinkCompatibilityEnabled = useSettingsStore((s) => s.symlinkCompatibilityEnabled);
   const isEdit = !!project;
   const isClone = !!cloneFrom;
   const logInstanceIdRef = useRef(crypto.randomUUID().slice(0, 8));
@@ -84,6 +117,11 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmEdit, setShowConfirmEdit] = useState(false);
   const [cliToolComboboxOpen, setCliToolComboboxOpen] = useState(false);
+  const [wslPickerOpen, setWslPickerOpen] = useState(false);
+  const [wslPickerPath, setWslPickerPath] = useState(DEFAULT_WSL_PICKER_PATH);
+  const [wslPickerEntries, setWslPickerEntries] = useState<ProjectFileEntry[]>([]);
+  const [wslPickerLoading, setWslPickerLoading] = useState(false);
+  const [wslPickerError, setWslPickerError] = useState("");
 
   useEffect(() => {
     logInfo("[config-modal] mounted", {
@@ -150,15 +188,62 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
     }
   }, [isClone, isEdit, osPlatform, shell]);
 
-  const handleBrowse = async () => {
-    const selected = await open({ directory: true, title: "选择项目目录" });
+  useEffect(() => {
+    if (!wslPickerOpen) return;
+    const rootPath = normalizeWslUncInput(wslPickerPath);
+    if (!isWslUncPath(rootPath)) {
+      setWslPickerEntries([]);
+      setWslPickerError(t("configModal.wslPickerInvalidPath"));
+      return;
+    }
+
+    let cancelled = false;
+    setWslPickerLoading(true);
+    setWslPickerError("");
+    void invoke<ProjectFileEntry[]>("file_list_dir", { rootPath, relativePath: "" })
+      .then((entries) => {
+        if (cancelled) return;
+        setWslPickerEntries(entries.filter((entry) => entry.kind === "directory" && entry.isSymlink === true));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setWslPickerEntries([]);
+        setWslPickerError(String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setWslPickerLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [t, wslPickerOpen, wslPickerPath]);
+
+  const applySelectedPath = (selected: string | string[] | null) => {
     if (selected) {
-      setPath(selected);
+      const selectedPath = Array.isArray(selected) ? selected[0] : selected;
+      if (!selectedPath) return;
+      setPath(selectedPath);
       if (!name.trim()) {
-        const folderName = selected.replace(/\\/g, "/").split("/").pop() ?? "";
+        const folderName = selectedPath.replace(/\\/g, "/").split("/").pop() ?? "";
         setName(folderName);
       }
     }
+  };
+
+  const handleBrowse = async () => {
+    applySelectedPath(await open({ directory: true, title: "选择项目目录" }));
+  };
+
+  const handleBrowseSymlink = async () => {
+    setWslPickerPath(initialWslPickerPath(path));
+    setWslPickerOpen(true);
+  };
+
+  const selectWslPickerPath = (selectedPath: string) => {
+    setPath(selectedPath);
+    if (!name.trim()) setName(basenameFromPath(selectedPath));
+    setWslPickerOpen(false);
   };
 
   const validatePath = useCallback(async (rawPath: string) => {
@@ -335,6 +420,17 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                   >
                     浏览
                   </button>
+                  {symlinkCompatibilityEnabled && (
+                    <button
+                      type="button"
+                      onClick={handleBrowseSymlink}
+                      aria-label={t("configModal.chooseSymlinkPath")}
+                      title={t("configModal.chooseSymlinkPath")}
+                      className="shrink-0 rounded px-1.5 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-bg-tertiary hover:text-text-secondary"
+                    >
+                      WSL
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -494,6 +590,72 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
         }}
         onClose={() => setShowConfirmEdit(false)}
       />
+
+      <Dialog open={wslPickerOpen} onOpenChange={setWslPickerOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[520px] overflow-hidden p-0">
+          <div className="border-b border-border/70 px-4 py-3">
+            <DialogTitle className="text-base font-semibold text-text-primary">
+              {t("configModal.chooseSymlinkPath")}
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("configModal.wslPickerDescription")}
+            </DialogDescription>
+          </div>
+          <div className="space-y-3 px-4 py-3">
+            <div>
+              <label className="mb-1 block text-xs text-text-muted">{t("configModal.wslPickerPath")}</label>
+              <Input
+                value={wslPickerPath}
+                onChange={(event) => setWslPickerPath(event.target.value)}
+                className="text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setWslPickerPath(parentWslUncPath(wslPickerPath))}
+              >
+                {t("configModal.wslPickerParent")}
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                onClick={() => selectWslPickerPath(normalizeWslUncInput(wslPickerPath))}
+              >
+                {t("configModal.wslPickerSelectCurrent")}
+              </Button>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded border border-border bg-bg-secondary/60 p-1">
+              {wslPickerLoading && (
+                <div className="px-2 py-3 text-xs text-text-muted">{t("configModal.wslPickerLoading")}</div>
+              )}
+              {!wslPickerLoading && wslPickerError && (
+                <div className="px-2 py-3 text-xs text-danger">{wslPickerError}</div>
+              )}
+              {!wslPickerLoading && !wslPickerError && wslPickerEntries.length === 0 && (
+                <div className="px-2 py-3 text-xs text-text-muted">{t("configModal.wslPickerEmpty")}</div>
+              )}
+              {!wslPickerLoading && !wslPickerError && wslPickerEntries.map((entry) => (
+                <button
+                  key={entry.path}
+                  type="button"
+                  onClick={() => setWslPickerPath(childWslUncPath(wslPickerPath, entry.name))}
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm text-text-primary hover:bg-surface-container-highest"
+                >
+                  <span className="truncate">{entry.name}</span>
+                  <span className="text-xs text-text-muted">›</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <DialogFooter className="border-t border-border/70 px-4 py-3">
+            <Button type="button" variant="outline" onClick={() => setWslPickerOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

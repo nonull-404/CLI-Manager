@@ -756,10 +756,7 @@ fn resolve_transcript_path(
             wsl_distro_name.as_deref().is_some_and(|v| !v.trim().is_empty()),
             is_linux_absolute_path(&explicit)
         );
-        let resolved = normalize_explicit_transcript_path(
-            explicit,
-            wsl_distro_name.as_deref(),
-        );
+        let resolved = normalize_explicit_transcript_path(explicit, wsl_distro_name.as_deref());
         validate_explicit_transcript_path(&resolved)?;
         return Ok(resolved);
     }
@@ -1045,14 +1042,9 @@ mod tests {
 
     #[test]
     fn resolve_rejects_explicit_transcript_path_outside_allowed_roots() {
-        let err = resolve_transcript_path(
-            Some(r"C:\tmp\a.jsonl".to_string()),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap_err();
+        let err =
+            resolve_transcript_path(Some(r"C:\tmp\a.jsonl".to_string()), None, None, None, None)
+                .unwrap_err();
         assert!(
             err == "transcript_path_not_absolute" || err == "transcript_path_outside_allowed_roots",
             "got {err}"

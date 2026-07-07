@@ -411,6 +411,7 @@ export function GeneralSettingsPage() {
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
   const ccusageUseWsl = useSettingsStore((s) => s.ccusageUseWsl);
+  const symlinkCompatibilityEnabled = useSettingsStore((s) => s.symlinkCompatibilityEnabled);
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
@@ -904,6 +905,28 @@ export function GeneralSettingsPage() {
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">
+          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+              <Box>
+                <Text size="xs" c="var(--on-surface-variant)">
+                  {t("settings.general.symlinkCompatibility")}
+                </Text>
+                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                  {t("settings.general.symlinkCompatibilityDescription")}
+                </Text>
+              </Box>
+              <Switch
+                color="cliPrimary"
+                checked={symlinkCompatibilityEnabled}
+                onChange={(event) => void update("symlinkCompatibilityEnabled", event.currentTarget.checked)}
+                aria-label={
+                  symlinkCompatibilityEnabled
+                    ? t("settings.general.disableSymlinkCompatibility")
+                    : t("settings.general.enableSymlinkCompatibility")
+                }
+              />
+            </Group>
+          </Card>
           <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
             <Group justify="space-between" align="center" gap="md" wrap="nowrap">
               <Box>

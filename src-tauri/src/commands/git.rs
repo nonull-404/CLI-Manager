@@ -185,102 +185,18 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
     tokio::task::spawn_blocking(move || {
         let started_at = std::time::Instant::now();
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&project_path) {
+            if let Some(windows_path) = resolve_wsl_mnt_git_project_path(&distro, &linux_path) {
+                log::info!(
+                    "[git_get_changes:wsl] WSL UNC 解析到 Windows 挂载路径，改用 native git 状态: project_path={} resolved={}",
+                    project_path,
+                    windows_path
+                );
+                return git_get_changes_native(&windows_path, started_at);
+            }
             return git_get_changes_wsl(&project_path, &distro, &linux_path, started_at);
         }
 
-        let path = Path::new(&project_path);
-
-        if !path.exists() {
-            let err_msg = format!("路径不存在: {}", project_path);
-            log::error!("[git_get_changes] {}", err_msg);
-            return Err(err_msg);
-        }
-
-        log::info!("[git_get_changes] 路径存在，尝试打开 Git 仓库");
-
-        // 打开 git 仓库
-        let repo = open_git_repo(path).map_err(|e| {
-            let err_msg = format!("不是 Git 仓库或无法访问: {}", e);
-            log::error!("[git_get_changes] {}", err_msg);
-            err_msg
-        })?;
-
-        log::info!("[git_get_changes] Git 仓库打开成功");
-
-        // 获取状态
-        let mut opts = StatusOptions::new();
-        opts.include_untracked(true);
-        opts.recurse_untracked_dirs(true);
-
-        let status_started_at = std::time::Instant::now();
-        let statuses = repo.statuses(Some(&mut opts)).map_err(|e| {
-            let err_msg = format!("获取 Git 状态失败: {}", e);
-            log::error!("[git_get_changes] {}", err_msg);
-            err_msg
-        })?;
-
-        log::info!(
-            "[git_get_changes] 获取到 {} 个状态条目 status_elapsed_ms={}",
-            statuses.len(),
-            status_started_at.elapsed().as_millis()
-        );
-
-        // 大仓库 / 大 diff 优先保证文件列表可见；行数统计超限时降级为 0。
-        let skipped_line_stats = should_skip_diff_line_stats(statuses.len());
-        let stats = if skipped_line_stats {
-            log::warn!(
-                "[git_get_changes] 状态条目过多({}), 跳过行数统计以避免面板长时间 loading",
-                statuses.len()
-            );
-            std::collections::HashMap::new()
-        } else {
-            compute_diff_line_stats(&repo)
-        };
-
-        let mut changes = Vec::new();
-
-        for entry in statuses.iter() {
-            let status = entry.status();
-            let file_path = entry.path().unwrap_or("").to_string();
-
-            if file_path.is_empty() {
-                continue;
-            }
-
-            // 跳过嵌套 Git 仓库目录条目，避免前端请求目录 diff 报原始 OS 错误（见 issue #85）
-            if is_nested_repo_entry(&repo, &file_path) {
-                continue;
-            }
-
-            // 解析状态
-            let (status_char, staged) = parse_git2_status(status);
-
-            // 从统计表按归一化路径取真实增删；二进制 / 纯模式变更查不到时为 (0, 0)。
-            let (added, deleted) = stats
-                .get(&normalize_path(&file_path))
-                .copied()
-                .unwrap_or((0, 0));
-
-            changes.push(GitFileChange {
-                path: file_path,
-                status: status_char.to_string(),
-                staged,
-                added,
-                deleted,
-            });
-        }
-
-        log::info!(
-            "[git_get_changes] 查询完成，返回 {} 个变更文件 line_stats={} elapsed_ms={}",
-            changes.len(),
-            if skipped_line_stats {
-                "skipped"
-            } else {
-                "computed"
-            },
-            started_at.elapsed().as_millis()
-        );
-        Ok(changes)
+        git_get_changes_native(&project_path, started_at)
     })
     .await
     .map_err(|e| {
@@ -288,6 +204,99 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
         log::error!("[git_get_changes] {}", err_msg);
         err_msg
     })?
+}
+
+fn git_get_changes_native(
+    project_path: &str,
+    started_at: std::time::Instant,
+) -> Result<Vec<GitFileChange>, String> {
+    let path = Path::new(project_path);
+
+    if !path.exists() {
+        let err_msg = format!("路径不存在: {}", project_path);
+        log::error!("[git_get_changes] {}", err_msg);
+        return Err(err_msg);
+    }
+
+    log::info!("[git_get_changes] 路径存在，尝试打开 Git 仓库");
+
+    let repo = open_git_repo(path).map_err(|e| {
+        let err_msg = format!("不是 Git 仓库或无法访问: {}", e);
+        log::error!("[git_get_changes] {}", err_msg);
+        err_msg
+    })?;
+
+    log::info!("[git_get_changes] Git 仓库打开成功");
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+
+    let status_started_at = std::time::Instant::now();
+    let statuses = repo.statuses(Some(&mut opts)).map_err(|e| {
+        let err_msg = format!("获取 Git 状态失败: {}", e);
+        log::error!("[git_get_changes] {}", err_msg);
+        err_msg
+    })?;
+
+    log::info!(
+        "[git_get_changes] 获取到 {} 个状态条目 status_elapsed_ms={}",
+        statuses.len(),
+        status_started_at.elapsed().as_millis()
+    );
+
+    let skipped_line_stats = should_skip_diff_line_stats(statuses.len());
+    let stats = if skipped_line_stats {
+        log::warn!(
+            "[git_get_changes] 状态条目过多({}), 跳过行数统计以避免面板长时间 loading",
+            statuses.len()
+        );
+        std::collections::HashMap::new()
+    } else {
+        compute_diff_line_stats(&repo)
+    };
+
+    let mut changes = Vec::new();
+
+    for entry in statuses.iter() {
+        let status = entry.status();
+        let file_path = entry.path().unwrap_or("").to_string();
+
+        if file_path.is_empty() {
+            continue;
+        }
+
+        if is_nested_repo_entry(&repo, &file_path) {
+            continue;
+        }
+
+        let (status_char, staged) = parse_git2_status(status);
+        let (added, deleted) = stats
+            .get(&normalize_path(&file_path))
+            .copied()
+            .unwrap_or((0, 0));
+
+        changes.push(GitFileChange {
+            path: file_path,
+            status: status_char.to_string(),
+            staged,
+            added,
+            deleted,
+        });
+    }
+
+    log::info!(
+        "[git_get_changes] 查询完成，返回 {} 个变更文件 line_stats={} elapsed_ms={}",
+        changes.len(),
+        if skipped_line_stats {
+            "skipped"
+        } else {
+            "computed"
+        },
+        started_at.elapsed().as_millis()
+    );
+
+    Ok(changes)
 }
 
 fn git_get_changes_wsl(
@@ -521,6 +530,49 @@ fn run_wsl_git(distro: &str, linux_path: &str, git_args: &[&str]) -> Result<Vec<
             .unwrap_or_else(|| "?".to_string()),
         snippet
     ))
+}
+
+fn resolve_wsl_mnt_git_project_path(distro: &str, linux_path: &str) -> Option<String> {
+    let resolved_linux_path =
+        resolve_wsl_linux_realpath(distro, linux_path).unwrap_or_else(|| linux_path.to_string());
+    let windows_path = crate::wsl::wsl_mnt_path_to_windows(&resolved_linux_path)?;
+    if Path::new(&windows_path).exists() {
+        Some(windows_path)
+    } else {
+        log::warn!(
+            "[git:wsl] WSL 路径已解析为 /mnt 挂载但 Windows 路径不存在: linux_path={} resolved={} windows_path={}",
+            linux_path,
+            resolved_linux_path,
+            windows_path
+        );
+        None
+    }
+}
+
+fn effective_git_project_path(project_path: &str) -> String {
+    crate::wsl::parse_wsl_unc_path(project_path)
+        .and_then(|(distro, linux_path)| resolve_wsl_mnt_git_project_path(&distro, &linux_path))
+        .unwrap_or_else(|| project_path.to_string())
+}
+
+fn resolve_wsl_linux_realpath(distro: &str, linux_path: &str) -> Option<String> {
+    let program = crate::wsl::find_wsl_exe()
+        .as_deref()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "wsl.exe".to_string());
+    let output = silent_command(&program)
+        .args(["-d", distro, "--exec", "readlink", "-f", linux_path])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 fn build_wsl_git_command_args(distro: &str, linux_path: &str, git_args: &[&str]) -> Vec<String> {
@@ -920,7 +972,8 @@ pub async fn git_get_file_diff(
     );
 
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
 
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err(format!("路径不存在: {}", project_path));
@@ -1017,7 +1070,8 @@ pub async fn git_get_worktree_snapshot(
 
     tokio::task::spawn_blocking(move || {
         let started_at = std::time::Instant::now();
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1108,7 +1162,8 @@ pub async fn git_restore_worktree_snapshot(
     );
 
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1169,7 +1224,8 @@ pub async fn git_fork_worktree_snapshot(
     validate_snapshot_branch_name(&branch_name)?;
 
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1295,7 +1351,8 @@ pub async fn git_discard_file(
     validate_repo_relative_path(&file_path)?;
 
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1684,7 +1741,8 @@ pub async fn git_revert_lines(
 pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(), String> {
     validate_repo_relative_path(&file_path)?;
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1714,7 +1772,8 @@ pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(
 pub async fn git_unstage_file(project_path: String, file_path: String) -> Result<(), String> {
     validate_repo_relative_path(&file_path)?;
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1745,7 +1804,8 @@ pub async fn git_unstage_file(project_path: String, file_path: String) -> Result
 #[tauri::command]
 pub async fn git_stage_all(project_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1770,7 +1830,8 @@ pub async fn git_stage_all(project_path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn git_unstage_all(project_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1804,7 +1865,8 @@ pub async fn git_stage_paths(project_path: String, paths: Vec<String>) -> Result
         validate_repo_relative_path(p)?;
     }
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1838,7 +1900,8 @@ pub async fn git_unstage_paths(project_path: String, paths: Vec<String>) -> Resu
         validate_repo_relative_path(p)?;
     }
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -1874,7 +1937,8 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
         return Err("empty_message".to_string());
     }
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -2005,7 +2069,8 @@ pub struct GitBranchInfo {
 #[tauri::command]
 pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, String> {
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -2129,6 +2194,22 @@ fn map_git_cli_error(stderr: &str) -> String {
 
 fn git_command_output(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(project_path) {
+        if let Some(windows_path) = resolve_wsl_mnt_git_project_path(&distro, &linux_path) {
+            let path = Path::new(&windows_path);
+            if !path.exists() {
+                return Err("path_not_found".to_string());
+            }
+            let mut cmd = silent_command("git");
+            cmd.current_dir(path).args(args);
+            return cmd.output().map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "git_not_found".to_string()
+                } else {
+                    format!("spawn_failed: {e}")
+                }
+            });
+        }
+
         let program = crate::wsl::find_wsl_exe()
             .as_deref()
             .map(|p| p.to_string_lossy().to_string())
@@ -2227,7 +2308,8 @@ fn is_no_stash_created(output: &str) -> bool {
 #[tauri::command]
 pub async fn git_list_branches(project_path: String) -> Result<Vec<GitBranchInfo>, String> {
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -2446,7 +2528,8 @@ pub async fn git_pull(project_path: String, strategy: String) -> Result<String, 
 #[tauri::command]
 pub async fn git_pull_abort(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let path = Path::new(&project_path);
+        let effective_project_path = effective_git_project_path(&project_path);
+        let path = Path::new(&effective_project_path);
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
@@ -2508,7 +2591,8 @@ mod tests {
         git_restore_worktree_snapshot, is_nested_repo_entry, is_no_stash_created,
         parse_wsl_git_status, parse_wsl_numstat, remove_untracked_snapshot_file,
         scan_git_repository_paths, should_skip_diff_line_stats, validate_branch_name,
-        validate_repo_relative_path, validate_snapshot_branch_name, GIT_DIFF_LINE_STATS_STATUS_LIMIT,
+        validate_repo_relative_path, validate_snapshot_branch_name,
+        GIT_DIFF_LINE_STATS_STATUS_LIMIT,
     };
     use git2::{IndexAddOption, Repository, Signature};
     use std::fs;

@@ -14,6 +14,24 @@
 
 > **Warning**: `git_get_changes` 与 `collect_git_changes_from_repo` 是两段**重复实现**的收集循环，历史原因未合并。任何条目过滤/状态映射规则变更必须同步两处（优先提取共享函数），WSL 文本解析链路也要评估是否同样适用。
 
+### WSL UNC 指向 `/mnt/<drive>` 时必须回退 Windows Git
+
+**Context**: 用户可能把 WSL 内的目录软连接指向 Windows 盘项目，例如 `/data/acGo -> /mnt/d/work/pythonProject/acGo`，再在 CLI-Manager 中配置 `\\wsl.localhost\Ubuntu-22.04\data\acGo`。
+
+**Contract**:
+
+- `git_get_changes` 收到 WSL UNC 路径时，先用 `readlink -f` 解析真实 Linux 路径。
+- 如果真实路径是 `/mnt/<drive>/...`，必须转换成 Windows 路径并走 native/libgit2 状态收集。
+- 只有真实路径仍是 Linux 文件系统路径时，才走 `wsl.exe git status --porcelain=v1 -z`。
+- `git_command_output` 同样复用这个分流，避免分支、提交、推送等 shell-out Git 操作在 Windows 工作区上误用 WSL Git。
+
+**Why**: WSL Git 读取 Windows 盘工作区时可能因为换行/索引配置差异把所有文件判为修改，典型表现为每个文件都出现 `+N -N` 的整文件 diff。Windows Git 对同一物理目录是干净状态时，应以 Windows/native Git 结果为准。
+
+**Tests**:
+
+- `wsl::tests::converts_wsl_mnt_paths_to_windows_paths`
+- 手动对比：`git -C D:\... status --short` 为空，而 `wsl git -C /mnt/d/... status --short` 全量修改时，CLI-Manager Git 面板应按 Windows/native 结果展示。
+
 ### Common Mistake: 只改 `collect_git_changes_from_repo` 导致面板无效果
 
 **Symptom**：修复/过滤逻辑单测全绿，但 Git 面板 UI 行为不变。

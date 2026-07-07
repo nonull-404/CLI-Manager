@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { useTemplateStore } from "../stores/templateStore";
@@ -33,6 +33,7 @@ function getTemplateScope(template: CommandTemplate): TemplateScope {
 interface CommandTemplatePanelProps {
   popoverSide?: "top" | "right" | "bottom" | "left";
   toneClassName?: string;
+  popoverStyle?: CSSProperties;
 }
 
 interface InlineSelectOption {
@@ -133,7 +134,11 @@ function InlinePanelSelect({ value, options, onChange, ariaLabel }: InlinePanelS
   );
 }
 
-export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "" }: CommandTemplatePanelProps) {
+export function CommandTemplatePanel({
+  popoverSide = "bottom",
+  toneClassName = "",
+  popoverStyle,
+}: CommandTemplatePanelProps) {
   const { t } = useI18n();
   const {
     fetchTemplates,
@@ -379,7 +384,13 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
           <TerminalSquare size={14} strokeWidth={1.5} />
         </button>
       </PopoverTrigger>
-      <PopoverContent id="command-template-panel" align="start" side={popoverSide} className="w-[360px]">
+      <PopoverContent
+        id="command-template-panel"
+        align="start"
+        side={popoverSide}
+        className="w-[360px]"
+        style={popoverStyle}
+      >
         <div className="command-template-panel__header">
           <div className="flex min-w-0 items-center gap-2">
             <span className="command-template-panel__title-icon">
