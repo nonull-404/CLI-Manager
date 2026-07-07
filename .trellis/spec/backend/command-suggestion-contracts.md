@@ -117,3 +117,75 @@ if (suffix) {
 ```
 
 Keep LLM completion as a suggestion source only; the PTY write path is reached only after explicit user acceptance.
+
+## Scenario: Local command-history suggestions and storage controls
+
+### 1. Scope / Trigger
+
+- Trigger: terminal command history is used as a local suggestion source or shown/cleared from Command Suggestions settings.
+- Goal: keep command-history suggestions useful by storing shell-like commands only, while making local storage visible and clearable.
+
+### 2. Signatures
+
+- Frontend store: `useCommandHistoryStore.addCommand(projectId: string | null, command: string) -> Promise<void>`
+- Frontend store: `useCommandHistoryStore.getStorageStats() -> Promise<{ commandCount: number; storageBytes: number }>`
+- Frontend store: `useCommandHistoryStore.cleanup() -> Promise<void>`
+- SQLite table: `command_history(id, project_id, command, executed_at)`
+
+### 3. Contracts
+
+- `addCommand` is the write boundary for terminal command history. Filtering belongs there, not in the xterm input path.
+- Store only one-line, shell-like input. Reject obvious natural-language prompts such as CJK/script-first text, question sentences, and common English natural-language starters.
+- Keep normal developer commands valid, including common command roots (`git`, `npm`, `cargo`, `python`, `codex`, `claude`), slash commands such as `/status`, shell operators, environment assignments, and path/script invocations.
+- LLM prediction controls may exist in code, but the user-facing settings page can hide them while the feature is not mature. On load, persisted command-suggestion provider state must normalize back to local suggestions when LLM is disabled by product policy.
+- `getStorageStats` returns local command-history count and an estimated byte size from SQLite text/blob lengths. It is an approximate UI metric, not a database-file-size contract.
+- `cleanup` deletes all command-history rows and refreshes in-memory history state.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Empty or whitespace input | Do not insert. |
+| Multi-line input | Do not insert into command history. |
+| Chinese or other script-first natural-language prompt | Do not insert. |
+| `fix bug`, `please update this`, or question-like prompt | Do not insert. |
+| `npm run dev`, `git status`, `cd src`, `./script.ps1`, `/status` | Insert unless it duplicates the latest persisted command for the same project. |
+| Stored provider is `ai` or LLM enabled is `true` while LLM is hidden | Normalize provider to `local` and LLM enabled to `false` during settings load. |
+| User clears storage | Delete all `command_history` rows and update displayed stats. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a Codex/Claude natural-language prompt in Chinese is not offered later as a shell command suggestion.
+- Good: a normal developer command with Chinese arguments, such as `git commit -m "修复"` or `echo 你好`, remains valid because the command root is shell-like.
+- Base: custom ASCII commands with command-like syntax can still be stored; the filter is conservative and not a full shell parser.
+- Bad: filtering only in `XTermTerminal` would let other history write paths bypass the rule.
+- Bad: showing stale LLM settings while the feature is disabled would let old persisted config keep sending model requests.
+
+### 6. Tests Required
+
+- Run `npx tsc --noEmit`.
+- Manually verify command history stores normal commands and skips obvious natural-language prompts.
+- Manually verify Command Suggestions settings shows stored command count, estimated storage usage, and clearing storage refreshes both values.
+- Manually verify LLM controls are not visible in Command Suggestions settings.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+// Filters only one caller; another caller could still persist natural-language prompts.
+if (looksLikeCommand(inputBuffer.current)) {
+  addCommand(projectId, inputBuffer.current);
+}
+```
+
+#### Correct
+
+```typescript
+// Keep validation inside the store write boundary.
+addCommand: async (projectId, command) => {
+  const trimmed = command.trim();
+  if (!isLikelyShellCommand(trimmed)) return;
+  // insert into command_history
+}
+```

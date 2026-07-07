@@ -866,12 +866,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.terminalInputSuggestionsEnabled === "boolean"
         ? entries.terminalInputSuggestionsEnabled
         : DEFAULTS.terminalInputSuggestionsEnabled;
-    entries.terminalInputSuggestionProvider = migrateTerminalInputSuggestionProvider(entries.terminalInputSuggestionProvider);
-    entries.terminalInputSuggestionLlmEnabled =
-      typeof entries.terminalInputSuggestionLlmEnabled === "boolean"
-        ? entries.terminalInputSuggestionLlmEnabled
-        : entries.terminalInputSuggestionProvider === "ai";
-    entries.terminalInputSuggestionProvider = entries.terminalInputSuggestionLlmEnabled ? "ai" : "local";
+    const storedTerminalInputSuggestionProvider = entries.terminalInputSuggestionProvider;
+    const storedTerminalInputSuggestionLlmEnabled = entries.terminalInputSuggestionLlmEnabled;
+    entries.terminalInputSuggestionProvider = "local";
+    entries.terminalInputSuggestionLlmEnabled = false;
+    if (
+      migrateTerminalInputSuggestionProvider(storedTerminalInputSuggestionProvider) !== "local" ||
+      storedTerminalInputSuggestionLlmEnabled === true
+    ) {
+      persistSetting("terminalInputSuggestionProvider", "local");
+      persistSetting("terminalInputSuggestionLlmEnabled", false);
+    }
     entries.terminalInputSuggestionBaseUrl =
       typeof entries.terminalInputSuggestionBaseUrl === "string"
         ? entries.terminalInputSuggestionBaseUrl
