@@ -415,6 +415,7 @@ export function GeneralSettingsPage() {
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
   const lowMemoryMode = useSettingsStore((s) => s.lowMemoryMode);
+  const disableHardwareAcceleration = useSettingsStore((s) => s.disableHardwareAcceleration);
   const debugMode = useSettingsStore((s) => s.debugMode);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const update = useSettingsStore((s) => s.update);
@@ -921,6 +922,28 @@ export function GeneralSettingsPage() {
                   lowMemoryMode
                     ? t("settings.general.disableLowMemoryMode")
                     : t("settings.general.enableLowMemoryMode")
+                }
+              />
+            </Group>
+          </Card>
+          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+              <Box>
+                <Text size="xs" c="var(--on-surface-variant)">
+                  {t("settings.general.disableHardwareAcceleration")}
+                </Text>
+                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                  {t("settings.general.disableHardwareAccelerationDescription")}
+                </Text>
+              </Box>
+              <Switch
+                color="cliPrimary"
+                checked={disableHardwareAcceleration}
+                onChange={(event) => void update("disableHardwareAcceleration", event.currentTarget.checked)}
+                aria-label={
+                  disableHardwareAcceleration
+                    ? t("settings.general.allowHardwareAcceleration")
+                    : t("settings.general.disableHardwareAccelerationAction")
                 }
               />
             </Group>

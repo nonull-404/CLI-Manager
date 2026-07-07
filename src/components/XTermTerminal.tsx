@@ -421,6 +421,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   });
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
   const lowMemoryMode = useSettingsStore((s) => s.lowMemoryMode);
+  const disableHardwareAcceleration = useSettingsStore((s) => s.disableHardwareAcceleration);
   const terminalInputSuggestionsEnabled = useSettingsStore((s) => s.terminalInputSuggestionsEnabled);
   const terminalInputSuggestionProvider = useSettingsStore((s) => s.terminalInputSuggestionProvider);
   const inactiveBufferLimitRef = useRef(getInactiveBufferLimit(terminalScrollbackRows));
@@ -531,7 +532,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   };
 
   const canUseWebglRenderer = (theme: ReturnType<typeof getTerminalTheme>) => (
-    !isTransparentRef.current && !isLightTerminalTheme(theme)
+    !disableHardwareAcceleration && !isTransparentRef.current && !isLightTerminalTheme(theme)
   );
 
   const createWebglAddon = () => {
@@ -1211,7 +1212,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     }
     normalizeTuiComposerBackground(terminal);
     scheduleTuiComposerBackgroundNormalization(terminal);
-  }, [fontSize, effectiveFontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode]);
+  }, [fontSize, effectiveFontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration]);
 
   // Visibility drives live rendering. A pane tab is "visible" when it is the
   // shown tab in its own pane — which, in a split, includes panes that are not
@@ -1281,7 +1282,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       normalizeTuiComposerBackground(terminalRef.current);
       scheduleTuiComposerBackgroundNormalization(terminalRef.current);
     }
-  }, [isVisible, lowMemoryMode, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette]);
+  }, [isVisible, lowMemoryMode, disableHardwareAcceleration, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette]);
 
   // Focus follows the single globally active tab. Keyboard, cursor and IME stay
   // bound to this; a visible-but-unfocused split pane renders but never steals

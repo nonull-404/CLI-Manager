@@ -229,6 +229,7 @@ interface Settings {
   ccusageAnalyticsEnabled: boolean;
   ccusageUseWsl: boolean;
   lowMemoryMode: boolean;
+  disableHardwareAcceleration: boolean;
   terminalBackground: TerminalBackgroundSettings;
   terminalInputSuggestionsEnabled: boolean;
   terminalInputSuggestionProvider: TerminalInputSuggestionProvider;
@@ -338,6 +339,7 @@ const DEFAULTS: Settings = {
   ccusageAnalyticsEnabled: false,
   ccusageUseWsl: false,
   lowMemoryMode: false,
+  disableHardwareAcceleration: false,
   terminalBackground: {
     enabled: false,
     imagePath: null,
@@ -856,6 +858,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.lowMemoryMode === "boolean"
         ? entries.lowMemoryMode
         : DEFAULTS.lowMemoryMode;
+    entries.disableHardwareAcceleration =
+      typeof entries.disableHardwareAcceleration === "boolean"
+        ? entries.disableHardwareAcceleration
+        : DEFAULTS.disableHardwareAcceleration;
     entries.terminalInputSuggestionsEnabled =
       typeof entries.terminalInputSuggestionsEnabled === "boolean"
         ? entries.terminalInputSuggestionsEnabled

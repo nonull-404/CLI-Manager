@@ -14,6 +14,7 @@ mod webdav;
 mod wsl;
 
 use log::LevelFilter;
+use serde_json::Value;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -21,6 +22,11 @@ use tauri::{
 };
 use tauri_plugin_log::{fern, Builder as LogBuilder, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
+
+const WEBVIEW_DEFAULT_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+const WEBVIEW_DISABLE_GPU_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu";
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
@@ -295,6 +301,41 @@ fn migrations() -> Vec<Migration> {
     ]
 }
 
+fn load_disable_hardware_acceleration_setting() -> bool {
+    let settings_path = match app_paths::cli_manager_data_dir() {
+        Ok(dir) => dir.join("settings.json"),
+        Err(_) => return false,
+    };
+    let text = match std::fs::read_to_string(settings_path) {
+        Ok(text) => text,
+        Err(_) => return false,
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("disableHardwareAcceleration")
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(false)
+}
+
+fn apply_webview_disable_gpu_config(config: &mut tauri::Config) {
+    for window in &mut config.app.windows {
+        let browser_args = window
+            .additional_browser_args
+            .as_deref()
+            .unwrap_or(WEBVIEW_DEFAULT_BROWSER_ARGS);
+        window.additional_browser_args = Some(if window.additional_browser_args.is_none() {
+            WEBVIEW_DISABLE_GPU_ARGS.to_string()
+        } else if browser_args.contains("--disable-gpu") {
+            browser_args.to_string()
+        } else {
+            format!("{browser_args} --disable-gpu")
+        });
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let debug_logs = cfg!(debug_assertions)
@@ -318,6 +359,10 @@ pub fn run() {
     let data_db_url = app_paths::db_url().expect("failed to resolve CLI-Manager database path");
     let log_dir = app_paths::logs_dir().expect("failed to resolve CLI-Manager log directory");
     std::fs::create_dir_all(&log_dir).expect("failed to create CLI-Manager log directory");
+    let mut context = tauri::generate_context!();
+    if load_disable_hardware_acceleration_setting() {
+        apply_webview_disable_gpu_config(context.config_mut());
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -534,7 +579,7 @@ pub fn run() {
             commands::system_notification::send_interactive_system_notification,
             app_show_main_window,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
