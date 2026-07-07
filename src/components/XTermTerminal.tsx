@@ -30,10 +30,12 @@ import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import {
   TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT,
   TERMINAL_INPUT_SUGGESTION_AI_MODEL,
-  getTerminalInputSuggestionResult,
-  mergeTerminalInputSuggestionUsage,
+  getLocalTerminalInputSuggestions,
+  getTerminalInputSuggestionAiResult,
   type TerminalInputSuggestion,
+  type TerminalInputSuggestionContext,
 } from "../lib/terminalInputSuggestions";
+import type { CommandHistoryEntry, CommandTemplate, TerminalSession } from "../lib/types";
 import {
   endTerminalFileDrag,
   getTerminalFileDragText,
@@ -68,6 +70,9 @@ const INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW = 256;
 const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
+const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
+const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
+const SUGGESTION_AI_DEBOUNCE_MS = 400;
 const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
 // Box-drawing glyphs used by TUI input boxes (Claude Code / Codex draw "│ > … │").
 const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏]$/u;
@@ -1590,12 +1595,33 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
     let suggestionRequestId = 0;
     let suggestionRefreshTimerId: number | null = null;
+    let aiSuggestionTimerId: number | null = null;
+    let aiSuggestionInFlight = false;
+    let aiSuggestionQueued = false;
+    let pendingAiSuggestionContext: TerminalInputSuggestionContext | null = null;
+    let pendingAiSuggestionRequestId = 0;
     let suggestionDisposed = false;
     let suggestionTemplatesLoaded = false;
+    let lastSubmittedCommand: string | null = null;
+    let suggestionContextCache: {
+      loadedAt: number;
+      projectId: string | null;
+      history: CommandHistoryEntry[];
+      templates: CommandTemplate[];
+    } | null = null;
 
     const clearSuggestionGhost = () => {
       suggestionRef.current = null;
       setSuggestionGhost(null);
+    };
+
+    const cancelAiSuggestionRefresh = () => {
+      if (aiSuggestionTimerId !== null) {
+        window.clearTimeout(aiSuggestionTimerId);
+        aiSuggestionTimerId = null;
+      }
+      pendingAiSuggestionContext = null;
+      aiSuggestionQueued = false;
     };
 
     const updateSuggestionGhostPosition = (suggestion: TerminalInputSuggestion | null) => {
@@ -1646,24 +1672,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       });
     };
 
-    const refreshSuggestionGhost = async () => {
-      const requestId = ++suggestionRequestId;
-      const settings = useSettingsStore.getState();
-      const input = inputBuffer.current;
+    const loadSuggestionContext = async (projectId: string | null) => {
+      const now = Date.now();
       if (
-        suggestionDisposed ||
-        !settings.terminalInputSuggestionsEnabled ||
-        !input ||
-        input.includes("\n") ||
-        input.includes("\r") ||
-        isComposingRef.current
+        suggestionContextCache &&
+        suggestionContextCache.projectId === projectId &&
+        now - suggestionContextCache.loadedAt <= SUGGESTION_CONTEXT_CACHE_TTL_MS
       ) {
-        clearSuggestionGhost();
-        return;
+        return suggestionContextCache;
       }
 
-      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
-      const projectId = session?.projectId ?? null;
       const templateStore = useTemplateStore.getState();
       if (!suggestionTemplatesLoaded && templateStore.templates.length === 0) {
         suggestionTemplatesLoaded = true;
@@ -1673,19 +1691,29 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         useCommandHistoryStore.getState().getRecent(null, 120),
         Promise.resolve(useTemplateStore.getState().getForContext(projectId, sessionId)),
       ]);
-      if (suggestionDisposed || requestId !== suggestionRequestId || input !== inputBuffer.current) return;
-      const currentSettings = useSettingsStore.getState();
-      if (!currentSettings.terminalInputSuggestionsEnabled) {
-        clearSuggestionGhost();
-        return;
-      }
+      suggestionContextCache = {
+        loadedAt: Date.now(),
+        projectId,
+        history,
+        templates,
+      };
+      return suggestionContextCache;
+    };
 
-      const suggestionResult = await getTerminalInputSuggestionResult({
+    const buildSuggestionContext = (
+      input: string,
+      session: TerminalSession | undefined,
+      history: CommandHistoryEntry[],
+      templates: CommandTemplate[]
+    ): TerminalInputSuggestionContext => {
+      const currentSettings = useSettingsStore.getState();
+      const projectId = session?.projectId ?? null;
+      return {
         input,
         projectId,
         cwd: session?.cwd ?? null,
         sessionId,
-        previousCommand: null,
+        previousCommand: lastSubmittedCommand,
         history,
         templates,
         provider: currentSettings.terminalInputSuggestionProvider,
@@ -1699,19 +1727,97 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
             ? TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT
             : currentSettings.terminalInputSuggestionCustomPrompt,
         },
-      });
-      if (suggestionResult.aiAttempt) {
-        const settingsStore = useSettingsStore.getState();
-        void settingsStore.update(
-          "terminalInputSuggestionUsage",
-          mergeTerminalInputSuggestionUsage(settingsStore.terminalInputSuggestionUsage, suggestionResult.aiAttempt)
-        );
+      };
+    };
+
+    const suggestionContextHasUsableAiConfig = (context: TerminalInputSuggestionContext) => Boolean(
+      context.aiConfig?.enabled &&
+      context.aiConfig.baseUrl.trim() &&
+      context.aiConfig.apiKey.trim() &&
+      context.aiConfig.model.trim() &&
+      context.aiConfig.prompt.trim()
+    );
+
+    const runPendingAiSuggestion = async () => {
+      if (aiSuggestionInFlight) {
+        aiSuggestionQueued = true;
+        return;
       }
+      const context = pendingAiSuggestionContext;
+      const requestId = pendingAiSuggestionRequestId;
+      if (!context) return;
+      pendingAiSuggestionContext = null;
+      aiSuggestionQueued = false;
+      aiSuggestionInFlight = true;
+      const suggestionResult = await getTerminalInputSuggestionAiResult(context);
+      aiSuggestionInFlight = false;
+      if (suggestionResult.aiAttempt) {
+        useSettingsStore.getState().recordTerminalInputSuggestionUsage(suggestionResult.aiAttempt);
+      }
+      if (
+        !suggestionDisposed &&
+        requestId === suggestionRequestId &&
+        useSettingsStore.getState().terminalInputSuggestionsEnabled &&
+        context.input === inputBuffer.current &&
+        suggestionResult.suggestions.length > 0
+      ) {
+        const suggestion = suggestionResult.suggestions[0];
+        suggestionRef.current = suggestion;
+        updateSuggestionGhostPosition(suggestion);
+      }
+      if (aiSuggestionQueued && pendingAiSuggestionContext) {
+        void runPendingAiSuggestion();
+      }
+    };
+
+    const scheduleAiSuggestionRefresh = (context: TerminalInputSuggestionContext, requestId: number) => {
+      if (!suggestionContextHasUsableAiConfig(context)) {
+        cancelAiSuggestionRefresh();
+        return;
+      }
+      pendingAiSuggestionContext = context;
+      pendingAiSuggestionRequestId = requestId;
+      if (aiSuggestionTimerId !== null) {
+        window.clearTimeout(aiSuggestionTimerId);
+      }
+      aiSuggestionTimerId = window.setTimeout(() => {
+        aiSuggestionTimerId = null;
+        void runPendingAiSuggestion();
+      }, SUGGESTION_AI_DEBOUNCE_MS);
+    };
+
+    const refreshSuggestionGhost = async () => {
+      const requestId = ++suggestionRequestId;
+      const settings = useSettingsStore.getState();
+      const input = inputBuffer.current;
+      if (
+        suggestionDisposed ||
+        !settings.terminalInputSuggestionsEnabled ||
+        !input ||
+        input.includes("\n") ||
+        input.includes("\r") ||
+        isComposingRef.current
+      ) {
+        cancelAiSuggestionRefresh();
+        clearSuggestionGhost();
+        return;
+      }
+
+      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
+      const projectId = session?.projectId ?? null;
+      const { history, templates } = await loadSuggestionContext(projectId);
       if (suggestionDisposed || requestId !== suggestionRequestId || input !== inputBuffer.current) return;
-      const suggestions = suggestionResult.suggestions;
-      const suggestion = suggestions[0] ?? null;
+      if (!useSettingsStore.getState().terminalInputSuggestionsEnabled) {
+        cancelAiSuggestionRefresh();
+        clearSuggestionGhost();
+        return;
+      }
+
+      const context = buildSuggestionContext(input, session, history, templates);
+      const suggestion = getLocalTerminalInputSuggestions(context, { limit: 1 })[0] ?? null;
       suggestionRef.current = suggestion;
       updateSuggestionGhostPosition(suggestion);
+      scheduleAiSuggestionRefresh(context, requestId);
     };
 
     const scheduleSuggestionRefresh = () => {
@@ -1721,7 +1827,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       suggestionRefreshTimerId = window.setTimeout(() => {
         suggestionRefreshTimerId = null;
         void refreshSuggestionGhost();
-      }, 80);
+      }, SUGGESTION_LOCAL_DEBOUNCE_MS);
     };
 
     acceptSuggestionRef.current = () => {
@@ -1730,10 +1836,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (!settings.terminalInputSuggestionsEnabled || !suggestion?.suffix) return false;
       clearSuggestionGhost();
       forwardTerminalInput(suggestion.suffix, "onData");
-      void settings.update(
-        "terminalInputSuggestionUsage",
-        mergeTerminalInputSuggestionUsage(settings.terminalInputSuggestionUsage, { accepted: true })
-      );
+      settings.recordTerminalInputSuggestionUsage({ accepted: true });
       return true;
     };
 
@@ -1777,12 +1880,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (data === "\r") {
         const cmd = inputBuffer.current;
         if (cmd.trim()) {
+          lastSubmittedCommand = cmd.trim();
+          suggestionContextCache = null;
           addCommand(getProjectId(), cmd);
           // 回车猜测仅作为 cmd 的 command_started 信号（store 按 origin 过滤）；
           // 其余 shell 由 shell integration OSC 序列驱动，猜测会误判。
           useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event: "command_started", origin: "input" });
         }
         inputBuffer.current = "";
+        cancelAiSuggestionRefresh();
         clearSuggestionGhost();
       } else if (data === "\x7f" || data === "\b") {
         inputBuffer.current = inputBuffer.current.slice(0, -1);
@@ -1796,9 +1902,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           inputBuffer.current += pastedText.replace(/\r\n?/g, "\n");
           scheduleSuggestionRefresh();
         } else {
+          cancelAiSuggestionRefresh();
           clearSuggestionGhost();
         }
       } else {
+        cancelAiSuggestionRefresh();
         clearSuggestionGhost();
       }
     };
@@ -2336,6 +2444,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         window.clearTimeout(suggestionRefreshTimerId);
         suggestionRefreshTimerId = null;
       }
+      if (aiSuggestionTimerId !== null) {
+        window.clearTimeout(aiSuggestionTimerId);
+        aiSuggestionTimerId = null;
+      }
+      pendingAiSuggestionContext = null;
+      aiSuggestionQueued = false;
       acceptSuggestionRef.current = () => false;
       clearSuggestionGhost();
       cancelPendingCursorShow();

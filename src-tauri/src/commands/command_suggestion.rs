@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ const MODEL_TEST_SLOW_THRESHOLD_MS: u64 = 1500;
 const SUGGESTION_TIMEOUT_MS: u64 = 1600;
 const MAX_TEXT_FIELD_CHARS: usize = 4_000;
 const MAX_CONTEXT_ITEMS: usize = 12;
+const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 enum CommandSuggestionApiType {
@@ -65,10 +67,10 @@ pub async fn command_suggestion_test_model(
     model: String,
 ) -> Result<CommandSuggestionModelTestResult, String> {
     validate_config(&base_url, &api_key, &model)?;
-    let client = build_client(Duration::from_secs(MODEL_TEST_TIMEOUT_SECS))?;
+    let client = shared_client()?;
     let started = Instant::now();
     let result = post_model_request(
-        &client,
+        client,
         detect_api_type(&base_url),
         &base_url,
         &api_key,
@@ -89,11 +91,11 @@ pub async fn command_suggestion_generate(
 ) -> Result<CommandSuggestionResponse, String> {
     validate_config(&request.base_url, &request.api_key, &request.model)?;
     validate_generation_input(&request)?;
-    let client = build_client(Duration::from_millis(SUGGESTION_TIMEOUT_MS))?;
+    let client = shared_client()?;
     let started = Instant::now();
     let user_prompt = build_user_prompt(&request);
     let (status, body) = post_model_request(
-        &client,
+        client,
         detect_api_type(&request.base_url),
         &request.base_url,
         &request.api_key,
@@ -155,12 +157,20 @@ fn validate_generation_input(request: &CommandSuggestionGenerateRequest) -> Resu
     Ok(())
 }
 
-fn build_client(timeout: Duration) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+fn shared_client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
         .user_agent("CLI-Manager command suggestion")
-        .timeout(timeout)
+        .timeout(Duration::from_secs(MODEL_TEST_TIMEOUT_SECS))
         .build()
-        .map_err(|err| format!("http_client_create_failed: {err}"))
+        .map_err(|err| format!("http_client_create_failed: {err}"))?;
+    let _ = CLIENT.set(client);
+    CLIENT
+        .get()
+        .ok_or_else(|| "http_client_create_failed: shared_client_unavailable".to_string())
 }
 
 fn endpoint_url(base_url: &str, versioned_path: &str) -> String {
@@ -247,7 +257,7 @@ async fn post_chat_completion(
         .await
         .map_err(map_request_error)?;
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    let body = read_limited_response_body(response).await?;
     Ok((status, body))
 }
 
@@ -271,8 +281,24 @@ async fn post_responses(
         .await
         .map_err(map_request_error)?;
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    let body = read_limited_response_body(response).await?;
     Ok((status, body))
+}
+
+async fn read_limited_response_body(response: reqwest::Response) -> Result<String, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BODY_BYTES as u64)
+    {
+        return Err("model_response_too_large".to_string());
+    }
+    let bytes = response.bytes().await.map_err(map_request_error)?;
+    if bytes.len() > MAX_RESPONSE_BODY_BYTES {
+        return Err("model_response_too_large".to_string());
+    }
+    std::str::from_utf8(bytes.as_ref())
+        .map(str::to_string)
+        .map_err(|_| "model_response_not_utf8".to_string())
 }
 
 fn chat_completion_body(
@@ -590,5 +616,28 @@ mod tests {
             extract_command(&value, CommandSuggestionApiType::Responses).as_deref(),
             Some("git status")
         );
+    }
+
+    #[test]
+    fn clamp_items_limits_context_and_drops_oversized() {
+        let items = (0..20)
+            .map(|index| {
+                if index == 2 {
+                    "x".repeat(MAX_TEXT_FIELD_CHARS + 1)
+                } else {
+                    format!("git status {index}")
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let clamped = clamp_items(&items);
+        assert_eq!(clamped.len(), MAX_CONTEXT_ITEMS);
+        assert!(!clamped.iter().any(|item| item.len() > MAX_TEXT_FIELD_CHARS));
+        assert_eq!(clamped.first().map(String::as_str), Some("git status 0"));
+    }
+
+    #[test]
+    fn sanitize_command_rejects_long_command() {
+        assert!(sanitize_command(&"x".repeat(501)).is_none());
     }
 }

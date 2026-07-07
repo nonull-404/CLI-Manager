@@ -109,6 +109,18 @@ interface Candidate {
 const DEFAULT_LIMIT = 1;
 const MAX_COMMAND_LENGTH = 500;
 const AI_CONTEXT_LIMIT = 12;
+const AI_CONTEXT_COMMAND_MAX_LENGTH = 240;
+const SECRET_VALUE_PATTERN =
+  /(?:sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9_]{16,}|xox[baprs]-[a-z0-9-]{16,}|akia[0-9a-z]{16}|(?:api[_-]?key|token|password|passwd|secret)\s*[:=]\s*["']?[^"'\s]+|authorization\s*:\s*bearer\s+[^"'\s]+|bearer\s+[a-z0-9._-]{20,})/giu;
+const SECRET_FILE_PATTERN = /(?:^|[\s"'=])(?:\.env(?:\.\w+)?|\.npmrc|\.pypirc|\.netrc|id_rsa|id_ed25519)(?:$|[\s"'])/iu;
+const DANGEROUS_AI_SUFFIX_PATTERNS: readonly RegExp[] = [
+  /(?:^|[;&|]\s*)(?:rm|del|rmdir|remove-item)\b/iu,
+  /\bcurl\b[\s\S]*\|\s*(?:sh|bash|zsh|fish|powershell|pwsh)\b/iu,
+  /\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[\s\S]*\|\s*(?:iex|invoke-expression)\b/iu,
+  /\|\s*(?:sh|bash|zsh|fish|powershell|pwsh|cmd)\b/iu,
+  /(?:^|\s)--(?:force|yes|assume-yes|no-preserve-root)(?:\s|$)/iu,
+  /(?:^|\s)-[a-z]*[fy][a-z]*(?:\s|$)/iu,
+];
 
 export const DEFAULT_TERMINAL_INPUT_SUGGESTION_USAGE: TerminalInputSuggestionUsageStats = {
   requestCount: 0,
@@ -129,7 +141,11 @@ export const DEFAULT_TERMINAL_INPUT_SUGGESTION_USAGE: TerminalInputSuggestionUsa
 
 const normalizeCommand = (value: string) => value.replace(/\r?\n$/u, "").trim();
 
-export function getSafeSuggestionSuffix(input: string, command: string): string | null {
+export function getSafeSuggestionSuffix(
+  input: string,
+  command: string,
+  options: { source?: TerminalInputSuggestionSource } = {}
+): string | null {
   if (!input || input.includes("\n") || input.includes("\r")) return null;
   if (!command || command.includes("\n") || command.includes("\r")) return null;
   if (command.length > MAX_COMMAND_LENGTH) return null;
@@ -137,7 +153,13 @@ export function getSafeSuggestionSuffix(input: string, command: string): string 
   const inputLower = input.toLocaleLowerCase();
   const commandLower = command.toLocaleLowerCase();
   if (!commandLower.startsWith(inputLower) || command.length <= input.length) return null;
-  return command.slice(input.length);
+  const suffix = command.slice(input.length);
+  if (options.source === "ai" && isDangerousAiSuggestionSuffix(suffix)) return null;
+  return suffix;
+}
+
+function isDangerousAiSuggestionSuffix(suffix: string): boolean {
+  return DANGEROUS_AI_SUFFIX_PATTERNS.some((pattern) => pattern.test(suffix));
 }
 
 function scoreHistoryEntry(
@@ -196,9 +218,9 @@ function scoreBuiltinCommand(item: BuiltinAiCommand, input: string, index: numbe
   };
 }
 
-function getLocalSuggestions(
+export function getLocalTerminalInputSuggestions(
   context: TerminalInputSuggestionContext,
-  options: TerminalInputSuggestionOptions
+  options: TerminalInputSuggestionOptions = {}
 ): TerminalInputSuggestion[] {
   const input = context.input;
   const limit = Math.max(1, options.limit ?? DEFAULT_LIMIT);
@@ -235,12 +257,44 @@ function isUsableAiConfig(config: TerminalInputSuggestionAiConfig | undefined): 
   );
 }
 
-function compactHistory(history: CommandHistoryEntry[]): string[] {
+function commandRoot(command: string): string {
+  return command.trim().split(/\s+/u)[0]?.toLocaleLowerCase() ?? "";
+}
+
+function rootsAreCompatible(inputRoot: string, command: string): boolean {
+  if (!inputRoot) return true;
+  const root = commandRoot(command);
+  return Boolean(root && (root.startsWith(inputRoot) || inputRoot.startsWith(root)));
+}
+
+function sanitizeAiContextCommand(value: string): string | null {
+  const command = normalizeCommand(value);
+  if (!command || command.length > AI_CONTEXT_COMMAND_MAX_LENGTH) return null;
+  if (SECRET_FILE_PATTERN.test(command)) return null;
+  SECRET_VALUE_PATTERN.lastIndex = 0;
+  const redacted = command.replace(SECRET_VALUE_PATTERN, "[REDACTED]");
+  return redacted.includes("[REDACTED]") ? redacted : command;
+}
+
+function hasSecretValue(value: string): boolean {
+  SECRET_VALUE_PATTERN.lastIndex = 0;
+  return SECRET_VALUE_PATTERN.test(value);
+}
+
+function compactCwdForAiContext(value: string | null | undefined): string | null {
+  const cwd = value?.trim();
+  if (!cwd || SECRET_FILE_PATTERN.test(cwd) || hasSecretValue(cwd)) return null;
+  const parts = cwd.split(/[\\/]+/u).filter(Boolean);
+  return parts.length > 2 ? parts.slice(-2).join("/") : cwd;
+}
+
+function compactHistory(history: CommandHistoryEntry[], input: string): string[] {
+  const inputRoot = commandRoot(input);
   const seen = new Set<string>();
   const items: string[] = [];
   for (const entry of history) {
-    const command = normalizeCommand(entry.command);
-    if (!command || seen.has(command)) continue;
+    const command = sanitizeAiContextCommand(entry.command);
+    if (!command || seen.has(command) || !rootsAreCompatible(inputRoot, command)) continue;
     seen.add(command);
     items.push(command);
     if (items.length >= AI_CONTEXT_LIMIT) break;
@@ -248,12 +302,13 @@ function compactHistory(history: CommandHistoryEntry[]): string[] {
   return items;
 }
 
-function compactTemplates(templates: CommandTemplate[]): string[] {
+function compactTemplates(templates: CommandTemplate[], input: string): string[] {
+  const inputRoot = commandRoot(input);
   const seen = new Set<string>();
   const items: string[] = [];
   for (const template of templates) {
-    const command = normalizeCommand(template.command);
-    if (!command || seen.has(command)) continue;
+    const command = sanitizeAiContextCommand(template.command);
+    if (!command || seen.has(command) || !rootsAreCompatible(inputRoot, command)) continue;
     seen.add(command);
     items.push(command);
     if (items.length >= AI_CONTEXT_LIMIT) break;
@@ -261,10 +316,23 @@ function compactTemplates(templates: CommandTemplate[]): string[] {
   return items;
 }
 
-async function getAiSuggestionResult(
-  context: TerminalInputSuggestionContext,
-  config: TerminalInputSuggestionAiConfig
+export async function getTerminalInputSuggestionAiResult(
+  context: TerminalInputSuggestionContext
 ): Promise<TerminalInputSuggestionResult> {
+  const config = isUsableAiConfig(context.aiConfig) ? context.aiConfig : undefined;
+  if (!config) {
+    return {
+      suggestions: [],
+      aiAttempt: {
+        attempted: true,
+        success: false,
+        fallback: true,
+        status: "fallback",
+        message: "missing_ai_config",
+      },
+    };
+  }
+
   try {
     const response = await invoke<BackendCommandSuggestionResponse>("command_suggestion_generate", {
       request: {
@@ -273,14 +341,14 @@ async function getAiSuggestionResult(
         model: config.model,
         prompt: config.prompt,
         input: context.input,
-        cwd: context.cwd ?? null,
+        cwd: compactCwdForAiContext(context.cwd),
         previousCommand: context.previousCommand ?? null,
-        history: compactHistory(context.history),
-        templates: compactTemplates(context.templates),
+        history: compactHistory(context.history, context.input),
+        templates: compactTemplates(context.templates, context.input),
       },
     });
     const command = normalizeCommand(response.command ?? "");
-    const suffix = getSafeSuggestionSuffix(context.input, command);
+    const suffix = getSafeSuggestionSuffix(context.input, command, { source: "ai" });
     if (!suffix) {
       return {
         suggestions: [],
@@ -368,26 +436,13 @@ export async function getTerminalInputSuggestionResult(
   context: TerminalInputSuggestionContext,
   options: TerminalInputSuggestionOptions = {}
 ): Promise<TerminalInputSuggestionResult> {
-  const localSuggestions = () => getLocalSuggestions(context, options);
+  const localSuggestions = () => getLocalTerminalInputSuggestions(context, options);
   if (isUsableAiConfig(context.aiConfig) || context.provider === "ai") {
-    const config = isUsableAiConfig(context.aiConfig) ? context.aiConfig : undefined;
-    if (config) {
-      const aiResult = await getAiSuggestionResult(context, config);
-      if (aiResult.suggestions.length > 0) return aiResult;
-      return {
-        suggestions: localSuggestions(),
-        aiAttempt: aiResult.aiAttempt,
-      };
-    }
+    const aiResult = await getTerminalInputSuggestionAiResult(context);
+    if (aiResult.suggestions.length > 0) return aiResult;
     return {
       suggestions: localSuggestions(),
-      aiAttempt: {
-        attempted: true,
-        success: false,
-        fallback: true,
-        status: "fallback",
-        message: "missing_ai_config",
-      },
+      aiAttempt: aiResult.aiAttempt,
     };
   }
   return { suggestions: localSuggestions() };

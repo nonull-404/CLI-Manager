@@ -8,6 +8,8 @@ import { getCliManagerDataPaths } from "../lib/appPaths";
 import {
   DEFAULT_TERMINAL_INPUT_SUGGESTION_USAGE,
   TERMINAL_INPUT_SUGGESTION_AI_MODEL,
+  mergeTerminalInputSuggestionUsage,
+  type TerminalInputSuggestionAiAttempt,
   type TerminalInputSuggestionModelTestResult,
   type TerminalInputSuggestionProvider,
   type TerminalInputSuggestionUsageStats,
@@ -269,6 +271,7 @@ interface SettingsStore extends Settings {
   terminalBackgroundMissing: boolean;
   load: () => Promise<void>;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => Promise<void>;
+  recordTerminalInputSuggestionUsage: (event: TerminalInputSuggestionAiAttempt | { accepted: true }) => void;
   setTheme: (mode: ThemeMode) => Promise<void>;
   setTerminalThemeMode: (mode: TerminalThemeMode) => Promise<void>;
   syncSystemTheme: () => void;
@@ -706,6 +709,9 @@ export function migrateTerminalBackground(value: unknown): TerminalBackgroundSet
 }
 
 let store: Store | null = null;
+const TERMINAL_INPUT_SUGGESTION_USAGE_SAVE_DELAY_MS = 800;
+let terminalInputSuggestionUsageSaveTimer: number | null = null;
+
 async function getStore() {
   if (!store) {
     const paths = await getCliManagerDataPaths();
@@ -1002,6 +1008,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (key === "debugMode") {
       void applyDebugMode(value as boolean);
     }
+  },
+
+  recordTerminalInputSuggestionUsage: (event) => {
+    const next = mergeTerminalInputSuggestionUsage(get().terminalInputSuggestionUsage, event);
+    set({ terminalInputSuggestionUsage: next });
+    if (terminalInputSuggestionUsageSaveTimer !== null) {
+      window.clearTimeout(terminalInputSuggestionUsageSaveTimer);
+    }
+    terminalInputSuggestionUsageSaveTimer = window.setTimeout(() => {
+      terminalInputSuggestionUsageSaveTimer = null;
+      void getStore()
+        .then((s) => s.set("terminalInputSuggestionUsage", get().terminalInputSuggestionUsage))
+        .catch(() => {});
+    }, TERMINAL_INPUT_SUGGESTION_USAGE_SAVE_DELAY_MS);
   },
 
   setTheme: async (mode) => {
