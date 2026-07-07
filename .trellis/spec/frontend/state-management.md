@@ -203,6 +203,71 @@ interface SettingsStore extends Settings {
 
 `load()` recomputes the flag every launch; it is never written to `settings.json`.
 
+### Scenario: Replay snapshot patch file storage
+
+#### 1. Scope / Trigger
+
+- Trigger: changing AI Replay snapshot persistence, loading, rollback, fork, or startup DB cleanup behavior.
+- Problem: AI Replay code snapshots can contain large unified diff text. Storing that text directly in `ai_replay_events.payload_json` makes `cli-manager.db` grow quickly and keeps routine metadata queries tied to large payload rows.
+
+#### 2. Signatures
+
+- SQLite table: `ai_replay_events(kind, session_key, event_index, payload_json)`.
+- Snapshot DB payload fields: `checkpointId`, `patchPath`, `patchStorage`, `patchBytes`, optional legacy `patch`.
+- Snapshot file path: `.cli-manager/replay-snapshots/<session>/<checkpoint>.patch`.
+- Frontend store helpers: `writeSnapshotPatchFile(...)`, `hydrateSnapshotPayload(...)`, `persistReplayEvent(...)`.
+- Startup backend command: `db_repair_known_migration_drift()`.
+
+#### 3. Contracts
+
+- Do not write snapshot patch files into the user project repository; they must stay under CLI-Manager's data directory.
+- New snapshot DB payloads must persist `patchPath`, `patchStorage="file"`, and `patchBytes`, not the full `patch` text.
+- Loading Replay events must hydrate `event.payload.patch` from `patchPath` before UI snapshot actions read it.
+- Old rows with inline `payload.patch` must remain readable for compatibility.
+- Startup DB repair must run the inline snapshot cleanup at most once per app version before `Database.load(...)`; when the current-version marker exists, it must skip the cleanup query entirely.
+- If a patch file is missing, keep the snapshot metadata visible but leave diff, rollback, and fork unavailable for that event.
+- For rollback/fork, compare the latest hydrated snapshot patch against the current worktree patch before mutating files.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| New snapshot has non-empty patch | Write file, persist metadata only, keep in-memory event hydrated. |
+| Legacy snapshot still has inline `patch` | Load directly and keep snapshot actions available. |
+| Startup cleanup sees inline `patch` and no current-version marker | Write file, remove inline field, add metadata, checkpoint/VACUUM DB, then write the marker. |
+| Current-version cleanup marker exists | Skip the cleanup query entirely. |
+| Snapshot file missing or unreadable | Log warning, keep metadata visible, leave patch-dependent actions unavailable. |
+| Malformed snapshot payload JSON during cleanup | Skip that row and continue; do not block app startup. |
+
+#### 5. Good/Base/Bad Cases
+
+- Good: after update, old inline snapshots are migrated once for that app version and `cli-manager.db` no longer carries large `payload.patch` fields.
+- Base: already-checked installs on the same version start normally; cleanup is skipped by marker.
+- Bad: writing patch files into the current project repo, because AI Replay metadata would pollute user worktrees.
+- Bad: deleting legacy inline `patch` before the patch file is written, because rollback/fork would lose the snapshot content.
+
+#### 6. Tests Required
+
+- Run `npx tsc --noEmit`.
+- Run `cd src-tauri && cargo check`.
+- Run `cd src-tauri && cargo test db_repair --lib`.
+- Assert new snapshot `payload_json` has `patchPath` but no inline `patch`.
+- Assert startup cleanup migrates inline snapshots to files, removes `patch`, and skips entirely when the current-version marker exists.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```json
+{"checkpointId":"snapshot-1","patch":"diff --git ..."}
+```
+
+##### Correct
+
+```json
+{"checkpointId":"snapshot-1","patchPath":"replay-snapshots/session/snapshot-1.patch","patchStorage":"file","patchBytes":1234}
+```
+
 ### Pattern: Pane tree drag-split moves existing sessions only
 
 **Problem**: A terminal tab represents a live PTY session. Dragging it to a pane edge must not create a new PTY or duplicate the terminal, otherwise the UI would show two tabs for different processes while the user expected a layout move.

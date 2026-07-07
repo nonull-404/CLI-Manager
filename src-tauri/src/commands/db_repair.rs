@@ -8,16 +8,22 @@ use crate::{
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION,
 };
 use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
 const SQLX_MIGRATIONS_TABLE: &str = "_sqlx_migrations";
 const KNOWN_DRIFT_START_VERSION: i64 = 13;
 const KNOWN_DRIFT_END_VERSION: i64 = 15;
+const REPLAY_SNAPSHOT_PATCH_DIR: &str = "replay-snapshots";
+const REPLAY_SNAPSHOT_PATCH_STORAGE: &str = "file";
+const REPLAY_SNAPSHOT_CLEANUP_MARKER_FILE: &str = "replay-snapshot-patch-cleanup.version";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const FAVORITE_SNAPSHOT_COLUMNS: [&str; 11] = [
     "session_key",
@@ -93,7 +99,30 @@ pub async fn db_repair_known_migration_drift() -> Result<DbMigrationRepairResult
     }
 
     let mut conn = open_cli_manager_db(&db_path).await?;
-    repair_known_migration_drift(&mut conn).await
+    let mut result = repair_known_migration_drift(&mut conn).await?;
+    match cleanup_replay_snapshot_inline_patches_for_current_version(
+        &mut conn,
+        &app_paths::cli_manager_data_dir()?,
+    )
+    .await
+    {
+        Ok(migrated) if migrated > 0 => {
+            result.repaired = true;
+            result.status = if result.status == "already_consistent" {
+                format!("replay_snapshot_patch_cleanup_migrated_{migrated}")
+            } else {
+                format!(
+                    "{};replay_snapshot_patch_cleanup_migrated_{migrated}",
+                    result.status
+                )
+            };
+        }
+        Ok(_) => {}
+        Err(err) => {
+            log::warn!("Replay snapshot patch cleanup skipped: {err}");
+        }
+    }
+    Ok(result)
 }
 
 async fn open_cli_manager_db(path: &Path) -> Result<SqliteConnection, String> {
@@ -131,6 +160,199 @@ async fn repair_known_migration_drift(
         repaired: true,
         status: "repaired_known_migration_drift".to_string(),
     })
+}
+
+async fn cleanup_replay_snapshot_inline_patches(
+    conn: &mut SqliteConnection,
+    data_dir: &Path,
+) -> Result<usize, String> {
+    if !table_exists(conn, "ai_replay_events").await? {
+        return Ok(0);
+    }
+
+    let rows = sqlx::query(
+        "SELECT id, session_key, event_index, payload_json
+         FROM ai_replay_events
+         WHERE kind = 'snapshot' AND payload_json LIKE ?1
+         ORDER BY id",
+    )
+    .bind("%\"patch\"%")
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("replay_snapshot_cleanup_query_failed: {err}"))?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    fs::create_dir_all(data_dir.join(REPLAY_SNAPSHOT_PATCH_DIR))
+        .map_err(|err| format!("replay_snapshot_cleanup_dir_failed: {err}"))?;
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("replay_snapshot_cleanup_begin_failed: {err}"))?;
+
+    let result = cleanup_replay_snapshot_inline_patches_in_transaction(conn, data_dir, &rows).await;
+    if result.is_ok() {
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("replay_snapshot_cleanup_commit_failed: {err}"))?;
+    } else {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    }
+
+    let migrated = result?;
+    if migrated > 0 {
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut *conn)
+            .await;
+        if let Err(err) = sqlx::query("VACUUM").execute(&mut *conn).await {
+            log::warn!("Replay snapshot DB vacuum skipped: {err}");
+        }
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut *conn)
+            .await;
+    }
+
+    Ok(migrated)
+}
+
+async fn cleanup_replay_snapshot_inline_patches_for_current_version(
+    conn: &mut SqliteConnection,
+    data_dir: &Path,
+) -> Result<usize, String> {
+    if replay_snapshot_cleanup_marker_path(data_dir).is_file()
+        && fs::read_to_string(replay_snapshot_cleanup_marker_path(data_dir))
+            .map(|value| value.trim() == APP_VERSION)
+            .unwrap_or(false)
+    {
+        return Ok(0);
+    }
+
+    let migrated = cleanup_replay_snapshot_inline_patches(conn, data_dir).await?;
+    fs::create_dir_all(data_dir)
+        .map_err(|err| format!("replay_snapshot_cleanup_marker_dir_failed: {err}"))?;
+    fs::write(replay_snapshot_cleanup_marker_path(data_dir), APP_VERSION)
+        .map_err(|err| format!("replay_snapshot_cleanup_marker_write_failed: {err}"))?;
+    Ok(migrated)
+}
+
+fn replay_snapshot_cleanup_marker_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join(REPLAY_SNAPSHOT_CLEANUP_MARKER_FILE)
+}
+
+async fn cleanup_replay_snapshot_inline_patches_in_transaction(
+    conn: &mut SqliteConnection,
+    data_dir: &Path,
+    rows: &[SqliteRow],
+) -> Result<usize, String> {
+    let mut migrated = 0usize;
+
+    for row in rows {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+        let session_key: String = row
+            .try_get("session_key")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+        let event_index: i64 = row
+            .try_get("event_index")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+        let payload_json: String = row
+            .try_get("payload_json")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+
+        let Ok(mut payload) = serde_json::from_str::<Value>(&payload_json) else {
+            log::warn!("Replay snapshot cleanup skipped malformed payload row id={id}");
+            continue;
+        };
+        let Some(object) = payload.as_object_mut() else {
+            continue;
+        };
+        let Some(patch) = object
+            .get("patch")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+
+        let checkpoint_id = object
+            .get("checkpointId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("event-{event_index}"));
+        let relative_path = replay_snapshot_patch_relative_path(&session_key, &checkpoint_id);
+        let target_path = data_dir.join(&relative_path);
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("replay_snapshot_cleanup_dir_failed: {err}"))?;
+        }
+        fs::write(&target_path, patch.as_bytes())
+            .map_err(|err| format!("replay_snapshot_cleanup_write_failed: {err}"))?;
+
+        let patch_bytes = patch.len() as u64;
+        object.remove("patch");
+        object.insert("patchPath".to_string(), Value::String(relative_path));
+        object.insert(
+            "patchStorage".to_string(),
+            Value::String(REPLAY_SNAPSHOT_PATCH_STORAGE.to_string()),
+        );
+        if object.get("patchBytes").and_then(Value::as_u64).is_none() {
+            object.insert(
+                "patchBytes".to_string(),
+                Value::Number(serde_json::Number::from(patch_bytes)),
+            );
+        }
+        object.insert(
+            "patchStoredAt".to_string(),
+            Value::String(chrono::Utc::now().to_rfc3339()),
+        );
+
+        let updated_payload_json = serde_json::to_string(&payload)
+            .map_err(|err| format!("replay_snapshot_cleanup_serialize_failed: {err}"))?;
+        sqlx::query("UPDATE ai_replay_events SET payload_json = ?1 WHERE id = ?2")
+            .bind(updated_payload_json)
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("replay_snapshot_cleanup_update_failed: {err}"))?;
+        migrated += 1;
+    }
+
+    Ok(migrated)
+}
+
+fn replay_snapshot_patch_relative_path(session_key: &str, checkpoint_id: &str) -> String {
+    format!(
+        "{}/{}/{}.patch",
+        REPLAY_SNAPSHOT_PATCH_DIR,
+        sanitize_snapshot_path_segment(session_key, "session"),
+        sanitize_snapshot_path_segment(checkpoint_id, "snapshot")
+    )
+}
+
+fn sanitize_snapshot_path_segment(value: &str, fallback: &str) -> String {
+    let mut safe = String::with_capacity(value.len().min(120));
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            safe.push(ch);
+        } else {
+            safe.push('-');
+        }
+        if safe.len() >= 120 {
+            break;
+        }
+    }
+    let trimmed = safe.trim_matches(['.', '-']);
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn expected_migrations_for_features(
@@ -471,6 +693,140 @@ mod tests {
                 description: MIGRATION_ADD_CLI_ARGS_DESCRIPTION.to_string(),
                 checksum: migration_checksum(MIGRATION_ADD_CLI_ARGS_SQL),
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn migrates_replay_snapshot_inline_patch_to_file_metadata() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        conn.execute(
+            "CREATE TABLE ai_replay_events (
+                id INTEGER PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                event_index INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+
+        let patch = "diff --git a/a.txt b/a.txt\n+hello\n";
+        let payload = serde_json::json!({
+            "checkpointId": "checkpoint/one",
+            "label": "snapshot",
+            "patch": patch
+        });
+        sqlx::query(
+            "INSERT INTO ai_replay_events (session_key, event_index, kind, payload_json)
+             VALUES (?1, ?2, 'snapshot', ?3)",
+        )
+        .bind("session:one")
+        .bind(7_i64)
+        .bind(payload.to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let migrated = cleanup_replay_snapshot_inline_patches(&mut conn, data_dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(migrated, 1);
+
+        let (stored_payload_json,): (String,) =
+            sqlx::query_as("SELECT payload_json FROM ai_replay_events WHERE id = 1")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        let stored_payload: Value = serde_json::from_str(&stored_payload_json).unwrap();
+        let object = stored_payload.as_object().unwrap();
+        assert!(object.get("patch").is_none());
+        assert_eq!(
+            object.get("patchStorage").and_then(Value::as_str),
+            Some(REPLAY_SNAPSHOT_PATCH_STORAGE)
+        );
+        assert_eq!(
+            object.get("patchBytes").and_then(Value::as_u64),
+            Some(patch.len() as u64)
+        );
+
+        let patch_path = object.get("patchPath").and_then(Value::as_str).unwrap();
+        assert_eq!(
+            patch_path,
+            "replay-snapshots/session-one/checkpoint-one.patch"
+        );
+        let written_patch = std::fs::read_to_string(data_dir.path().join(patch_path)).unwrap();
+        assert_eq!(written_patch, patch);
+    }
+
+    #[tokio::test]
+    async fn skips_replay_snapshot_cleanup_when_current_version_marker_exists() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        conn.execute(
+            "CREATE TABLE ai_replay_events (
+                id INTEGER PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                event_index INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+        let payload = serde_json::json!({
+            "checkpointId": "checkpoint-one",
+            "patch": "diff --git a/a.txt b/a.txt\n+hello\n"
+        });
+        sqlx::query(
+            "INSERT INTO ai_replay_events (session_key, event_index, kind, payload_json)
+             VALUES (?1, ?2, 'snapshot', ?3)",
+        )
+        .bind("session-one")
+        .bind(1_i64)
+        .bind(payload.to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let data_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            replay_snapshot_cleanup_marker_path(data_dir.path()),
+            APP_VERSION,
+        )
+        .unwrap();
+
+        let migrated =
+            cleanup_replay_snapshot_inline_patches_for_current_version(&mut conn, data_dir.path())
+                .await
+                .unwrap();
+
+        assert_eq!(migrated, 0);
+        let (stored_payload_json,): (String,) =
+            sqlx::query_as("SELECT payload_json FROM ai_replay_events WHERE id = 1")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        let stored_payload: Value = serde_json::from_str(&stored_payload_json).unwrap();
+        assert!(stored_payload.get("patch").is_some());
+        assert!(!data_dir.path().join(REPLAY_SNAPSHOT_PATCH_DIR).exists());
+    }
+
+    #[tokio::test]
+    async fn writes_replay_snapshot_cleanup_marker_after_version_check() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+
+        let migrated =
+            cleanup_replay_snapshot_inline_patches_for_current_version(&mut conn, data_dir.path())
+                .await
+                .unwrap();
+
+        assert_eq!(migrated, 0);
+        assert_eq!(
+            std::fs::read_to_string(replay_snapshot_cleanup_marker_path(data_dir.path())).unwrap(),
+            APP_VERSION
         );
     }
 

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
+import { getCliManagerDataPaths } from "../lib/appPaths";
 import { getDb } from "../lib/db";
 import { debugConsoleInfo, debugConsoleWarn } from "../lib/debugConsole";
 import { translateCurrent } from "../lib/i18n";
@@ -93,6 +94,11 @@ interface ReplayEventRow {
   payload_json: string;
 }
 
+interface TextFilePayload {
+  content: string;
+  sizeBytes: number;
+}
+
 interface ReplayStore {
   sessions: ReplaySession[];
   eventsBySession: Record<string, ReplayEvent[]>;
@@ -114,6 +120,8 @@ const OOM_PAYLOAD_WARN_BYTES = 512 * 1024;
 const OOM_PATCH_WARN_BYTES = 1024 * 1024;
 const OOM_REPLAY_EVENTS_WARN_COUNT = 200;
 const REPLAY_EVENTS_IN_MEMORY_LIMIT = 200;
+const SNAPSHOT_PATCH_DIR = "replay-snapshots";
+const SNAPSHOT_PATCH_STORAGE = "file";
 
 function stringByteLength(value: string): number {
   if (typeof Blob !== "undefined") return new Blob([value]).size;
@@ -183,6 +191,54 @@ function parseJsonObject(value: string): Record<string, unknown> {
   }
 }
 
+function sanitizeSnapshotPathSegment(value: unknown, fallback: string): string {
+  const raw = String(value ?? "").trim() || fallback;
+  const safe = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "");
+  return (safe || fallback).slice(0, 120);
+}
+
+async function createDirIfMissing(rootPath: string, parentPath: string, name: string): Promise<void> {
+  try {
+    await invoke("file_create_dir", { rootPath, parentPath, name, overwrite: false });
+  } catch (err) {
+    if (String(err).includes("target_exists")) return;
+    throw err;
+  }
+}
+
+async function writeSnapshotPatchFile(sessionKey: string, checkpointId: string, patch: string): Promise<string> {
+  const paths = await getCliManagerDataPaths();
+  const sessionDir = sanitizeSnapshotPathSegment(sessionKey, "session");
+  const fileName = `${sanitizeSnapshotPathSegment(checkpointId, "snapshot")}.patch`;
+  await createDirIfMissing(paths.dataDir, "", SNAPSHOT_PATCH_DIR);
+  await createDirIfMissing(paths.dataDir, SNAPSHOT_PATCH_DIR, sessionDir);
+  const relativePath = `${SNAPSHOT_PATCH_DIR}/${sessionDir}/${fileName}`;
+  await invoke("file_write_text", { rootPath: paths.dataDir, relativePath, content: patch });
+  return relativePath;
+}
+
+async function readSnapshotPatchFile(relativePath: string): Promise<string | null> {
+  const paths = await getCliManagerDataPaths();
+  const result = await invoke<TextFilePayload>("file_read_text", {
+    rootPath: paths.dataDir,
+    relativePath,
+  });
+  return result.content;
+}
+
+async function hydrateSnapshotPayload(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (typeof payload.patch === "string" && payload.patch.length > 0) return payload;
+  const patchPath = typeof payload.patchPath === "string" ? payload.patchPath : "";
+  if (!patchPath) return payload;
+  try {
+    const patch = await readSnapshotPatchFile(patchPath);
+    return patch ? { ...payload, patch } : payload;
+  } catch (err) {
+    logWarn("Failed to read AI replay snapshot patch file", { patchPath, err });
+    return payload;
+  }
+}
+
 function mapSession(row: ReplaySessionRow): ReplaySession {
   return {
     sessionKey: row.session_key,
@@ -198,7 +254,11 @@ function mapSession(row: ReplaySessionRow): ReplaySession {
   };
 }
 
-function mapEvent(row: ReplayEventRow): ReplayEvent {
+async function mapEvent(row: ReplayEventRow): Promise<ReplayEvent> {
+  const parsedPayload = parseJsonObject(row.payload_json);
+  const payload = row.kind === "snapshot"
+    ? await hydrateSnapshotPayload(parsedPayload)
+    : parsedPayload;
   return {
     id: row.id,
     sessionKey: row.session_key,
@@ -210,7 +270,7 @@ function mapEvent(row: ReplayEventRow): ReplayEvent {
     durationMs: row.duration_ms,
     status: row.status,
     tags: parseJsonArray(row.tags_json),
-    payload: parseJsonObject(row.payload_json),
+    payload,
   };
 }
 
@@ -412,7 +472,7 @@ async function fetchEvents(sessionKey: string): Promise<ReplayEvent[]> {
     "SELECT * FROM ai_replay_events WHERE session_key = $1 ORDER BY event_index DESC LIMIT $2",
     [sessionKey, REPLAY_EVENTS_IN_MEMORY_LIMIT]
   );
-  const events = rows.reverse().map(mapEvent);
+  const events = await Promise.all(rows.reverse().map(mapEvent));
   const payloadBytes = rows.reduce((sum, row) => sum + stringByteLength(row.payload_json), 0);
   const maxPayloadBytes = rows.reduce((max, row) => Math.max(max, stringByteLength(row.payload_json)), 0);
   const patchStats = getEventsPatchStats(events);
@@ -444,6 +504,7 @@ interface ReplayEventDraft {
   status: ReplayEventStatus;
   tags: string[];
   payload: Record<string, unknown>;
+  persistedPayload?: Record<string, unknown>;
 }
 
 interface ReplaySessionDraft {
@@ -471,7 +532,7 @@ async function persistReplayEvent(
   const startedAt = existing?.startedAt ?? timestamp;
   let eventIndex = 1;
   const tagsJson = JSON.stringify(eventDraft.tags);
-  const payloadJson = JSON.stringify(eventDraft.payload);
+  const payloadJson = JSON.stringify(eventDraft.persistedPayload ?? eventDraft.payload);
   const payloadBytes = stringByteLength(payloadJson);
   const patchBytes = getPayloadPatchBytes(eventDraft.payload);
 
@@ -609,7 +670,7 @@ async function getLastSnapshotPayload(sessionKey: string): Promise<Record<string
     "SELECT payload_json FROM ai_replay_events WHERE session_key = $1 AND kind = 'snapshot' ORDER BY event_index DESC LIMIT 1",
     [sessionKey]
   );
-  return rows[0]?.payload_json ? parseJsonObject(rows[0].payload_json) : null;
+  return rows[0]?.payload_json ? hydrateSnapshotPayload(parseJsonObject(rows[0].payload_json)) : null;
 }
 
 export const useReplayStore = create<ReplayStore>((set, get) => ({
@@ -787,13 +848,24 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         count: snapshot.files.length,
         branch: snapshot.branch ?? snapshot.head.slice(0, 7),
       });
+      const checkpointId = `snapshot-${Date.now().toString(36)}`;
       const payload: Record<string, unknown> = {
         ...snapshot,
         patchBytes,
-        checkpointId: `snapshot-${Date.now().toString(36)}`,
+        checkpointId,
         reason: reason ?? "manual",
         changedFiles: snapshot.files.map((file) => file.path),
       };
+      let persistedPayload = payload;
+      if (snapshot.patch.trim()) {
+        const patchPath = await writeSnapshotPatchFile(sessionKey, checkpointId, snapshot.patch);
+        persistedPayload = {
+          ...payload,
+          patchPath,
+          patchStorage: SNAPSHOT_PATCH_STORAGE,
+        };
+        delete persistedPayload.patch;
+      }
       const { session, event } = await persistReplayEvent(
         sessionKey,
         {
@@ -811,6 +883,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
           status: "saved",
           tags: ["snapshot", "git", "rollback"],
           payload,
+          persistedPayload,
         }
       );
       applyPersistedEvent(session, event);
