@@ -180,6 +180,7 @@ interface TerminalStore {
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  updateSessionCwd: (sessionId: string, cwd: string) => void;
   markAttentionInputHandled: (sessionId: string) => void;
   handleCliHookEvent: (payload: CliHookPayload) => string | null;
   handleShellRuntimeEvent: (payload: ShellRuntimePayload) => string | null;
@@ -850,6 +851,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   splits: {},
   hiddenBackgroundSessionIds: new Set<string>(),
   subagentTranscripts: {},
+
+  updateSessionCwd: (sessionId, cwd) => set((state) => ({
+    sessions: state.sessions.map((session) => (
+      session.id === sessionId ? { ...session, cwd } : session
+    )),
+  })),
 
   createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId) => {
     const os = await getOsPlatform();

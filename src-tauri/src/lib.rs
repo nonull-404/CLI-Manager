@@ -545,6 +545,8 @@ pub fn run() {
             commands::ccswitch::ccswitch_list_common_configs,
             commands::command_suggestion::command_suggestion_test_model,
             commands::command_suggestion::command_suggestion_generate,
+            commands::command_suggestion::command_suggestion_list_path_entries,
+            commands::command_suggestion::command_suggestion_resolve_directory,
             commands::git::get_current_git_branch,
             commands::git::git_get_changes,
             commands::git::git_list_repositories,
