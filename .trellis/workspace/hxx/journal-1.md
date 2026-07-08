@@ -948,3 +948,36 @@ Implemented Git branch menu Stage A with branch listing, fetch, local checkout, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: Git untracked delete menu
+
+**Date**: 2026-07-08
+**Task**: Git untracked delete menu
+**Branch**: `master`
+
+### Summary
+
+Added a Git changes right-click delete action for untracked files and directories, with backend repo-bound validation, i18n, docs, and tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `99265f5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
