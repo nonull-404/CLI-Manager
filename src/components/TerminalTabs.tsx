@@ -58,7 +58,7 @@ import {
   TERMINAL_TAB_CLOSE_REQUEST_EVENT,
   type TerminalTabCloseRequestDetail,
 } from "../lib/terminalCloseConfirm";
-import type { HistorySourceFilter, Project, TerminalSession, TreeNode, WorktreeRecord } from "../lib/types";
+import type { HistorySourceFilter, Project, TerminalScope, TerminalSession, TreeNode, WorktreeRecord } from "../lib/types";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -78,9 +78,10 @@ import { getTerminalSidePanelSkinStyle } from "./stats/termStatsUi";
 import {
   findWorktreeForSession,
   isSameProjectFileContext,
-  resolveProjectForSession,
+  projectWithWorktreeProviderOverrides,
   resolveProjectForSessionFileContext,
 } from "../lib/terminalProject";
+import { ALL_TERMINALS_SCOPE, collectProjectIdsForGroup, sessionMatchesTerminalScope } from "../lib/terminalScope";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
@@ -330,7 +331,6 @@ interface SortableTabProps {
   worktreeMenuContent?: (closeMenu: () => void) => ReactNode;
   hoverInfo: TerminalTabHoverInfo;
   onActivate: () => void;
-  onStartEdit: () => void;
   onClose: (anchor?: SplitPickerAnchor) => void;
   onSubmitEdit: (title: string) => void;
   onCancelEdit: () => void;
@@ -352,7 +352,6 @@ function SortableTab({
   worktreeMenuContent,
   hoverInfo,
   onActivate,
-  onStartEdit,
   onClose,
   onSubmitEdit,
   onCancelEdit,
@@ -494,14 +493,9 @@ function SortableTab({
           onClick={() => {
             hideHoverCard();
             onActivate();
-            onStartEdit();
           }}
           onPointerEnter={scheduleHoverCard}
           onPointerLeave={scheduleHideHoverCard}
-          onDoubleClick={(event) => {
-            hideHoverCard();
-            onClose(event.currentTarget.getBoundingClientRect());
-          }}
           onContextMenu={(event) => {
             hideHoverCard();
             contextMenuPointRef.current = { x: event.clientX, y: event.clientY };
@@ -1062,7 +1056,6 @@ function PaneTabBar({
               } : undefined}
               hoverInfo={buildTerminalTabHoverInfo(session, session.projectId ? projectById.get(session.projectId) : undefined)}
               onActivate={() => onActivateSession(session.id)}
-              onStartEdit={() => onStartEdit(session.id)}
               onClose={(anchor) => closePaneSessions([session.id], anchor)}
               onSubmitEdit={(title) => onSubmitEdit(session.id, title)}
               onCancelEdit={onCancelEdit}
@@ -1071,7 +1064,14 @@ function PaneTabBar({
               menuContent={(getAnchor) => (
                 <>
                   <ContextMenuItem onSelect={() => closePaneSessions([session.id], getAnchor())}>{t("terminal.tab.closeCurrent")}</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => onStartEdit(session.id)}>{t("terminal.tab.rename", { title: session.title })}</ContextMenuItem>
+                  <ContextMenuItem
+                    onSelect={() => {
+                      // Radix 会在菜单关闭后恢复焦点；延后一拍进入编辑态，避免输入框刚挂载就被 blur 提交掉。
+                      window.setTimeout(() => onStartEdit(session.id), 0);
+                    }}
+                  >
+                    {t("terminal.tab.rename", { title: session.title })}
+                  </ContextMenuItem>
                   <ContextMenuItem onSelect={() => closeOtherPaneSessions(session.id, getAnchor())}>{t("terminal.tab.closeOthers")}</ContextMenuItem>
                   <ContextMenuItem onSelect={() => closePaneSessionsToLeft(session.id, getAnchor())}>{t("terminal.tab.closeLeft")}</ContextMenuItem>
                   <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id, getAnchor())}>{t("terminal.tab.closeRight")}</ContextMenuItem>
@@ -1833,14 +1833,14 @@ interface TerminalTabsProps {
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
   projectScopedTerminalViewEnabled?: boolean;
-  projectScopeProjectId?: string | null;
+  terminalScope?: TerminalScope;
 }
 
 export function TerminalTabs({
   fullscreen = false,
   onToggleFullscreen,
   projectScopedTerminalViewEnabled = false,
-  projectScopeProjectId = null,
+  terminalScope = ALL_TERMINALS_SCOPE,
 }: TerminalTabsProps = {}) {
   const { t } = useI18n();
   const { sessions, activeSessionId, paneTree, tabNotifications } = useTerminalStore(
@@ -1863,8 +1863,9 @@ export function TerminalTabs({
   const hiddenBackgroundSessionIds = useTerminalStore((s) => s.hiddenBackgroundSessionIds);
   const hideBackgroundForSession = useTerminalStore((s) => s.hideBackgroundForSession);
   const showBackgroundForSession = useTerminalStore((s) => s.showBackgroundForSession);
-  const { projects, tree: projectTree } = useProjectStore(
+  const { groups, projects, tree: projectTree } = useProjectStore(
     useShallow((s) => ({
+      groups: s.groups,
       projects: s.projects,
       tree: s.tree,
     }))
@@ -1927,34 +1928,51 @@ export function TerminalTabs({
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const worktreeById = useMemo(() => new Map(worktrees.map((worktree) => [worktree.id, worktree])), [worktrees]);
+  const terminalScopeValue = projectScopedTerminalViewEnabled ? terminalScope : ALL_TERMINALS_SCOPE;
+  const scopedProjectId =
+    terminalScopeValue.kind === "project" || terminalScopeValue.kind === "worktree"
+      ? terminalScopeValue.projectId
+      : null;
   const scopedProject = useMemo(
-    () => (projectScopeProjectId ? projectById.get(projectScopeProjectId) ?? null : null),
-    [projectById, projectScopeProjectId]
+    () => (scopedProjectId ? projectById.get(scopedProjectId) ?? null : null),
+    [projectById, scopedProjectId]
   );
-  const sessionProjectIds = useMemo(() => {
-    const next = new Map<string, string | null>();
-    for (const session of sessions) {
-      next.set(session.id, resolveProjectForSession(session, sessions, projects, projectById)?.id ?? null);
-    }
-    return next;
-  }, [projectById, projects, sessions]);
+  const scopedWorktree = useMemo(
+    () => (terminalScopeValue.kind === "worktree" ? worktreeById.get(terminalScopeValue.worktreeId) ?? null : null),
+    [terminalScopeValue, worktreeById]
+  );
+  const scopedGroup = useMemo(
+    () => (terminalScopeValue.kind === "group" ? groups.find((group) => group.id === terminalScopeValue.groupId) ?? null : null),
+    [groups, terminalScopeValue]
+  );
+  const scopedGroupProjectIds = useMemo(
+    () => (terminalScopeValue.kind === "group" ? collectProjectIdsForGroup(groups, projects, terminalScopeValue.groupId) : null),
+    [groups, projects, terminalScopeValue]
+  );
   const scopedSessionIds = useMemo(() => {
-    if (!projectScopedTerminalViewEnabled || !projectScopeProjectId) return null;
+    if (!projectScopedTerminalViewEnabled || terminalScopeValue.kind === "all") return null;
     const next = new Set<string>();
     for (const session of sessions) {
-      if (sessionProjectIds.get(session.id) === projectScopeProjectId) {
+      if (sessionMatchesTerminalScope(session, terminalScopeValue, sessions, projects, projectById, worktrees, scopedGroupProjectIds)) {
         next.add(session.id);
       }
     }
     return next;
-  }, [projectScopeProjectId, projectScopedTerminalViewEnabled, sessionProjectIds, sessions]);
-  const scopedPaneTree = useMemo(
+  }, [projectById, projectScopedTerminalViewEnabled, projects, scopedGroupProjectIds, sessions, terminalScopeValue, worktrees]);
+  const visiblePaneTree = useMemo(
     () => (scopedSessionIds ? filterPaneTreeBySessionIds(paneTree, scopedSessionIds) : paneTree),
     [paneTree, scopedSessionIds]
   );
-  const renderPaneTree = paneTree;
+  const renderPaneTree = visiblePaneTree;
   const visibleSessions = useMemo(
     () => (scopedSessionIds ? sessions.filter((session) => scopedSessionIds.has(session.id)) : sessions),
+    [scopedSessionIds, sessions]
+  );
+  const preservedHiddenPtySessions = useMemo(
+    () => scopedSessionIds
+      ? sessions.filter((session) => (session.kind ?? "pty") === "pty" && !scopedSessionIds.has(session.id))
+      : [],
     [scopedSessionIds, sessions]
   );
   const allPanes = useMemo(() => collectPaneLeaves(renderPaneTree), [renderPaneTree]);
@@ -1968,8 +1986,8 @@ export function TerminalTabs({
   const preferredScopedSessionId = useMemo(() => {
     if (!scopedSessionIds) return null;
     if (activeSessionId && scopedSessionIds.has(activeSessionId)) return activeSessionId;
-    return findFirstSessionId(scopedPaneTree);
-  }, [activeSessionId, scopedPaneTree, scopedSessionIds]);
+    return findFirstSessionId(renderPaneTree);
+  }, [activeSessionId, renderPaneTree, scopedSessionIds]);
   const effectiveActiveSessionId = preferredScopedSessionId ?? activeSessionId;
   const activeSession = useMemo(
     () => {
@@ -1981,12 +1999,12 @@ export function TerminalTabs({
   // 子 Agent 转录伪会话没有自己的 CLI 会话/项目：实时统计与 Git 面板落到其父终端，
   // 避免聚焦转录 Tab 时面板被清空/错位。
   useEffect(() => {
-    if (!projectScopedTerminalViewEnabled || !projectScopeProjectId) return;
+    if (!projectScopedTerminalViewEnabled || terminalScopeValue.kind === "all") return;
     const currentActiveSessionId = useTerminalStore.getState().activeSessionId;
     if (currentActiveSessionId && scopedSessionIds?.has(currentActiveSessionId)) return;
     if (!preferredScopedSessionId || preferredScopedSessionId === currentActiveSessionId) return;
     setActive(preferredScopedSessionId);
-  }, [preferredScopedSessionId, projectScopeProjectId, projectScopedTerminalViewEnabled, scopedSessionIds, setActive]);
+  }, [preferredScopedSessionId, projectScopedTerminalViewEnabled, scopedSessionIds, setActive, terminalScopeValue]);
 
   const panelSession = useMemo(() => {
     if (activeSession?.kind === "subagent-transcript" && activeSession.subagent) {
@@ -2150,13 +2168,33 @@ export function TerminalTabs({
     setActiveWorkspaceTab("terminal");
   }, [activeSession, closeHistory, createSession, useExternalTerminal]);
 
-  const handleOpenScopedProjectSession = useCallback(async () => {
+  const handleOpenScopedTerminal = useCallback(async () => {
     if (!scopedProject || useExternalTerminal) return;
+
+    if (terminalScopeValue.kind === "worktree") {
+      if (!scopedWorktree) return;
+      const options = buildProjectSplitOptions(projectWithWorktreeProviderOverrides(scopedProject, scopedWorktree));
+      await createSession(
+        options.projectId,
+        scopedWorktree.path,
+        `${scopedProject.name} · ${scopedWorktree.name}`,
+        options.startupCmd,
+        options.envVars,
+        options.shell,
+        undefined,
+        scopedWorktree.id
+      );
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+      return;
+    }
+
+    if (terminalScopeValue.kind !== "project") return;
     const options = buildProjectSplitOptions(scopedProject);
     await createSession(options.projectId, options.cwd, options.title, options.startupCmd, options.envVars, options.shell);
     closeHistory();
     setActiveWorkspaceTab("terminal");
-  }, [closeHistory, createSession, scopedProject, useExternalTerminal]);
+  }, [closeHistory, createSession, scopedProject, scopedWorktree, terminalScopeValue, useExternalTerminal]);
 
   const handleInstallWorktreeDeps = useCallback((project: Project, worktree: WorktreeRecord) => {
     void checkWorktreeDeps(worktree).then((deps) => {
@@ -3073,6 +3111,48 @@ export function TerminalTabs({
     unsplitTerminal,
   ]);
 
+  const hasScopedTerminalFilter = projectScopedTerminalViewEnabled && terminalScopeValue.kind !== "all";
+  const scopedEmptyState = useMemo(() => {
+    if (!hasScopedTerminalFilter) return null;
+
+    if (terminalScopeValue.kind === "worktree") {
+      const name = scopedWorktree?.name ?? scopedProject?.name ?? "";
+      return {
+        title: t("terminal.empty.worktreeTitle", { name }),
+        description: t("terminal.empty.worktreeDescription", { name }),
+        action:
+          scopedProject && scopedWorktree
+            ? { label: t("terminal.empty.worktreeAction", { name: scopedWorktree.name }), onClick: handleOpenScopedTerminal }
+            : undefined,
+      };
+    }
+
+    if (terminalScopeValue.kind === "group") {
+      const name = scopedGroup?.name ?? "";
+      return {
+        title: t("terminal.empty.groupTitle", { name }),
+        description: t("terminal.empty.groupDescription", { name }),
+      };
+    }
+
+    const name = scopedProject?.name ?? "";
+    return {
+      title: t("terminal.empty.projectTitle", { name }),
+      description: t("terminal.empty.projectDescription", { name }),
+      action: scopedProject
+        ? { label: t("terminal.empty.projectAction", { name: scopedProject.name }), onClick: handleOpenScopedTerminal }
+        : undefined,
+    };
+  }, [
+    handleOpenScopedTerminal,
+    hasScopedTerminalFilter,
+    scopedGroup?.name,
+    scopedProject,
+    scopedWorktree,
+    t,
+    terminalScopeValue,
+  ]);
+
   return (
     <div
       className="ui-terminal-tabs-shell flex h-full min-h-0 flex-col"
@@ -3158,22 +3238,40 @@ export function TerminalTabs({
                 </DragOverlay>
               </DndContext>
             ) : null}
-            {projectScopedTerminalViewEnabled && projectScopeProjectId && visibleSessions.length === 0 && !useExternalTerminal && (
+            {preservedHiddenPtySessions.length > 0 && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none fixed left-0 top-0 h-px w-px overflow-hidden opacity-0"
+                tabIndex={-1}
+              >
+                {preservedHiddenPtySessions.map((session) => (
+                  <XTermTerminal
+                    key={`preserve:${session.id}`}
+                    sessionId={session.id}
+                    isActive={false}
+                    isVisible={false}
+                    fontSize={fontSize}
+                    fontFamily={fontFamily}
+                    resolvedTheme={resolvedTheme}
+                    terminalThemeName={terminalThemeName}
+                    lightThemePalette={lightThemePalette}
+                    darkThemePalette={darkThemePalette}
+                  />
+                ))}
+              </div>
+            )}
+            {hasScopedTerminalFilter && visibleSessions.length === 0 && !useExternalTerminal && scopedEmptyState && (
               <div className="flex h-full items-center justify-center">
                 <EmptyState
                   icon={<Terminal size={40} strokeWidth={1} />}
-                  title={t("terminal.empty.projectTitle", { name: scopedProject?.name ?? "" })}
-                  description={t("terminal.empty.projectDescription", { name: scopedProject?.name ?? "" })}
+                  title={scopedEmptyState.title}
+                  description={scopedEmptyState.description}
                   tone="inverse"
-                  action={
-                    scopedProject
-                      ? { label: t("terminal.empty.projectAction", { name: scopedProject.name }), onClick: handleOpenScopedProjectSession }
-                      : undefined
-                  }
+                  action={scopedEmptyState.action}
                 />
               </div>
             )}
-            {sessions.length === 0 && !useExternalTerminal && !(projectScopedTerminalViewEnabled && projectScopeProjectId) && (
+            {sessions.length === 0 && !useExternalTerminal && !hasScopedTerminalFilter && (
               <div className="flex h-full items-center justify-center">
                 <EmptyState
                   icon={<Terminal size={40} strokeWidth={1} />}
