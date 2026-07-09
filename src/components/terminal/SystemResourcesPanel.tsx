@@ -557,9 +557,9 @@ function NetworkCard({ snapshot, history }: { snapshot: SystemResourceSnapshot; 
         </span>
       )}
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_96px] items-stretch gap-3">
+      <div className="grid grid-cols-[minmax(140px,184px)_minmax(0,1fr)] items-stretch gap-3">
         <TrendChart
-          height={78}
+          height={62}
           max={maxRate}
           split
           areaOpacity={0.98}
