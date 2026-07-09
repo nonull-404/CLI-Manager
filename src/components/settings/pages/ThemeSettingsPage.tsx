@@ -60,12 +60,11 @@ import { useI18n } from "../../../lib/i18n";
 
 const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
 const TERMINAL_FONT_FALLBACK = "monospace";
-type TerminalSettingsSectionKey = "behavior" | "shells" | "preview" | "themes" | "background";
+type TerminalSettingsSectionKey = "behavior" | "shells" | "themes" | "background";
 
 const DEFAULT_EXPANDED_SECTIONS: Record<TerminalSettingsSectionKey, boolean> = {
   behavior: true,
   shells: false,
-  preview: false,
   themes: false,
   background: false,
 };
@@ -127,43 +126,53 @@ function clampTerminalScrollbackRows(value: number) {
 function CollapsibleSettingsSection({
   title,
   description,
-  open,
+  open = true,
   onToggle,
   children,
   className = "",
+  collapsible = true,
 }: {
   title: string;
   description?: string;
-  open: boolean;
-  onToggle: () => void;
+  open?: boolean;
+  onToggle?: () => void;
   children: ReactNode;
   className?: string;
+  collapsible?: boolean;
 }) {
+  const headerContent = (
+    <Box>
+      <Text size="sm" fw={600} c="var(--on-surface)">
+        {title}
+      </Text>
+      {description && (
+        <Text mt={4} size="xs" c="var(--on-surface-variant)">
+          {description}
+        </Text>
+      )}
+    </Box>
+  );
+
   return (
     <section className={`ui-surface-card rounded-2xl border border-border p-4 ${className}`}>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="ui-focus-ring flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none"
-        aria-expanded={open}
-      >
-        <Box>
-          <Text size="sm" fw={600} c="var(--on-surface)">
-            {title}
-          </Text>
-          {description && (
-            <Text mt={4} size="xs" c="var(--on-surface-variant)">
-              {description}
-            </Text>
-          )}
-        </Box>
-        <ChevronDown
-          size={18}
-          strokeWidth={1.8}
-          className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && <Box mt="md">{children}</Box>}
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="ui-focus-ring flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none"
+          aria-expanded={open}
+        >
+          {headerContent}
+          <ChevronDown
+            size={18}
+            strokeWidth={1.8}
+            className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+      ) : (
+        headerContent
+      )}
+      {(!collapsible || open) && <Box mt="md">{children}</Box>}
     </section>
   );
 }
@@ -888,9 +897,8 @@ export function ThemeSettingsPage() {
 
         <CollapsibleSettingsSection
           title={text("终端预览", "Terminal Preview")}
-          open={expandedSections.preview}
-          onToggle={() => toggleSection("preview")}
-          className="self-start xl:sticky xl:top-5 xl:z-10 xl:col-start-2 xl:row-span-4 xl:row-start-1"
+          collapsible={false}
+          className="hidden self-start xl:sticky xl:top-5 xl:z-10 xl:col-start-2 xl:row-span-4 xl:row-start-1 xl:block"
         >
           {terminalPreview}
         </CollapsibleSettingsSection>
@@ -912,6 +920,10 @@ export function ThemeSettingsPage() {
                 aria-label={text("终端主题搜索", "Terminal theme search")}
               />
             </Group>
+
+            <Box className="xl:hidden">
+              {terminalPreview}
+            </Box>
 
             <Stack gap="md">
             {groupedThemes.map((group) => (
