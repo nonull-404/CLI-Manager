@@ -1,19 +1,21 @@
 use crate::commands::model_pricing::{find_cached_model_pricing, CachedModelPricingLookup};
 use crate::shell_resolver::silent_command;
-use chrono::{Datelike, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, SecondsFormat, Utc};
 use log::{debug, info, warn};
 use memchr::memmem;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Connection, SqliteConnection};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 /// BufReader 容量；默认 8KB 对几 MB 的 jsonl 文件 syscall 次数偏多。
@@ -23,6 +25,7 @@ const SESSION_FILES_TTL_MS: i64 = 60_000;
 const OOM_HISTORY_DETAIL_WARN_BYTES: usize = 10 * 1024 * 1024;
 const OOM_HISTORY_STATS_WARN_BYTES: usize = 5 * 1024 * 1024;
 const OOM_HISTORY_MESSAGES_WARN_COUNT: usize = 2_000;
+const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
 
 fn estimate_history_detail_content_bytes(detail: &HistorySessionDetail) -> usize {
     let message_bytes: usize = detail
@@ -497,6 +500,22 @@ pub struct HistoryConversionResult {
     pub cwd: Option<String>,
     pub message_count: usize,
     pub resume_command: String,
+}
+
+struct CodexThreadRegistration {
+    state_db_path: PathBuf,
+    session_id: String,
+    rollout_path: String,
+    created_at: i64,
+    updated_at: i64,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    cwd: String,
+    title: String,
+    first_user_message: String,
+    preview: String,
+    model: String,
+    model_provider: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -982,17 +1001,27 @@ pub async fn history_convert_session(
     project_key: String,
     target_source: String,
 ) -> Result<HistoryConversionResult, String> {
-    tokio::task::spawn_blocking(move || {
+    let (result, codex_registration) = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir);
         let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
         let target_source = target_source.trim().to_lowercase();
         let detail = build_session_detail(&file_ref, false)?;
         let result = convert_history_session(&detail, &target_source, &roots)?;
-        invalidate_history_caches();
-        Ok(result)
+        let codex_registration = if target_source == "codex" {
+            Some(build_codex_thread_registration(&roots, &detail, &result))
+        } else {
+            None
+        };
+        Ok::<_, String>((result, codex_registration))
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+
+    if let Some(registration) = codex_registration {
+        register_codex_thread(&registration).await?;
+    }
+    invalidate_history_caches();
+    Ok(result)
 }
 
 fn validate_session_file_ref(
@@ -2989,7 +3018,12 @@ fn convert_history_session(
     let cwd = converted_session_cwd(detail);
     let lines = match target_source.as_str() {
         "claude" => build_claude_conversion_lines(detail, &session_id, cwd.as_deref()),
-        "codex" => build_codex_conversion_lines(detail, &session_id, cwd.as_deref()),
+        "codex" => build_codex_conversion_lines(
+            detail,
+            &session_id,
+            cwd.as_deref(),
+            &codex_config_string(roots, "model_provider").unwrap_or_else(|| "custom".to_string()),
+        ),
         _ => unreachable!(),
     };
     let message_count = detail
@@ -3007,6 +3041,10 @@ fn convert_history_session(
         _ => unreachable!(),
     };
     write_jsonl_lines(&target_path, &lines)?;
+    if target_source == "codex" {
+        append_codex_history_index(roots, detail, &session_id)?;
+        append_codex_session_index(roots, detail, &session_id, &target_path, cwd.as_deref())?;
+    }
 
     let file_ref = SessionFileRef {
         source: target_source.clone(),
@@ -3135,6 +3173,7 @@ fn build_codex_conversion_lines(
     detail: &HistorySessionDetail,
     session_id: &str,
     cwd: Option<&str>,
+    model_provider: &str,
 ) -> Vec<Value> {
     let created_at = detail
         .messages
@@ -3146,11 +3185,15 @@ fn build_codex_conversion_lines(
             "timestamp": created_at,
             "type": "session_meta",
             "payload": {
+                "session_id": session_id,
                 "id": session_id,
                 "timestamp": created_at,
                 "cwd": cwd.unwrap_or_default(),
                 "originator": "cli-manager",
-                "source": format!("converted-from-{}", detail.source)
+                "cli_version": "cli-manager-converted",
+                "model_provider": model_provider,
+                "source": "cli",
+                "thread_source": "user"
             }
         }),
         json!({
@@ -3179,8 +3222,9 @@ fn build_codex_conversion_lines(
         } else {
             "input_text"
         };
+        let timestamp = conversion_timestamp(message);
         lines.push(json!({
-            "timestamp": conversion_timestamp(message),
+            "timestamp": timestamp,
             "type": "response_item",
             "payload": {
                 "type": "message",
@@ -3193,8 +3237,31 @@ fn build_codex_conversion_lines(
                 ]
             }
         }));
+        lines.push(codex_ui_event_message(role, &content, &timestamp));
     }
     lines
+}
+
+fn codex_ui_event_message(role: &str, content: &str, timestamp: &str) -> Value {
+    if role == "assistant" {
+        json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": content
+            }
+        })
+    } else {
+        json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": content
+            }
+        })
+    }
 }
 
 fn converted_claude_session_path(
@@ -3226,7 +3293,220 @@ fn converted_codex_session_path(roots: &HistoryRoots, session_id: &str) -> PathB
         .join(format!("{:04}", now.year()))
         .join(format!("{:02}", now.month()))
         .join(format!("{:02}", now.day()));
-    unique_jsonl_path(dir, &format!("rollout-{}", session_id))
+    let timestamp = now.format("%Y-%m-%dT%H-%M-%S");
+    unique_jsonl_path(dir, &format!("rollout-{timestamp}-{session_id}"))
+}
+
+fn append_codex_history_index(
+    roots: &HistoryRoots,
+    detail: &HistorySessionDetail,
+    session_id: &str,
+) -> Result<(), String> {
+    let path = resolve_codex_config_root(roots).join("history.jsonl");
+    let parent = path
+        .parent()
+        .ok_or_else(|| "history_conversion_invalid_codex_history_path".to_string())?;
+    fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+
+    let text = codex_history_index_text(detail)
+        .unwrap_or_else(|| format!("Converted {} session", detail.source));
+    let ts = codex_history_index_timestamp(detail);
+    let line = json!({
+        "session_id": session_id,
+        "ts": ts,
+        "text": text
+    });
+    append_jsonl_line(&path, &line)
+}
+
+fn codex_history_index_text(detail: &HistorySessionDetail) -> Option<String> {
+    detail
+        .messages
+        .iter()
+        .find(|message| {
+            !converted_message_content(message).trim().is_empty()
+                && converted_message_role(&message.role) == "user"
+        })
+        .or_else(|| {
+            detail
+                .messages
+                .iter()
+                .find(|message| !converted_message_content(message).trim().is_empty())
+        })
+        .map(converted_message_content)
+        .map(|content| excerpt(&content, CODEX_HISTORY_INDEX_TEXT_MAX_CHARS))
+        .filter(|content| !content.trim().is_empty())
+}
+
+fn codex_history_index_timestamp(detail: &HistorySessionDetail) -> i64 {
+    detail
+        .messages
+        .first()
+        .map(conversion_timestamp)
+        .and_then(|value| DateTime::parse_from_rfc3339(&value).ok())
+        .map(|value| value.timestamp())
+        .unwrap_or_else(|| Utc::now().timestamp())
+}
+
+fn append_codex_session_index(
+    roots: &HistoryRoots,
+    detail: &HistorySessionDetail,
+    session_id: &str,
+    rollout_path: &Path,
+    cwd: Option<&str>,
+) -> Result<(), String> {
+    let path = resolve_codex_config_root(roots).join("session_index.jsonl");
+    let parent = path
+        .parent()
+        .ok_or_else(|| "history_conversion_invalid_codex_session_index_path".to_string())?;
+    fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+
+    let thread_name = codex_history_index_text(detail)
+        .unwrap_or_else(|| format!("Converted {} session", detail.source));
+    let updated_at = detail
+        .messages
+        .last()
+        .map(conversion_timestamp)
+        .unwrap_or_else(now_rfc3339);
+    let line = json!({
+        "id": session_id,
+        "thread_name": thread_name,
+        "updated_at": updated_at,
+        "cwd": cwd.unwrap_or_default(),
+        "rollout_path": rollout_path.to_string_lossy()
+    });
+    append_jsonl_line(&path, &line)
+}
+
+fn append_jsonl_line(path: &Path, line: &Value) -> Result<(), String> {
+    let encoded = serde_json::to_string(line).map_err(|err| err.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| err.to_string())?;
+    file.write_all(encoded.as_bytes())
+        .map_err(|err| err.to_string())?;
+    file.write_all(b"\n").map_err(|err| err.to_string())?;
+    file.flush().map_err(|err| err.to_string())
+}
+
+fn build_codex_thread_registration(
+    roots: &HistoryRoots,
+    detail: &HistorySessionDetail,
+    result: &HistoryConversionResult,
+) -> CodexThreadRegistration {
+    let first_timestamp = detail
+        .messages
+        .first()
+        .map(conversion_timestamp)
+        .unwrap_or_else(now_rfc3339);
+    let last_timestamp = detail
+        .messages
+        .last()
+        .map(conversion_timestamp)
+        .unwrap_or_else(|| first_timestamp.clone());
+    let created_at_ms =
+        rfc3339_millis(&first_timestamp).unwrap_or_else(|| Utc::now().timestamp_millis());
+    let updated_at_ms = rfc3339_millis(&last_timestamp).unwrap_or(created_at_ms);
+    let first_user_message = codex_history_index_text(detail).unwrap_or_default();
+    let model = detail
+        .usage
+        .current_model
+        .as_deref()
+        .or(detail.usage.dominant_model.as_deref())
+        .map(str::to_string)
+        .or_else(|| codex_config_string(roots, "model"))
+        .unwrap_or_else(|| "converted-history".to_string());
+    let model_provider =
+        codex_config_string(roots, "model_provider").unwrap_or_else(|| "custom".to_string());
+
+    CodexThreadRegistration {
+        state_db_path: resolve_codex_state_db_path(roots),
+        session_id: result.session_id.clone(),
+        rollout_path: result.file_path.clone(),
+        created_at: created_at_ms / 1000,
+        updated_at: updated_at_ms / 1000,
+        created_at_ms,
+        updated_at_ms,
+        cwd: result.cwd.clone().unwrap_or_default(),
+        title: first_user_message.clone(),
+        first_user_message: first_user_message.clone(),
+        preview: first_user_message,
+        model,
+        model_provider,
+    }
+}
+
+fn rfc3339_millis(timestamp: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(timestamp.trim())
+        .ok()
+        .map(|value| value.timestamp_millis())
+}
+
+async fn register_codex_thread(registration: &CodexThreadRegistration) -> Result<(), String> {
+    if !registration.state_db_path.exists() {
+        warn!(
+            "skip Codex state registration: state db not found: {}",
+            registration.state_db_path.to_string_lossy()
+        );
+        return Ok(());
+    }
+    let mut conn = open_sqlite_readwrite(&registration.state_db_path).await?;
+    let sandbox_policy = json!({ "type": "disabled" }).to_string();
+    sqlx::query(
+        "INSERT INTO threads (
+            id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+            sandbox_policy, approval_mode, tokens_used, has_user_event, archived, cli_version,
+            first_user_message, memory_mode, model, thread_source, preview, recency_at,
+            created_at_ms, updated_at_ms, recency_at_ms
+        ) VALUES (
+            ?1, ?2, ?3, ?4, 'cli', ?5, ?6, ?7,
+            ?8, 'never', 0, 1, 0, 'cli-manager-converted',
+            ?9, 'enabled', ?10, 'user', ?11, ?12,
+            ?13, ?14, ?15
+        )
+        ON CONFLICT(id) DO UPDATE SET
+            rollout_path = excluded.rollout_path,
+            updated_at = excluded.updated_at,
+            model_provider = excluded.model_provider,
+            cwd = excluded.cwd,
+            title = excluded.title,
+            first_user_message = excluded.first_user_message,
+            model = excluded.model,
+            preview = excluded.preview,
+            recency_at = excluded.recency_at,
+            updated_at_ms = excluded.updated_at_ms,
+            recency_at_ms = excluded.recency_at_ms",
+    )
+    .bind(&registration.session_id)
+    .bind(&registration.rollout_path)
+    .bind(registration.created_at)
+    .bind(registration.updated_at)
+    .bind(&registration.model_provider)
+    .bind(&registration.cwd)
+    .bind(&registration.title)
+    .bind(sandbox_policy)
+    .bind(&registration.first_user_message)
+    .bind(&registration.model)
+    .bind(&registration.preview)
+    .bind(registration.updated_at)
+    .bind(registration.created_at_ms)
+    .bind(registration.updated_at_ms)
+    .bind(registration.updated_at_ms)
+    .execute(&mut conn)
+    .await
+    .map_err(|err| format!("codex_state_register_failed: {err}"))?;
+    Ok(())
+}
+
+async fn open_sqlite_readwrite(path: &Path) -> Result<SqliteConnection, String> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .busy_timeout(Duration::from_secs(15));
+    SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|err| format!("db_open_failed: {err}"))
 }
 
 fn unique_jsonl_path(dir: PathBuf, stem: &str) -> PathBuf {
@@ -3321,13 +3601,115 @@ fn resolve_claude_history_root(roots: &HistoryRoots) -> PathBuf {
         .join("projects")
 }
 
-fn resolve_codex_history_root(roots: &HistoryRoots) -> PathBuf {
+fn resolve_codex_config_root(roots: &HistoryRoots) -> PathBuf {
     roots
         .codex_config_dir
         .clone()
         .or_else(|| detect_home_dir().map(|home| home.join(".codex")))
         .unwrap_or_else(|| PathBuf::from(".codex"))
-        .join("sessions")
+}
+
+fn resolve_codex_history_root(roots: &HistoryRoots) -> PathBuf {
+    resolve_codex_config_root(roots).join("sessions")
+}
+
+fn resolve_codex_state_db_path(roots: &HistoryRoots) -> PathBuf {
+    let root = resolve_codex_config_root(roots);
+    if let Some(sqlite_home) = codex_config_string(roots, "sqlite_home") {
+        return expand_codex_config_path(&root, &sqlite_home).join("state_5.sqlite");
+    }
+
+    let default_path = root.join("state_5.sqlite");
+    if default_path.exists() {
+        return default_path;
+    }
+    let nested_path = root.join("sqlite").join("state_5.sqlite");
+    if nested_path.exists() {
+        return nested_path;
+    }
+    default_path
+}
+
+fn codex_config_string(roots: &HistoryRoots, key: &str) -> Option<String> {
+    let raw = fs::read_to_string(resolve_codex_config_root(roots).join("config.toml")).ok()?;
+    parse_top_level_toml_string(&raw, key)
+}
+
+fn parse_top_level_toml_string(raw: &str, key: &str) -> Option<String> {
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            return None;
+        }
+        let Some((left, right)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if left.trim() != key {
+            continue;
+        }
+        return parse_toml_string_value(right.trim());
+    }
+    None
+}
+
+fn parse_toml_string_value(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let quote = raw.chars().next()?;
+    if quote == '"' || quote == '\'' {
+        let mut escaped = false;
+        let mut out = String::new();
+        for ch in raw[quote.len_utf8()..].chars() {
+            if quote == '"' && escaped {
+                out.push(match ch {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '"' => '"',
+                    '\\' => '\\',
+                    other => other,
+                });
+                escaped = false;
+                continue;
+            }
+            if quote == '"' && ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                return Some(out);
+            }
+            out.push(ch);
+        }
+        return None;
+    }
+    raw.split('#')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn expand_codex_config_path(root: &Path, value: &str) -> PathBuf {
+    let trimmed = value.trim();
+    let expanded = if let Some(rest) = trimmed.strip_prefix("~/") {
+        detect_home_dir()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(trimmed))
+    } else if let Some(rest) = trimmed.strip_prefix("~\\") {
+        detect_home_dir()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(trimmed))
+    } else {
+        PathBuf::from(trimmed)
+    };
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        root.join(expanded)
+    }
 }
 
 fn collect_session_files(source_filter: Option<&str>, roots: &HistoryRoots) -> Vec<SessionFileRef> {
@@ -6807,6 +7189,10 @@ mod tests {
             claude_config_dir: Some(temp_dir.path().join(".claude")),
             codex_config_dir: Some(temp_dir.path().join(".codex")),
         };
+        write_text(
+            &resolve_codex_config_root(&roots).join("config.toml"),
+            "model_provider = \"test-provider\"\nmodel = \"gpt-test\"\nsqlite_home = \"sqlite\"\n",
+        );
 
         let result = convert_history_session(&sample_detail("claude"), "codex", &roots).unwrap();
         assert_eq!(result.target_source, "codex");
@@ -6815,6 +7201,87 @@ mod tests {
 
         let files = collect_codex_session_files(&resolve_codex_history_root(&roots));
         assert_eq!(files.len(), 1);
+        let file_name = files[0]
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap();
+        assert!(file_name.starts_with("rollout-20"));
+        assert!(file_name.contains(&result.session_id));
+
+        let raw_lines = std::fs::read_to_string(&files[0].path).unwrap();
+        let session_meta: Value = serde_json::from_str(raw_lines.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            session_meta
+                .get("payload")
+                .and_then(|payload| payload.get("session_id"))
+                .and_then(Value::as_str),
+            Some(result.session_id.as_str())
+        );
+        assert_eq!(
+            session_meta
+                .get("payload")
+                .and_then(|payload| payload.get("model_provider"))
+                .and_then(Value::as_str),
+            Some("test-provider")
+        );
+        assert_eq!(
+            session_meta
+                .get("payload")
+                .and_then(|payload| payload.get("cli_version"))
+                .and_then(Value::as_str),
+            Some("cli-manager-converted")
+        );
+        let codex_lines: Vec<Value> = raw_lines
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(codex_lines.iter().any(|line| {
+            line.get("type").and_then(Value::as_str) == Some("event_msg")
+                && line
+                    .get("payload")
+                    .and_then(|payload| payload.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("user_message")
+        }));
+        assert!(codex_lines.iter().any(|line| {
+            line.get("type").and_then(Value::as_str) == Some("event_msg")
+                && line
+                    .get("payload")
+                    .and_then(|payload| payload.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("agent_message")
+        }));
+
+        let history_index =
+            std::fs::read_to_string(resolve_codex_config_root(&roots).join("history.jsonl"))
+                .unwrap();
+        let history_entry: Value =
+            serde_json::from_str(history_index.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            history_entry.get("session_id").and_then(Value::as_str),
+            Some(result.session_id.as_str())
+        );
+        assert_eq!(
+            history_entry.get("text").and_then(Value::as_str),
+            Some("hello")
+        );
+        let session_index =
+            std::fs::read_to_string(resolve_codex_config_root(&roots).join("session_index.jsonl"))
+                .unwrap();
+        let session_entry: Value =
+            serde_json::from_str(session_index.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            session_entry.get("id").and_then(Value::as_str),
+            Some(result.session_id.as_str())
+        );
+        assert_eq!(
+            resolve_codex_state_db_path(&roots),
+            resolve_codex_config_root(&roots)
+                .join("sqlite")
+                .join("state_5.sqlite")
+        );
+
         let detail = build_session_detail(&files[0], false).unwrap();
         assert_eq!(detail.source, "codex");
         assert_eq!(detail.session_id, result.session_id);

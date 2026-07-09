@@ -1,7 +1,11 @@
 # Changelog
 
-## [TEMP] - 2026-07-08
+## [V1.2.7] - 2026-07-09
 ### 修复
+- **Claude 转 Codex 会话恢复**：转换后的 Codex rollout 会补齐 `session_id`、`cli_version`、`source=cli`、`thread_source=user` 等 Codex resume 必需元数据，并按用户自定义 Codex 配置目录写入历史索引与 `state_5.sqlite`，避免 `No saved session found` 和 `does not start with session metadata`。
+- **Codex 恢复后历史可见**：Claude 转 Codex 时同时写入模型上下文 `response_item` 与 TUI 重放所需的 `event_msg.user_message` / `event_msg.agent_message`，避免 resume 后模型知道上下文但控制台不显示旧对话。
+- **Claude 历史导出兼容**：转为 Claude 会话时将 assistant 内容写成 Claude 期望的 content block 数组，避免 `message.content.map is not a function`。
+- **图标依赖打包**：供应商图标改用 `@lobehub/icons` 深路径导入，避免打包时经由顶层入口拉入未安装的 `antd` peer 依赖导致构建失败。
 - **历史会话来源筛选**：历史会话选择 Claude 或 Codex 且项目为“全部会话”时，后端会先按来源过滤再分页，避免第一页被其他来源占满后前端筛选为空。
 - **项目列表点击后滚动回顶部**：项目列表较长时，点击下方项目不再因聚焦树容器触发浏览器自动滚动到顶部。
 - **项目树拖拽排序误选项目**：项目列表滚动后拖拽排序时，拖拽结束产生的点击不会再触发项目选择，避免误切到带“路径不存在”提示的项目。
