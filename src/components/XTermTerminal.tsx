@@ -106,6 +106,7 @@ const SLASH_COMMAND_MENU_LINE_PATTERN = /^\/[a-z0-9][a-z0-9:_-]*(?:\s|$)/i;
 const AI_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|claude\s+code|yolo\s+mode|mcp\s+(?:client|startup)|\/model\s+to\s+change)/i;
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const AI_TUI_FILE_PASTE_SHORTCUT_DATA = "\x1bv";
 const CODEX_IME_DEBUG_WINDOW_MS = 250;
 const CODEX_IME_DUPLICATE_WINDOW_MS = 120;
 const IME_PROCESS_KEY_CODE = 229;
@@ -337,6 +338,22 @@ const copyTextToClipboard = async (text: string) => {
 };
 
 const readClipboardText = async () => navigator.clipboard.readText();
+
+const terminalEventToCombo = (e: KeyboardEvent): string => {
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.altKey) parts.push("Alt");
+  if (e.metaKey) parts.push("Meta");
+
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return "";
+  parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  return parts.join("+");
+};
+
+const terminalShortcutMatches = (e: KeyboardEvent, shortcut: string) => (
+  shortcut.trim() !== "" && terminalEventToCombo(e) === shortcut
+);
 
 const trimTerminalPasteBoundaryLineBreaks = (text: string) => (
   text.replace(/^(?:\r\n?|\n)+|(?:\r\n?|\n)+$/gu, "")
@@ -2148,6 +2165,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       ) {
         if (acceptSuggestionRef.current()) {
           e.preventDefault();
+          return false;
+        }
+      }
+      if (e.type === "keydown" && isClaudeOrCodexSession()) {
+        const shortcut = useSettingsStore.getState().keyboardShortcuts.pasteFileToAiTui;
+        if (terminalShortcutMatches(e, shortcut)) {
+          e.preventDefault();
+          markAttentionInputHandled();
+          invoke("pty_write", { sessionId, data: AI_TUI_FILE_PASTE_SHORTCUT_DATA })
+            .catch((err) => reportPtyWriteError("ai_file_paste_shortcut", err));
           return false;
         }
       }
