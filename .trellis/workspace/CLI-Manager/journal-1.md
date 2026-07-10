@@ -165,3 +165,36 @@ Filled the frontend Trellis spec files, verified build, and captured current UI/
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 优化子任务分屏流式输出
+
+**Date**: 2026-07-10
+**Task**: 优化子任务分屏流式输出
+**Branch**: `master`
+
+### Summary
+
+Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界发现重试，并补齐跨平台契约、变更记录与功能清单。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `04f63bd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
