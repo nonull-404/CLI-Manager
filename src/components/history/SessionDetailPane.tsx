@@ -22,7 +22,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObjec
 import { toast } from "sonner";
 import aiAvatarUrl from "../../assets/history-ai-avatar.svg";
 import userAvatarUrl from "../../assets/history-user-avatar.svg";
-import type { HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
+import type { HistoryFileChangeSummary, HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { EmptyState } from "../ui/EmptyState";
 import { SessionTranscriptContent } from "./SessionTranscriptContent";
@@ -68,7 +68,7 @@ interface SessionDetailPaneProps {
   onJumpPrev: () => void;
   onJumpNext: () => void;
   onOpenPrompt: () => void;
-  onOpenDiff: () => void;
+  onOpenDiff: (fileChanges?: HistoryFileChangeSummary[]) => void;
   onResumeSession: () => void;
   onConvertSession: () => void;
   onJumpToMessage: (messageIndex: number) => void;
@@ -814,7 +814,7 @@ export function SessionDetailPane({
               {t("history.detail.promptShort")}
             </button>
             <button
-              onClick={onOpenDiff}
+              onClick={() => onOpenDiff()}
               aria-label={t("history.detail.openDiff")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
               style={{ color: "var(--danger)" }}
@@ -1007,7 +1007,12 @@ export function SessionDetailPane({
         {!loadingSessionDetail && detailView === "context" && <SessionContextView session={activeSession} />}
 
         {!loadingSessionDetail && detailView === "changes" && (
-          <SessionFileChangesView model={processModel} onJumpToMessage={onJumpToMessage} onOpenDiff={onOpenDiff} />
+          <SessionFileChangesView
+            fileChanges={activeSession?.file_changes}
+            model={processModel}
+            onOpenDiff={onOpenDiff}
+            onJumpToMessage={onJumpToMessage}
+          />
         )}
 
         {!loadingSessionDetail && detailView === "tools" && (

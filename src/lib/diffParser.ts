@@ -36,6 +36,55 @@ function extractFilePath(diffText: string): string {
   return "unknown-file";
 }
 
+export function normalizeDiffForViewer(filePath: string, patch: string): string {
+  if (patch.includes("diff --git ")) return patch;
+
+  const lines = patch.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const headerIndex = lines.findIndex((line) => /^\*\*\* (?:Update|Add|Delete) File:\s+/.test(line));
+  if (headerIndex < 0) return patch;
+
+  const header = lines[headerIndex];
+  const kind = header.includes(" Add File:") ? "add" : header.includes(" Delete File:") ? "delete" : "update";
+  const hunks: Array<{ label: string; lines: string[] }> = [];
+  let current = { label: "", lines: [] as string[] };
+
+  for (const line of lines.slice(headerIndex + 1)) {
+    if (line === "*** End Patch") break;
+    if (line.startsWith("*** Move to:")) continue;
+    if (line.startsWith("@@")) {
+      if (current.lines.length > 0) hunks.push(current);
+      current = { label: line.slice(2).replace(/@@$/, "").trim(), lines: [] };
+      continue;
+    }
+    current.lines.push(line);
+  }
+  if (current.lines.length > 0) hunks.push(current);
+  if (hunks.length === 0) return patch;
+
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  const oldPath = kind === "add" ? "/dev/null" : `a/${normalizedPath}`;
+  const newPath = kind === "delete" ? "/dev/null" : `b/${normalizedPath}`;
+  let oldCursor = 1;
+  let newCursor = 1;
+  const body = hunks.flatMap((hunk) => {
+    const diffLines = hunk.lines.map((line) =>
+      line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line.startsWith("\\")
+        ? line
+        : ` ${line}`
+    );
+    const oldCount = diffLines.filter((line) => !line.startsWith("+") && !line.startsWith("\\")).length;
+    const newCount = diffLines.filter((line) => !line.startsWith("-") && !line.startsWith("\\")).length;
+    const oldStart = oldCount === 0 ? 0 : oldCursor;
+    const newStart = newCount === 0 ? 0 : newCursor;
+    oldCursor += Math.max(oldCount, 1);
+    newCursor += Math.max(newCount, 1);
+    const suffix = hunk.label ? ` ${hunk.label}` : "";
+    return [`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@${suffix}`, ...diffLines];
+  });
+
+  return [`diff --git a/${normalizedPath} b/${normalizedPath}`, `--- ${oldPath}`, `+++ ${newPath}`, ...body].join("\n");
+}
+
 function splitApplyPatchBlocks(content: string): string[] {
   const segments: string[] = [];
   const byEnvelope = content.match(/\*\*\* Begin Patch[\s\S]*?\*\*\* End Patch/g);
@@ -107,10 +156,11 @@ export function parseDiffBlocks(messages: DiffMessageInput[]): ParsedDiffBlock[]
     if (!content) return;
     const blocks = splitDiffBlocks(content);
     blocks.forEach((patch, seq) => {
+      const filePath = extractFilePath(patch);
       result.push({
         id: `${msg.messageIndex}-${seq}`,
-        filePath: extractFilePath(patch),
-        patch,
+        filePath,
+        patch: normalizeDiffForViewer(filePath, patch),
         messageIndex: msg.messageIndex,
         timestamp: msg.timestamp ?? null,
       });

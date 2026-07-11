@@ -5364,6 +5364,9 @@ fn count_text_lines(text: &str) -> u64 {
 }
 
 fn split_patch_blocks(content: &str) -> Vec<String> {
+    let decoded = decode_embedded_apply_patch(content);
+    let content = decoded.as_deref().unwrap_or(content);
+
     if content.contains("*** Begin Patch") || content.contains("*** Update File: ") {
         let apply_blocks = split_apply_patch_blocks(content);
         if !apply_blocks.is_empty() {
@@ -5383,6 +5386,38 @@ fn split_patch_blocks(content: &str) -> Vec<String> {
     }
 
     Vec::new()
+}
+
+fn decode_embedded_apply_patch(content: &str) -> Option<String> {
+    let start = content.find("*** Begin Patch")?;
+    let patch = &content[start..];
+    let end = patch.find("*** End Patch")? + "*** End Patch".len();
+    let encoded = &patch[..end];
+    if !encoded.contains("\\n") && !encoded.contains("\\r") {
+        return None;
+    }
+
+    let mut decoded = String::with_capacity(encoded.len());
+    let mut chars = encoded.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            decoded.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('t') => decoded.push('\t'),
+            Some('\\') => decoded.push('\\'),
+            Some('"') => decoded.push('"'),
+            Some(other) => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+            None => decoded.push('\\'),
+        }
+    }
+    Some(decoded)
 }
 
 fn split_apply_patch_blocks(content: &str) -> Vec<String> {
@@ -7224,6 +7259,75 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn scan_file_changes_reads_claude_and_codex_jsonl_operations_in_time_order() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("session.jsonl");
+        let claude_edit = json!({
+            "type": "assistant",
+            "timestamp": "2026-07-11T10:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "claude-edit-1",
+                    "name": "Edit",
+                    "input": {
+                        "file_path": "src/claude.ts",
+                        "old_string": "old",
+                        "new_string": "new"
+                    }
+                }]
+            }
+        });
+        let codex_patch = json!({
+            "type": "response_item",
+            "timestamp": "2026-07-11T10:01:00Z",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "codex-patch-1",
+                "name": "exec",
+                "input": r#"const patch = \"*** Begin Patch\n*** Update File: src/codex.ts\n@@\n-old\n+new\n*** End Patch\";"#
+            }
+        });
+        write_text(
+            &path,
+            &format!(
+                "{}\n{}\n",
+                serde_json::to_string(&claude_edit).unwrap(),
+                serde_json::to_string(&codex_patch).unwrap()
+            ),
+        );
+
+        let changes = scan_file_changes(&path);
+        assert_eq!(changes.len(), 2);
+
+        let claude_change = changes
+            .iter()
+            .find(|change| change.file_path == "src/claude.ts")
+            .unwrap();
+        assert_eq!(claude_change.operations.len(), 1);
+        assert_eq!(claude_change.operations[0].operation_group_index, Some(0));
+        assert_eq!(
+            claude_change.operations[0].timestamp.as_deref(),
+            Some("2026-07-11T10:00:00Z")
+        );
+
+        let codex_change = changes
+            .iter()
+            .find(|change| change.file_path == "src/codex.ts")
+            .unwrap();
+        assert_eq!(codex_change.operations.len(), 1);
+        assert_eq!(codex_change.operations[0].operation_group_index, Some(1));
+        assert_eq!(codex_change.additions, 1);
+        assert_eq!(codex_change.deletions, 1);
+        assert!(codex_change.operations[0]
+            .patch
+            .as_deref()
+            .unwrap()
+            .contains("*** Update File: src/codex.ts"));
     }
 
     #[test]

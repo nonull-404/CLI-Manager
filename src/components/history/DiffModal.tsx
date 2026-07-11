@@ -1,13 +1,14 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getMaterialFileIcon } from "@baybreezy/file-extension-icon";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Diff, Hunk, parseDiff, type FileData } from "react-diff-view";
+import { CornerDownRight, GitCompareArrows, X } from "lucide-react";
 import { createPatch } from "diff";
-import "react-diff-view/style/index.css";
-import { FileCode2, GitCompareArrows, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryFileChangeSummary, HistoryMessage } from "../../lib/types";
 import DiffWorker from "../../lib/diffParser.worker.ts?worker";
-import { isDiffCandidate, type ParsedDiffBlock } from "../../lib/diffParser";
+import { isDiffCandidate, normalizeDiffForViewer, type ParsedDiffBlock } from "../../lib/diffParser";
 import { useI18n } from "../../lib/i18n";
+import { GitDiffViewer } from "../git/DiffViewerModal";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../ui/context-menu";
 import { cn } from "@/lib/utils";
 
 interface DiffModalProps {
@@ -22,6 +23,7 @@ interface DiffModalProps {
 interface DiffRenderBlock {
   id: string;
   filePath: string;
+  status: string;
   patch: string;
   messageIndex: number | null;
   timestamp: string | null;
@@ -29,96 +31,8 @@ interface DiffRenderBlock {
 
 const EMPTY_DIFF_MESSAGES: HistoryMessage[] = [];
 
-function classifyFallbackLine(line: string): string {
-  if (
-    line.startsWith("*** Begin Patch") ||
-    line.startsWith("*** End Patch") ||
-    line.startsWith("*** Update File:") ||
-    line.startsWith("*** Add File:") ||
-    line.startsWith("*** Delete File:") ||
-    line.startsWith("diff --git ") ||
-    line.startsWith("index ") ||
-    line.startsWith("--- ") ||
-    line.startsWith("+++ ")
-  ) {
-    return "history-diff-fallback-header";
-  }
-  if (line.startsWith("@@")) return "history-diff-fallback-hunk";
-  if (line.startsWith("+") && !line.startsWith("+++")) return "history-diff-fallback-add";
-  if (line.startsWith("-") && !line.startsWith("---")) return "history-diff-fallback-delete";
-  return "history-diff-fallback-line";
-}
-
-function renderHighlightedPatch(patch: string): ReactNode {
-  return patch.split("\n").map((line, index) => (
-    <span key={index} className={classifyFallbackLine(line)}>
-      {line || " "}
-    </span>
-  ));
-}
-
-const FallbackDiffViewer = memo(function FallbackDiffViewer({ patch }: { patch: string }) {
-  return (
-    <div className="mt-2 max-w-full rounded-md border border-border bg-bg-secondary overflow-x-auto overflow-y-hidden diff-code-scroll">
-      <pre className="m-0 min-w-max p-2 font-mono text-xs leading-5 text-text-primary diff-code-inner">
-        {renderHighlightedPatch(patch)}
-      </pre>
-    </div>
-  );
-});
-
-function parseBlockFiles(patch: string): FileData[] {
-  if (!patch.includes("diff --git") && !patch.includes("--- ")) return [];
-  try {
-    return parseDiff(patch, { nearbySequences: "zip" });
-  } catch {
-    return [];
-  }
-}
-
-function countChanges(files: FileData[]): { additions: number; deletions: number } {
-  let additions = 0;
-  let deletions = 0;
-  for (const file of files) {
-    for (const hunk of file.hunks) {
-      for (const change of hunk.changes) {
-        if (change.type === "insert") additions += 1;
-        if (change.type === "delete") deletions += 1;
-      }
-    }
-  }
-  return { additions, deletions };
-}
-
-function DiffBlockViewer({ block }: { block: DiffRenderBlock }) {
-  const files = useMemo(() => parseBlockFiles(block.patch), [block.patch]);
-  const changes = useMemo(() => countChanges(files), [files]);
-
-  if (files.length === 0) {
-    return <FallbackDiffViewer patch={block.patch} />;
-  }
-
-  return (
-    <div className="mt-2 space-y-2">
-      <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-        <span className="rounded bg-success/10 px-1.5 py-0.5 text-success">+{changes.additions}</span>
-        <span className="rounded bg-danger/10 px-1.5 py-0.5 text-danger">-{changes.deletions}</span>
-      </div>
-      {files.map((file, index) => (
-        <div key={`${file.oldPath ?? "old"}-${file.newPath ?? "new"}-${index}`} className="history-diff-viewer max-w-full rounded-md border border-border overflow-x-auto overflow-y-hidden diff-code-scroll">
-          <Diff
-            viewType="split"
-            diffType={file.type}
-            hunks={file.hunks}
-            gutterType="default"
-            optimizeSelection
-          >
-            {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
-          </Diff>
-        </div>
-      ))}
-    </div>
-  );
+function fileName(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
 }
 
 function createStructuredPatch(filePath: string, oldText: string | null, newText: string | null): string {
@@ -128,14 +42,27 @@ function createStructuredPatch(filePath: string, oldText: string | null, newText
 function buildStructuredBlocks(fileChanges: HistoryFileChangeSummary[] | null | undefined): DiffRenderBlock[] {
   if (!fileChanges?.length) return [];
   return fileChanges.flatMap((fileChange, fileIndex) =>
-    fileChange.operations.map((operation, operationIndex) => ({
-      id: `structured-${fileIndex}-${operationIndex}`,
-      filePath: fileChange.file_path,
-      patch: operation.patch || createStructuredPatch(fileChange.file_path, operation.old_text ?? null, operation.new_text ?? null),
-      messageIndex: operation.message_index ?? null,
-      timestamp: operation.timestamp ?? fileChange.latest_timestamp ?? null,
-    }))
+    fileChange.operations.map((operation, operationIndex) => {
+      const patch = operation.patch || createStructuredPatch(fileChange.file_path, operation.old_text ?? null, operation.new_text ?? null);
+      return {
+        id: `structured-${fileIndex}-${operationIndex}`,
+        filePath: fileChange.file_path,
+        status: fileChange.status,
+        patch: normalizeDiffForViewer(fileChange.file_path, patch),
+        messageIndex: operation.message_index ?? null,
+        timestamp: operation.timestamp ?? fileChange.latest_timestamp ?? null,
+      };
+    })
   );
+}
+
+function fallbackBlocks(blocks: ParsedDiffBlock[]): DiffRenderBlock[] {
+  return blocks.map((block) => ({
+    ...block,
+    status: "M",
+    messageIndex: block.messageIndex ?? null,
+    timestamp: block.timestamp ?? null,
+  }));
 }
 
 export function DiffModal({
@@ -150,10 +77,14 @@ export function DiffModal({
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const [blocks, setBlocks] = useState<DiffRenderBlock[]>([]);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
+  const selectedBlock = useMemo(
+    () => blocks.find((block) => block.id === selectedBlockId) ?? blocks[0] ?? null,
+    [blocks, selectedBlockId]
+  );
   const portalContainer = container ?? undefined;
-  const overlayPositionClass = container ? "absolute inset-0" : "fixed inset-0";
-  const contentPositionClass = container ? "absolute inset-0" : "fixed inset-0";
+  const positionClass = container ? "absolute inset-0" : "fixed inset-0";
 
   useEffect(() => {
     return () => {
@@ -165,137 +96,131 @@ export function DiffModal({
   useEffect(() => {
     if (!open) return;
 
+    const updateBlocks = (nextBlocks: DiffRenderBlock[]) => {
+      setBlocks(nextBlocks);
+      setSelectedBlockId((current) =>
+        current && nextBlocks.some((block) => block.id === current) ? current : nextBlocks[0]?.id ?? null
+      );
+      setParsing(false);
+    };
+
     const structuredBlocks = buildStructuredBlocks(fileChanges);
     if (structuredBlocks.length > 0) {
-      setBlocks(structuredBlocks);
-      setParsing(false);
+      updateBlocks(structuredBlocks);
       return;
     }
 
-    if (!workerRef.current) {
-      workerRef.current = new DiffWorker();
-    }
+    if (!workerRef.current) workerRef.current = new DiffWorker();
     const worker = workerRef.current;
     const requestId = ++requestIdRef.current;
     setParsing(true);
 
     const onMessage = (event: MessageEvent<{ id: number; blocks: ParsedDiffBlock[] }>) => {
       if (event.data.id !== requestId) return;
-      setBlocks(event.data.blocks);
-      setParsing(false);
+      updateBlocks(fallbackBlocks(event.data.blocks));
     };
     worker.addEventListener("message", onMessage);
     worker.postMessage({
       id: requestId,
-      messages: messages.flatMap((m, index) =>
-        isDiffCandidate(m.content) ? [{ content: m.content, timestamp: m.timestamp ?? null, messageIndex: index }] : []
+      messages: messages.flatMap((message, index) =>
+        isDiffCandidate(message.content)
+          ? [{ content: message.content, timestamp: message.timestamp ?? null, messageIndex: index }]
+          : []
       ),
     });
 
-    return () => {
-      worker.removeEventListener("message", onMessage);
-    };
+    return () => worker.removeEventListener("message", onMessage);
   }, [open, fileChanges, messages]);
 
+  const jumpToMessage = (messageIndex: number | null) => {
+    if (messageIndex === null || !onJumpToMessage) return;
+    onJumpToMessage(messageIndex);
+    onClose();
+  };
+
   return (
-    <DialogPrimitive.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-    >
+    <DialogPrimitive.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogPrimitive.Portal container={portalContainer}>
-        <DialogPrimitive.Overlay
-          className={cn(
-            overlayPositionClass,
-            "bg-black/45",
-            "data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
-          )}
-          style={{ zIndex: 56 }}
-        />
+        <DialogPrimitive.Overlay className={cn(positionClass, "bg-black/45")} style={{ zIndex: 56 }} />
         <DialogPrimitive.Content
-          className={cn(
-            contentPositionClass,
-            "flex items-center justify-center p-4 outline-none",
-            "data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out"
-          )}
+          className={cn(positionClass, "flex items-center justify-center p-4 outline-none")}
           style={{ zIndex: 57 }}
         >
-          <div
-            className="w-full max-w-6xl h-[min(84vh,780px)] rounded-lg border overflow-hidden flex flex-col"
-            style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-primary)" }}
-          >
-            <div
-              className="px-3 py-2 border-b flex items-center justify-between"
-              style={{ borderColor: "var(--border)" }}
-            >
-              <DialogPrimitive.Title
-                className="inline-flex items-center gap-1.5 text-sm font-semibold"
-                style={{ color: "var(--text-primary)" }}
-              >
-                <GitCompareArrows size={15} />
-                {t("history.diff.title")}
-              </DialogPrimitive.Title>
-              <DialogPrimitive.Close
-                className="inline-flex items-center justify-center rounded-md border w-7 h-7"
-                style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-                title={t("common.close")}
-                aria-label={t("common.close")}
-              >
-                <X size={14} />
-              </DialogPrimitive.Close>
-            </div>
-
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-              {parsing && (
-                <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                  {t("history.diff.parsing")}
-                </div>
-              )}
-
-              {!parsing && blocks.length === 0 && (
-                <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                  {t("history.diff.empty")}
-                </div>
-              )}
-
-              {!parsing &&
-                blocks.map((block) => (
-                  <div
-                    key={block.id}
-                    className="px-3 py-3 border-b min-w-0"
-                    style={{ borderColor: "var(--border)" }}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
-                          <FileCode2 size={12} />
-                          <span className="truncate">{block.filePath}</span>
-                        </div>
-                        <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                          {block.messageIndex !== null
-                            ? t("history.diff.fromMessage", { index: block.messageIndex + 1 })
-                            : block.timestamp ?? "-"}
-                          {block.messageIndex !== null && block.timestamp ? ` · ${block.timestamp}` : ""}
-                        </div>
-                      </div>
-                      {block.messageIndex !== null && onJumpToMessage && (
-                        <button
-                          onClick={() => {
-                            onJumpToMessage(block.messageIndex as number);
-                            onClose();
-                          }}
-                          className="text-xs px-2 py-1 rounded-md shrink-0"
-                          style={{ backgroundColor: "var(--accent)", color: "#fff" }}
-                        >
-                          {t("history.diff.jumpBack")}
-                        </button>
-                      )}
-                    </div>
-                    <DiffBlockViewer block={block} />
+          <DialogPrimitive.Title className="sr-only">{t("history.diff.title")}</DialogPrimitive.Title>
+          <div className="flex h-[min(84vh,780px)] w-full max-w-6xl overflow-hidden rounded-lg border border-border bg-surface">
+            {parsing || !selectedBlock ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+                    <GitCompareArrows size={15} />
+                    {t("history.diff.title")}
                   </div>
-                ))}
-            </div>
+                  <DialogPrimitive.Close
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary"
+                    title={t("common.close")}
+                    aria-label={t("common.close")}
+                  >
+                    <X size={14} />
+                  </DialogPrimitive.Close>
+                </div>
+                <div className="flex flex-1 items-center justify-center text-xs text-text-muted">
+                  {parsing ? t("history.diff.parsing") : t("history.diff.empty")}
+                </div>
+              </div>
+            ) : (
+              <>
+                {blocks.length > 1 && (
+                  <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface-container-low">
+                    <div className="border-b border-border px-3 py-2 text-xs font-semibold text-text-primary">
+                      {t("history.diff.title")}
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll">
+                      {blocks.map((block) => (
+                        <ContextMenu key={block.id}>
+                          <ContextMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-[var(--interactive-hover-bg)] data-[selected=true]:bg-[var(--interactive-selected-bg)]"
+                              data-selected={selectedBlock.id === block.id ? "true" : "false"}
+                              onClick={() => setSelectedBlockId(block.id)}
+                            >
+                              <img
+                                src={getMaterialFileIcon(fileName(block.filePath))}
+                                alt=""
+                                width={16}
+                                height={16}
+                                draggable={false}
+                              />
+                              <span className="min-w-0 flex-1 truncate text-text-primary" title={block.filePath}>
+                                {block.filePath}
+                              </span>
+                            </button>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="file-explorer-menu">
+                            <ContextMenuItem
+                              disabled={block.messageIndex === null || !onJumpToMessage}
+                              onSelect={() => jumpToMessage(block.messageIndex)}
+                            >
+                              <CornerDownRight size={13} />
+                              {t("history.files.jumpToConversation")}
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      ))}
+                    </div>
+                  </aside>
+                )}
+                <div className="min-w-0 flex-1">
+                  <GitDiffViewer
+                    filePath={selectedBlock.filePath}
+                    fileName={fileName(selectedBlock.filePath)}
+                    status={selectedBlock.status}
+                    diffText={selectedBlock.patch}
+                    onClose={onClose}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

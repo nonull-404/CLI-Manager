@@ -133,3 +133,62 @@ if (useProjectStore.getState().projects.length > 0) {
   return;
 }
 ```
+
+## Scenario: History File Change Records
+
+### 1. Scope / Trigger
+
+- Trigger: changing history JSONL file-operation parsing, the history Changes view, or history Diff rendering.
+
+### 2. Signatures
+
+- Backend detail field: `HistorySessionDetail.file_changes: HistoryFileChangeSummary[]`.
+- File operation location: `message_index`, `operation_group_index`, and `timestamp` on `HistoryFileChangeOperation`.
+- Shared renderer: `GitDiffViewer({ diffText, filePath, fileName, status })` with no discard callback for history.
+
+### 3. Contracts
+
+- The session JSONL is the source of truth; do not infer historical content from the current workspace file.
+- Decode escaped Codex apply-patch text before extracting paths and line counts.
+- Changes view rows use `getMaterialFileIcon()` like the file explorer.
+- Changes view rows show Added/Modified/Deleted semantic tags; additions use success color and deletions use danger color.
+- Left click opens a read-only `GitDiffViewer`; right click jumps to `message_index` when present.
+- Convert Apply Patch blocks to standard unified diff before rendering so the viewer keeps split mode.
+- History must not pass `onRequestDiscard`, so file/hunk/line revert actions stay disabled.
+
+### 4. Validation & Error Matrix
+
+- Structured operations exist -> prefer `file_changes` over message-text fallback.
+- Missing `message_index` -> keep the change visible and disable the jump menu item.
+- Apply Patch input -> synthesize unified headers and hunk ranges, then render through split mode.
+- Unsupported patch after normalization -> `GitDiffViewer` falls back to the read-only Monaco diff editor.
+- No parsed changes -> show the history empty state.
+
+### 5. Good/Base/Bad Cases
+
+- Good: escaped Codex patch shows the real file icon/path and opens the shared read-only Diff viewer.
+- Base: a legacy message-only unified diff remains available through the worker fallback.
+- Bad: reading the current workspace file to fabricate an old baseline.
+- Bad: maintaining a second history-only Diff renderer with different highlighting behavior.
+
+### 6. Tests Required
+
+- Rust regression: Claude tool input and escaped Codex apply-patch input produce paths, groups, additions, and deletions.
+- Frontend: run `npx tsc --noEmit` after changing row props, context menus, or shared Diff viewer props.
+- Manual: verify left-click Diff, right-click conversation jump, disabled jump without message index, and file icons in both languages.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+<FileCode2 />
+<HistoryOnlyDiff patch={operation.patch} />
+```
+
+#### Correct
+
+```tsx
+<img src={getMaterialFileIcon(fileName)} alt="" />
+<GitDiffViewer filePath={path} fileName={fileName} status={status} diffText={patch} />
+```

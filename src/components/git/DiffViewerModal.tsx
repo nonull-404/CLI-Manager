@@ -28,7 +28,7 @@ interface DiffViewerModalProps {
 }
 
 interface GitDiffViewerProps {
-  projectPath: string;
+  projectPath?: string;
   filePath: string;
   fileName: string;
   status: string;
@@ -113,6 +113,13 @@ export function GitDiffViewer({
   useEffect(() => {
     if (providedDiffText !== undefined) {
       setDiffText(providedDiffText);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (!projectPath) {
+      setDiffText("");
       setError(null);
       setLoading(false);
       return;

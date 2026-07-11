@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useHistoryStore } from "../stores/historyStore";
 import { useTerminalStore } from "../stores/terminalStore";
-import type { HistoryMessage, HistorySearchHit, HistorySessionDetail, HistorySessionView, HistorySourceFilter, Project, WorktreeRecord } from "../lib/types";
+import type { HistoryFileChangeSummary, HistoryMessage, HistorySearchHit, HistorySessionDetail, HistorySessionView, HistorySourceFilter, Project, WorktreeRecord } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorktreeStore } from "../stores/worktreeStore";
@@ -240,7 +240,8 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const [tagsDraft, setTagsDraft] = useState("");
   const [matchCursor, setMatchCursor] = useState(0);
   const [promptOpen, setPromptOpen] = useState(false);
-  const [diffOpen, setDiffOpen] = useState(false);
+  const [diffFileChanges, setDiffFileChanges] = useState<HistoryFileChangeSummary[] | null>(null);
+  const diffOpen = diffFileChanges !== null;
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [diffContainer, setDiffContainer] = useState<HTMLElement | null>(null);
   const [detailView, setDetailView] = useState<HistoryDetailView>("transcript");
@@ -277,7 +278,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
         return;
       }
       if (diffOpen) {
-        setDiffOpen(false);
+        setDiffFileChanges(null);
         return;
       }
       if (promptOpen) {
@@ -556,6 +557,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   useEffect(() => {
     setVisibleMessageCount(MESSAGE_PAGE_SIZE);
     setDetailView("transcript");
+    setDiffFileChanges(null);
     pendingScrollMessageRef.current = null;
     messageRefs.current = {};
   }, [activeSession?.session_id]);
@@ -1092,7 +1094,9 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
             onJumpPrev={jumpPrev}
             onJumpNext={jumpNext}
             onOpenPrompt={() => setPromptOpen(true)}
-            onOpenDiff={() => setDiffOpen(true)}
+            onOpenDiff={(fileChanges) =>
+              setDiffFileChanges(fileChanges ?? activeSession?.file_changes ?? [])
+            }
             onResumeSession={() => {
               void resumeConversation();
             }}
@@ -1131,8 +1135,9 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
         <DiffModal
           open={diffOpen}
           messages={activeSession?.messages ?? EMPTY_MESSAGES}
+          fileChanges={diffFileChanges}
           container={diffContainer}
-          onClose={() => setDiffOpen(false)}
+          onClose={() => setDiffFileChanges(null)}
           onJumpToMessage={(messageIndex) => {
             void jumpToMessage(messageIndex);
           }}
