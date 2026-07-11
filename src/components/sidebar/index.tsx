@@ -37,6 +37,7 @@ import { toast } from "sonner";
 import { logError } from "../../lib/logger";
 import { SidebarHeader } from "./SidebarHeader";
 import { ProjectTree } from "./ProjectTree";
+import { BatchShellDialog } from "./BatchShellDialog";
 import { SidebarFooter } from "./SidebarFooter";
 import { groupSyncedExternalSessions } from "../../lib/externalSessionGrouping";
 import { FileExplorerSidebar } from "../files/FileExplorerSidebar";
@@ -53,6 +54,7 @@ import {
   Plus,
   SquareSplitHorizontal,
   SquareSplitVertical,
+  Terminal,
   TerminalSquare,
   Trash2,
   X,
@@ -261,6 +263,8 @@ export function Sidebar({
   >(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addToGroupId, setAddToGroupId] = useState<string | null>(null);
+  // 批量修改 Shell 弹窗：null=关闭，Set=打开时预勾选的项目 id
+  const [batchShellPreselected, setBatchShellPreselected] = useState<Set<string> | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(
     () => new Set(useSettingsStore.getState().collapsedGroupIds)
   );
@@ -278,7 +282,7 @@ export function Sidebar({
     | null
     | { kind: "delete-project"; project: Project }
     | { kind: "delete-group"; groupId: string; groupName: string }
-    | { kind: "delete-groups"; groups: { groupId: string; groupName: string }[] }
+    | { kind: "delete-selection"; groups: { groupId: string; groupName: string }[]; projects: Project[] }
   >(null);
   const [worktreePrompt, setWorktreePrompt] = useState<{
     project: Project;
@@ -1258,14 +1262,18 @@ export function Sidebar({
   }, []);
 
   const handleSelectProject = useCallback((e: ReactMouseEvent, project: Project) => {
-    setSelectedId(project.id);
-    if (projectScopedTerminalViewEnabled) {
-      onTerminalScopeChange?.({ kind: "project", projectId: project.id });
-    }
-
     const additive = e.ctrlKey || e.metaKey; // Ctrl(Win/Linux) / Cmd(Mac) 切换单项
     const rangeSelect = e.shiftKey;          // Shift 连续范围选择（Windows 风格）
     const anchorId = selectionAnchorRef.current;
+    // 项目多选与 worktree 多选互斥；与文件夹多选可混合累积，普通点击时整体重置
+    setSelectedWorktreeIds((prev) => (prev.size === 0 ? prev : new Set()));
+
+    const markActive = () => {
+      setSelectedId(project.id);
+      if (projectScopedTerminalViewEnabled) {
+        onTerminalScopeChange?.({ kind: "project", projectId: project.id });
+      }
+    };
 
     // Shift 范围选择：从锚点到当前项，按可见顺序取区间
     if (rangeSelect && anchorId && anchorId !== project.id) {
@@ -1281,11 +1289,13 @@ export function Sidebar({
           range.forEach((id) => next.add(id));
           return next;
         });
+        markActive();
         return; // 锚点保持不变，便于以同一锚点继续扩展区间
       }
     }
 
     if (additive) {
+      const deselecting = selectedProjectIds.has(project.id);
       setSelectedProjectIds((prev) => {
         const next = new Set(prev);
         if (next.has(project.id)) next.delete(project.id);
@@ -1293,15 +1303,23 @@ export function Sidebar({
         return next;
       });
       selectionAnchorRef.current = project.id;
+      if (deselecting) {
+        // 取消勾选时同时清掉“当前项”高亮，避免高亮残留；不切换终端范围
+        setSelectedId((current) => (current === project.id ? null : current));
+      } else {
+        markActive();
+      }
       return;
     }
 
+    markActive();
     setSelectedProjectIds(new Set([project.id]));
+    setSelectedGroupIds((prev) => (prev.size === 0 ? prev : new Set()));
     selectionAnchorRef.current = project.id;
     if (activateFirstProjectSession(project.id)) {
       closeHistory();
     }
-  }, [activateFirstProjectSession, closeHistory, onTerminalScopeChange, projectScopedTerminalViewEnabled, visibleProjectIds]);
+  }, [activateFirstProjectSession, closeHistory, onTerminalScopeChange, projectScopedTerminalViewEnabled, selectedProjectIds, visibleProjectIds]);
 
   const handleSelectProjectByKeyboard = useCallback((project: Project) => {
     setSelectedId(project.id);
@@ -1333,7 +1351,7 @@ export function Sidebar({
     const additive = e.ctrlKey || e.metaKey; // Ctrl(Win/Linux) / Cmd(Mac) 切换单项
     const rangeSelect = e.shiftKey;          // Shift 连续范围选择（Windows 风格）
     const anchorId = groupSelectionAnchorRef.current;
-    // 文件夹多选与 worktree 多选互斥（与项目多选的互斥在各分支内处理）
+    // 文件夹多选与 worktree 多选互斥；与项目多选可混合累积
     setSelectedWorktreeIds((prev) => (prev.size === 0 ? prev : new Set()));
 
     // Shift 范围选择：从锚点到当前项，按可见顺序取区间
@@ -1344,7 +1362,6 @@ export function Sidebar({
       if (from !== -1 && to !== -1) {
         const [lo, hi] = from <= to ? [from, to] : [to, from];
         const range = order.slice(lo, hi + 1);
-        setSelectedProjectIds((prev) => (prev.size === 0 ? prev : new Set())); // 两套多选互斥
         setSelectedGroupIds((prev) => {
           const next = additive ? new Set(prev) : new Set<string>();
           range.forEach((id) => next.add(id));
@@ -1355,7 +1372,6 @@ export function Sidebar({
     }
 
     if (additive) {
-      setSelectedProjectIds((prev) => (prev.size === 0 ? prev : new Set()));
       setSelectedGroupIds((prev) => {
         const next = new Set(prev);
         if (next.has(groupId)) next.delete(groupId);
@@ -1385,6 +1401,8 @@ export function Sidebar({
   }, [onTerminalScopeChange]);
 
   const handleToggleSelection = useCallback((project: Project) => {
+    // 项目多选与 worktree 多选互斥；与文件夹多选可混合
+    setSelectedWorktreeIds((prev) => (prev.size === 0 ? prev : new Set()));
     setSelectedProjectIds((prev) => {
       const next = new Set(prev);
       if (next.has(project.id)) next.delete(project.id);
@@ -1394,7 +1412,7 @@ export function Sidebar({
   }, []);
 
   const handleToggleGroupSelection = useCallback((groupId: string) => {
-    setSelectedProjectIds((prev) => (prev.size === 0 ? prev : new Set()));
+    // 文件夹多选与 worktree 多选互斥；与项目多选可混合
     setSelectedWorktreeIds((prev) => (prev.size === 0 ? prev : new Set()));
     setSelectedGroupIds((prev) => {
       const next = new Set(prev);
@@ -1405,14 +1423,15 @@ export function Sidebar({
     groupSelectionAnchorRef.current = groupId;
   }, []);
 
-  const handleRequestDeleteSelectedGroups = useCallback(() => {
-    const items = Array.from(selectedGroupIds)
+  const handleRequestDeleteSelection = useCallback(() => {
+    const groupItems = Array.from(selectedGroupIds)
       .map((id) => groups.find((g) => g.id === id))
       .filter((g): g is Group => !!g)
       .map((g) => ({ groupId: g.id, groupName: g.name }));
-    if (items.length === 0) return;
-    setConfirmAction({ kind: "delete-groups", groups: items });
-  }, [groups, selectedGroupIds]);
+    const projectItems = projects.filter((project) => selectedProjectIds.has(project.id));
+    if (groupItems.length + projectItems.length === 0) return;
+    setConfirmAction({ kind: "delete-selection", groups: groupItems, projects: projectItems });
+  }, [groups, projects, selectedGroupIds, selectedProjectIds]);
 
   const handleRenameGroup = useCallback((id: string, _name: string) => {
     setRenamingGroupId(id);
@@ -1545,6 +1564,12 @@ export function Sidebar({
   const selectedProjects = useMemo(
     () => projects.filter((p) => selectedProjectIds.has(p.id)),
     [projects, selectedProjectIds]
+  );
+
+  // 分组右键菜单“批量修改本组 Shell”的作用范围（含子组项目）；组内项目数 >1 才显示入口
+  const contextMenuGroupProjectIds = useMemo(
+    () => (contextMenu?.kind === "group" ? collectProjectIdsForGroup(groups, projects, contextMenu.groupId) : null),
+    [contextMenu, groups, projects]
   );
 
   const treeActions = useMemo<TreeActions>(
@@ -1712,17 +1737,30 @@ export function Sidebar({
       };
     }
 
-    const deleteGroups = confirmAction.groups;
+    // kind === "delete-selection"：文件夹与终端的混合批量删除
+    const selGroups = confirmAction.groups;
+    const selProjects = confirmAction.projects;
+    const totalCount = selGroups.length + selProjects.length;
+    const title = selGroups.length === 0
+      ? t("sidebar.confirm.deleteTerminalsTitle", { count: selProjects.length })
+      : selProjects.length === 0
+        ? t("sidebar.confirm.deleteGroupsTitle", { count: selGroups.length })
+        : t("sidebar.confirm.deleteSelectionTitle", { count: totalCount });
+    const message = selGroups.length === 0
+      ? t("sidebar.confirm.deleteTerminalsMessage", { count: selProjects.length })
+      : selProjects.length === 0
+        ? t("sidebar.confirm.deleteGroupsMessage", { count: selGroups.length })
+        : t("sidebar.confirm.deleteSelectionMessage", { groupCount: selGroups.length, terminalCount: selProjects.length });
     return {
-      title: t("sidebar.confirm.deleteGroupsTitle", { count: deleteGroups.length }),
-      message: t("sidebar.confirm.deleteGroupsMessage", { count: deleteGroups.length }),
+      title,
+      message,
       confirmText: t("sidebar.menu.delete"),
       danger: true,
       onConfirm: async () => {
         try {
-          const groupIds = deleteGroups.map((g) => g.groupId);
-          // 多个目录（含嵌套父子）取项目并集去重，避免重复删除
-          const projectIds = new Set<string>();
+          const groupIds = selGroups.map((g) => g.groupId);
+          // 目录（含嵌套父子）与直接选中的终端取项目并集去重，避免重复删除
+          const projectIds = new Set<string>(selProjects.map((project) => project.id));
           for (const groupId of groupIds) {
             collectProjectIdsForGroup(groups, projects, groupId).forEach((id) => projectIds.add(id));
           }
@@ -1751,7 +1789,16 @@ export function Sidebar({
           for (const groupId of groupIds) {
             await deleteGroup(groupId);
           }
-          toast.success(t("sidebar.toast.groupsDeleteSuccess", { count: groupIds.length }));
+          if (selProjects.length === 0) {
+            toast.success(t("sidebar.toast.groupsDeleteSuccess", { count: selGroups.length }));
+          } else if (selGroups.length === 0) {
+            toast.success(t("sidebar.toast.terminalsDeleteSuccess", { count: selProjects.length }));
+          } else {
+            toast.success(t("sidebar.toast.selectionDeleteSuccess", {
+              groupCount: selGroups.length,
+              terminalCount: selProjects.length,
+            }));
+          }
           setConfirmAction(null);
           if (selectedId && projectIds.has(selectedId)) setSelectedId(null);
           setSelectedProjectIds((prev) => {
@@ -1761,7 +1808,7 @@ export function Sidebar({
           });
           setSelectedGroupIds(new Set());
         } catch (err) {
-          toast.error(t("sidebar.toast.groupDeleteFailed"), { description: String(err) });
+          toast.error(t("sidebar.toast.selectionDeleteFailed"), { description: String(err) });
         }
       },
     };
@@ -1945,6 +1992,19 @@ export function Sidebar({
                   <TerminalSquare size={14} strokeWidth={1.5} />
                   {t("sidebar.menu.launchSelected", { count: selectedProjects.length })}
                 </button>
+                {selectedProjectIds.size > 1 && (
+                  <button
+                    className="context-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setBatchShellPreselected(new Set(selectedProjectIds));
+                      setContextMenu(null);
+                    }}
+                  >
+                    <Terminal size={14} strokeWidth={1.5} />
+                    {t("sidebar.menu.batchShell")}
+                  </button>
+                )}
                 <button
                   className="context-menu-item"
                   role="menuitem"
@@ -2015,6 +2075,19 @@ export function Sidebar({
                   {t("sidebar.menu.edit")}
                 </button>
                 <div className="context-menu-separator" role="separator" />
+                {selectedProjectIds.size + selectedGroupIds.size > 1 && (
+                  <button
+                    className="context-menu-item danger"
+                    role="menuitem"
+                    onClick={() => {
+                      handleRequestDeleteSelection();
+                      setContextMenu(null);
+                    }}
+                  >
+                    <Trash2 size={14} strokeWidth={1.5} />
+                    {t("sidebar.menu.deleteSelected", { count: selectedProjectIds.size + selectedGroupIds.size })}
+                  </button>
+                )}
                 <button
                   className="context-menu-item danger"
                   onClick={() => {
@@ -2224,18 +2297,31 @@ export function Sidebar({
                   <Pencil size={14} strokeWidth={1.5} />
                   {t("sidebar.menu.rename")}
                 </button>
+                {contextMenuGroupProjectIds && contextMenuGroupProjectIds.size > 1 && (
+                  <button
+                    className="context-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setBatchShellPreselected(contextMenuGroupProjectIds);
+                      setContextMenu(null);
+                    }}
+                  >
+                    <Terminal size={14} strokeWidth={1.5} />
+                    {t("sidebar.menu.batchShellGroup")}
+                  </button>
+                )}
                 <div className="context-menu-separator" role="separator" />
-                {selectedGroupIds.size > 0 && (
+                {selectedProjectIds.size + selectedGroupIds.size > 1 && (
                   <button
                     className="context-menu-item danger"
                     role="menuitem"
                     onClick={() => {
-                      handleRequestDeleteSelectedGroups();
+                      handleRequestDeleteSelection();
                       setContextMenu(null);
                     }}
                   >
                     <Trash2 size={14} strokeWidth={1.5} />
-                    {t("sidebar.menu.deleteSelectedGroups", { count: selectedGroupIds.size })}
+                    {t("sidebar.menu.deleteSelected", { count: selectedProjectIds.size + selectedGroupIds.size })}
                   </button>
                 )}
                 <button
@@ -2460,6 +2546,12 @@ export function Sidebar({
         />
       )}
       {editingProject && <ConfigModal project={editingProject} onClose={() => setEditingProject(null)} />}
+      {batchShellPreselected && (
+        <BatchShellDialog
+          preselectedIds={batchShellPreselected}
+          onClose={() => setBatchShellPreselected(null)}
+        />
+      )}
       {providerSwitchTarget && providerSwitchProject && (
         <ProviderSwitchModal
           project={providerSwitchProject}
