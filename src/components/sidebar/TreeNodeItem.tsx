@@ -84,6 +84,7 @@ function InlineRename({ initial, onConfirm, onCancel }: { initial: string; onCon
 interface TreeNodeItemProps {
   node: TNode;
   depth: number;
+  parentGroupId?: string | null;
   density: "compact" | "comfortable";
   focusedNodeKey: string | null;
   onFocusNode: (key: string) => void;
@@ -94,6 +95,7 @@ interface TreeNodeItemProps {
 function TreeNodeItemImpl({
   node,
   depth,
+  parentGroupId = null,
   density,
   focusedNodeKey,
   onFocusNode,
@@ -103,11 +105,18 @@ function TreeNodeItemImpl({
   const { t } = useI18n();
   const actions = useTreeActions();
   const itemId = node.type === "group" ? node.group.id : node.type === "project" ? node.project.id : `wt:${node.worktree.id}`;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { active, attributes, isOver, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
+    data: { parentGroupId },
     disabled: !sortableEnabled || node.type === "worktree",
     transition: DND_SORTABLE_TRANSITION,
   });
+  const showCrossGroupDropPreview = Boolean(
+    isOver &&
+    active &&
+    active.id !== itemId &&
+    active.data.current?.parentGroupId !== parentGroupId
+  );
   const sortableStyle = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? undefined : transition,
@@ -247,6 +256,7 @@ function TreeNodeItemImpl({
     return (
       <div
         ref={setNodeRef}
+        className={showCrossGroupDropPreview ? "relative" : undefined}
         style={{ ...sortableStyle }}
         {...attributes}
         role="treeitem"
@@ -258,6 +268,13 @@ function TreeNodeItemImpl({
         onPointerDownCapture={preventSecondaryPointerFocus}
         onFocus={() => onFocusNode(treeKey)}
       >
+        {showCrossGroupDropPreview && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute z-10 h-0.5 rounded-full bg-primary"
+            style={{ left: paddingLeft, right: compact ? 8 : 10, top: -1 }}
+          />
+        )}
         <div
           className={`ui-tree-node ui-tree-project ui-focus-ring flex items-center rounded-xl cursor-pointer group/item ${
             compact ? "gap-1.5 py-1 text-[12px]" : "gap-2 py-1.5 text-[13px]"
@@ -338,6 +355,7 @@ function TreeNodeItemImpl({
                 key={`wt:${worktree.id}`}
                 node={{ type: "worktree", project: p, worktree }}
                 depth={depth + 1}
+                parentGroupId={parentGroupId}
                 density={density}
                 focusedNodeKey={focusedNodeKey}
                 onFocusNode={onFocusNode}
@@ -386,6 +404,7 @@ function TreeNodeItemImpl({
   return (
     <div
       ref={setNodeRef}
+      className={showCrossGroupDropPreview ? "relative" : undefined}
       style={{ ...sortableStyle }}
       {...attributes}
       role="treeitem"
@@ -397,6 +416,13 @@ function TreeNodeItemImpl({
       onPointerDownCapture={preventSecondaryPointerFocus}
       onFocus={() => onFocusNode(treeKey)}
     >
+      {showCrossGroupDropPreview && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute z-10 h-0.5 rounded-full bg-primary"
+          style={{ left: paddingLeft, right: compact ? 8 : 10, top: -1 }}
+        />
+      )}
       <div className={`ui-tree-group-shell ${compact ? "my-0.5" : "my-1"}`} style={{ marginLeft: depth === 0 ? 0 : 2 }}>
         <div
           ref={setIntoRef}
@@ -444,6 +470,7 @@ function TreeNodeItemImpl({
                       key={child.type === "group" ? `g:${child.group.id}` : child.type === "project" ? `p:${child.project.id}` : `wt:${child.worktree.id}`}
                       node={child}
                       depth={depth + 1}
+                      parentGroupId={g.id}
                       density={density}
                       focusedNodeKey={focusedNodeKey}
                       onFocusNode={onFocusNode}

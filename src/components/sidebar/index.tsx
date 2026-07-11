@@ -693,8 +693,23 @@ export function Sidebar({
       // active 不在同层 → 跨层移到 over 所在父级
       if (oldIndex === -1) {
         const targetParent = overContext.parentId;
-        if (isGroup(activeId)) void moveGroupToParent(activeId, targetParent);
-        else if (isProject(activeId)) void moveProjectToGroup(activeId, targetParent);
+        if (isGroup(activeId) && targetParent) {
+          let current = groups.find((group) => group.id === targetParent);
+          while (current) {
+            if (current.id === activeId) return;
+            current = current.parent_id
+              ? groups.find((group) => group.id === current?.parent_id)
+              : undefined;
+          }
+        }
+        const reordered = [...ids];
+        reordered.splice(newIndex, 0, activeId);
+        void (async () => {
+          if (isGroup(activeId)) await moveGroupToParent(activeId, targetParent);
+          else if (isProject(activeId)) await moveProjectToGroup(activeId, targetParent);
+          else return;
+          await reorderItems(targetParent, reordered);
+        })();
         return;
       }
 
