@@ -47,9 +47,10 @@ fn wsl_available() -> bool {
         return false;
     };
     let wsl_exe = wsl.to_string_lossy().to_string();
-    crate::shell_resolver::silent_command(&wsl_exe)
-        .args(["-l", "-q"])
-        .output()
+    let mut command = crate::shell_resolver::silent_command(&wsl_exe);
+    command.args(["-l", "-q"]);
+    // WSL 服务损坏时 wsl.exe 会挂起约 60s，必须限时，否则拖死整个扫描。
+    crate::shell_resolver::output_with_timeout(command, std::time::Duration::from_secs(5))
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
@@ -117,22 +118,30 @@ fn scan_linux() -> Vec<TerminalShellProfile> {
     profiles
 }
 
+// 同步 Tauri 命令会在主线程执行；shell 扫描包含子进程探测（wsl.exe），
+// 必须 async + spawn_blocking，否则探测卡住时整个窗口无响应。
 #[tauri::command]
-pub fn terminal_shell_scan() -> Result<Vec<TerminalShellProfile>, String> {
+pub async fn terminal_shell_scan() -> Result<Vec<TerminalShellProfile>, String> {
+    tauri::async_runtime::spawn_blocking(scan_profiles)
+        .await
+        .map_err(|err| format!("终端 Shell 扫描任务失败: {err}"))
+}
+
+fn scan_profiles() -> Vec<TerminalShellProfile> {
     #[cfg(target_os = "windows")]
     {
-        return Ok(scan_windows());
+        return scan_windows();
     }
     #[cfg(target_os = "macos")]
     {
-        return Ok(scan_macos());
+        return scan_macos();
     }
     #[cfg(target_os = "linux")]
     {
-        return Ok(scan_linux());
+        return scan_linux();
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        Ok(Vec::new())
+        Vec::new()
     }
 }

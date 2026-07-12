@@ -1,9 +1,9 @@
-use crate::shell_resolver::silent_command;
+use crate::shell_resolver::{output_with_timeout, silent_command};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Output;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REGISTRY_MIRROR: &str = "https://registry.npmmirror.com";
 const DAILY_REPORT_KIND: &str = "daily";
@@ -139,10 +139,19 @@ fn config_value_present(value: Option<&String>) -> bool {
     value.map(|item| !item.trim().is_empty()).unwrap_or(false)
 }
 
+// 子进程超时按用途区分：探测类必须快速失败（WSL 服务损坏时 wsl.exe 会挂起
+// 约 60s，通用设置页每次进入都会触发，连环探测会让页面"卡死几分钟"）；
+// 报告与安装类首跑可能要下载依赖包，给足余量。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const WSL_DETECT_TIMEOUT: Duration = Duration::from_secs(15);
+const REPORT_TIMEOUT: Duration = Duration::from_secs(180);
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+
 fn host_command_output(
     program: &str,
     args: &[&str],
     envs: &[(&str, String)],
+    timeout: Duration,
 ) -> Result<Output, String> {
     let mut command = if cfg!(windows) {
         let mut command = silent_command("cmd");
@@ -157,8 +166,7 @@ fn host_command_output(
         command.env(key, value);
     }
 
-    command
-        .output()
+    output_with_timeout(command, timeout)
         .map_err(|err| format!("执行 {program} 失败: {err}"))
 }
 
@@ -167,6 +175,7 @@ fn wsl_command_output(
     program: &str,
     args: &[&str],
     envs: &[(&str, String)],
+    timeout: Duration,
 ) -> Result<Output, String> {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
     let started = Instant::now();
@@ -184,7 +193,7 @@ fn wsl_command_output(
     }
     command.arg(program);
     command.args(args);
-    let output = command.output().map_err(|err| {
+    let output = output_with_timeout(command, timeout).map_err(|err| {
         log::warn!(
             "[ccusage:wsl] wsl.exe 启动失败: distro={} program={} elapsed_ms={} error={}",
             distro,
@@ -215,7 +224,7 @@ fn detect_default_wsl_context() -> Result<Option<DefaultWslContext>, String> {
     ]);
     let started = Instant::now();
     log::info!("[ccusage:wsl] 开始探测默认 WSL 发行版");
-    let output = command.output().map_err(|err| {
+    let output = output_with_timeout(command, WSL_DETECT_TIMEOUT).map_err(|err| {
         log::warn!(
             "[ccusage:wsl] 默认 WSL 发行版探测启动失败: elapsed_ms={} error={}",
             started.elapsed().as_millis(),
@@ -294,6 +303,7 @@ fn wsl_command_with_bun_path_output(
     program: &str,
     args: &[&str],
     envs: &[(&str, String)],
+    timeout: Duration,
 ) -> Result<Output, String> {
     let mut script_parts = vec![
         r#"export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}""#.to_string(),
@@ -317,7 +327,7 @@ fn wsl_command_with_bun_path_output(
         distro,
         script
     );
-    wsl_command_output(distro, "sh", &["-lc", &script], &[])
+    wsl_command_output(distro, "sh", &["-lc", &script], &[], timeout)
 }
 
 fn command_output(
@@ -325,18 +335,19 @@ fn command_output(
     program: &str,
     args: &[&str],
     envs: &[(&str, String)],
+    timeout: Duration,
 ) -> Result<Output, String> {
     match target {
-        RuntimeTarget::Host => host_command_output(program, args, envs),
+        RuntimeTarget::Host => host_command_output(program, args, envs, timeout),
         RuntimeTarget::Wsl { distro } if program == "bun" || program == "bunx" => {
-            wsl_command_with_bun_path_output(distro, program, args, envs)
+            wsl_command_with_bun_path_output(distro, program, args, envs, timeout)
         }
-        RuntimeTarget::Wsl { distro } => wsl_command_output(distro, program, args, envs),
+        RuntimeTarget::Wsl { distro } => wsl_command_output(distro, program, args, envs, timeout),
     }
 }
 
 fn version_of(target: &RuntimeTarget, program: &str) -> Option<String> {
-    let output = command_output(target, program, &["--version"], &[]).ok()?;
+    let output = command_output(target, program, &["--version"], &[], PROBE_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -608,7 +619,7 @@ fn ccusage_report_payload(
             ccusage_envs_for_log(envs)
         );
     }
-    let output = command_output(target, program, &arg_refs, envs)?;
+    let output = command_output(target, program, &arg_refs, envs, REPORT_TIMEOUT)?;
     if !output.status.success() {
         let output_text = output_text(&output);
         if should_log {
@@ -698,6 +709,7 @@ pub async fn ccusage_install_tools(
                 "npm",
                 &["install", "-g", "bun", "--registry", REGISTRY_MIRROR],
                 &base_envs(),
+                INSTALL_TIMEOUT,
             )?,
             "wsl" => {
                 return Err(

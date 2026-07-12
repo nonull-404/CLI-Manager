@@ -37,6 +37,68 @@ pub fn silent_command(program: &str) -> Command {
     Command::new(program)
 }
 
+/// 执行外部进程并强制超时：超过 `timeout` 后 kill 子进程并返回 `TimedOut` 错误。
+///
+/// 约定：任何"探测型"子进程（`wsl.exe`、`bun --version` 等）必须走本 helper。
+/// 探测目标损坏时（如 WSL 服务异常）裸 `.output()` 会无限期阻塞调用线程，
+/// 若调用方是同步 Tauri 命令还会卡死主线程导致整个窗口无响应。
+pub fn output_with_timeout(
+    mut command: Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+
+    // 独立线程排空管道，避免子进程输出填满管道缓冲后互相等待。
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            // 不 join 读线程：kill 只终止直接子进程，孙进程（如 cmd 启动的 node）
+            // 可能仍持有管道写端，join 会把无界阻塞重新带回来。读线程持有的
+            // 缓冲区随线程结束释放，管道关闭后线程自行退出。
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("进程超过 {}s 未结束，已终止", timeout.as_secs()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    };
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout_reader.join().unwrap_or_default(),
+        stderr: stderr_reader.join().unwrap_or_default(),
+    })
+}
+
 pub fn resolve_git_bash_exe() -> Option<PathBuf> {
     fixed_path_candidate()
         .or_else(path_git_candidate)
