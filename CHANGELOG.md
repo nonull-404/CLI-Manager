@@ -1,5 +1,10 @@
 # Changelog
 
+## [TEMP] - 2026-07-12
+
+### 修复
+- **macOS 旧系统设置页「界面渲染失败」修复**：remark-gfm 依赖的自动链接正则使用了 lookbehind 语法，构建产物在不支持该语法的旧 WebKit（macOS Safari 16.4 之前的 WKWebView）上首次渲染 GFM Markdown（如设置 -> 更新的版本说明）即抛 `RegExp` SyntaxError，且重开设置必现。现运行时检测 lookbehind 支持，不支持时退回基础 Markdown 渲染（表格/自动链接降级、正文照常）；并为所有 Markdown 渲染增加局部错误边界，渲染异常只降级该块为纯文本，不再炸掉整个设置页。
+
 ## [V1.2.7] - 2026-07-11
 
 ### Linux

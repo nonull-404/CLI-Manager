@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { Component, memo, useMemo, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -39,7 +39,20 @@ SyntaxHighlighter.registerLanguage("tsx", tsx);
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 SyntaxHighlighter.registerLanguage("ts", typescript);
 
-const remarkPlugins = [remarkGfm];
+// remark-gfm 的 autolink 依赖（mdast-util-gfm-autolink-literal）包含 lookbehind
+// 正则；esbuild 按 build target 会把该字面量降级成运行时 new RegExp() 调用，
+// 在不支持 lookbehind 的旧 WebKit（macOS Safari < 16.4 的 WKWebView）上首次
+// 渲染 GFM Markdown 即抛 SyntaxError。检测到不支持时退回基础 Markdown 渲染
+// （表格/删除线/自动链接降级，正文照常）。
+const supportsRegExpLookbehind = (() => {
+  try {
+    new RegExp("(?<=a)b");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const remarkPlugins = supportsRegExpLookbehind ? [remarkGfm] : [];
 
 export type MarkdownVariant = "default" | "terminal";
 export type MarkdownLinkBehavior = "preview" | "open";
@@ -390,6 +403,38 @@ const makeComponents = (
   };
 };
 
+interface MarkdownRenderBoundaryProps {
+  content: string;
+  children: ReactNode;
+}
+
+// Markdown 解析/渲染链路一旦抛错（如依赖内不兼容的正则），只把当前 Markdown
+// 块降级为纯文本，避免异常冒泡到页面级 ErrorBoundary 炸掉整个界面。
+class MarkdownRenderBoundary extends Component<MarkdownRenderBoundaryProps, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    logError("Markdown 渲染失败，已降级为纯文本", { error: String(error) });
+  }
+
+  componentDidUpdate(prevProps: MarkdownRenderBoundaryProps) {
+    if (this.state.failed && prevProps.content !== this.props.content) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <div className="whitespace-pre-wrap">{this.props.content}</div>;
+    }
+    return this.props.children;
+  }
+}
+
 // props 全为原始值，memo 浅比较即可：调用方（转录/历史）高频重渲染时跳过重复 Markdown 解析。
 export const MarkdownContent = memo(function MarkdownContent({
   content,
@@ -417,9 +462,11 @@ export const MarkdownContent = memo(function MarkdownContent({
         className
       )}
     >
-      <Markdown remarkPlugins={remarkPlugins} components={makeComponents(query, linkBehavior, codeTheme)} skipHtml>
-        {content}
-      </Markdown>
+      <MarkdownRenderBoundary content={content}>
+        <Markdown remarkPlugins={remarkPlugins} components={makeComponents(query, linkBehavior, codeTheme)} skipHtml>
+          {content}
+        </Markdown>
+      </MarkdownRenderBoundary>
     </div>
   );
 });
