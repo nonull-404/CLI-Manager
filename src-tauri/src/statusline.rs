@@ -3,6 +3,10 @@
 //! 配置格式基于 ccstatusline-zh v2.2.23（MIT），保留 v3 字段语义。
 
 use crate::app_paths;
+use crate::commands::hook_settings::{
+    sync_ccswitch_claude_statusline, CcSwitchHookProtectionStatus,
+};
+use crate::shell_resolver::{output_with_timeout, silent_command};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -10,11 +14,22 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::shell_resolver::{output_with_timeout, silent_command};
+use tauri::AppHandle;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Graphics::Gdi::AddFontResourceExW,
+    UI::WindowsAndMessaging::{SendMessageW, HWND_BROADCAST, WM_FONTCHANGE},
+};
 
 const SETTINGS_VERSION: u32 = 3;
 const STATUSLINE_DIR: &str = "statusline";
 const SETTINGS_FILE: &str = "settings.json";
+const BUNDLED_POWERLINE_FONT_NAME: &str = "SymbolsNerdFontMono-Regular.ttf";
+const BUNDLED_POWERLINE_FONT: &[u8] = include_bytes!("../resources/fonts/SymbolsNerdFontMono-Regular.ttf");
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,6 +171,7 @@ pub struct StatuslineStatus {
     pub current_command: Option<String>,
     pub legacy_settings_path: String,
     pub legacy_settings_available: bool,
+    pub cc_switch: Option<CcSwitchHookProtectionStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -271,54 +287,129 @@ fn looks_like_powerline_font(name: &str) -> bool {
     name.contains("powerline") || name.contains("nerdfont") || name.contains("nerd font") || name.contains("meslo") || name.contains("cascadiacodepl") || name.contains("fira code nerd")
 }
 
+fn powerline_font_status(matched_font: Option<String>) -> PowerlineFontStatus {
+    PowerlineFontStatus { installed: matched_font.is_some(), checked_symbol: "\u{e0b0}", matched_font }
+}
+
+#[cfg(target_os = "windows")]
 fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
-    for dir in powerline_font_dirs()? {
-        let Ok(entries) = fs::read_dir(dir) else { continue };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if looks_like_powerline_font(&name) {
-                return Ok(PowerlineFontStatus { installed: true, checked_symbol: "\u{e0b0}", matched_font: Some(name) });
+    for key in [
+        r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+        r"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+    ] {
+        let mut command = silent_command("reg.exe");
+        command.args(["query", key]);
+        let Ok(output) = output_with_timeout(command, Duration::from_secs(10)) else { continue };
+        if !output.status.success() { continue; }
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let value_name = line.split("REG_").next().unwrap_or(line).trim();
+            if looks_like_powerline_font(value_name) {
+                let family = value_name
+                    .strip_prefix("CLI-Manager ")
+                    .unwrap_or(value_name)
+                    .trim_end_matches(" (TrueType)")
+                    .trim_end_matches(" (OpenType)")
+                    .to_string();
+                return Ok(powerline_font_status(Some(family)));
             }
         }
     }
-    Ok(PowerlineFontStatus { installed: false, checked_symbol: "\u{e0b0}", matched_font: None })
+    Ok(powerline_font_status(None))
 }
 
-fn collect_powerline_fonts(dir: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() { collect_powerline_fonts(&path, files); }
-        else if path.extension().and_then(|value| value.to_str()).map(|value| matches!(value.to_ascii_lowercase().as_str(), "ttf" | "otf")).unwrap_or(false)
-            && path.to_string_lossy().to_ascii_lowercase().contains("powerline") { files.push(path); }
+#[cfg(target_os = "linux")]
+fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
+    let mut command = silent_command("fc-list");
+    command.args([":", "family"]);
+    let Ok(output) = output_with_timeout(command, Duration::from_secs(10)) else {
+        return Ok(powerline_font_status(None));
+    };
+    if output.status.success() {
+        for family in String::from_utf8_lossy(&output.stdout).lines().flat_map(|line| line.split(',')) {
+            let family = family.trim();
+            if looks_like_powerline_font(family) {
+                return Ok(powerline_font_status(Some(family.to_string())));
+            }
+        }
     }
+    Ok(powerline_font_status(None))
+}
+
+#[cfg(target_os = "macos")]
+fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    for face in db.faces() {
+        for (family, _) in &face.families {
+            if looks_like_powerline_font(family) {
+                return Ok(powerline_font_status(Some(family.clone())));
+            }
+        }
+    }
+    Ok(powerline_font_status(None))
+}
+
+fn preferred_powerline_font(fonts: &[PathBuf]) -> Option<&Path> {
+    fonts
+        .iter()
+        .find(|path| path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(BUNDLED_POWERLINE_FONT_NAME)))
+        .or_else(|| fonts.iter().find(|path| {
+            path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                !name.contains("bold") && !name.contains("italic") && !name.contains("oblique")
+            })
+        }))
+        .map(PathBuf::as_path)
+}
+
+#[cfg(target_os = "windows")]
+fn activate_powerline_fonts(target: &Path, fonts: &[PathBuf]) -> Result<(), String> {
+    let font = preferred_powerline_font(fonts).ok_or_else(|| "powerline_fonts_not_found".to_string())?;
+    let installed_font = target.join(font.file_name().ok_or_else(|| "powerline_font_invalid_name".to_string())?);
+    let mut wide_path = installed_font.as_os_str().encode_wide().collect::<Vec<_>>();
+    wide_path.push(0);
+    if unsafe { AddFontResourceExW(wide_path.as_ptr(), 0, std::ptr::null()) } == 0 {
+        return Err("powerline_font_activation_failed".to_string());
+    }
+
+    let value_name = format!("CLI-Manager {} (TrueType)", installed_font.file_stem().and_then(|name| name.to_str()).unwrap_or("Powerline"));
+    let mut command = silent_command("reg.exe");
+    command.args(["add", r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts", "/v", &value_name, "/t", "REG_SZ", "/d"])
+        .arg(&installed_font)
+        .arg("/f");
+    let output = output_with_timeout(command, Duration::from_secs(10))
+        .map_err(|error| format!("powerline_font_registry_failed: {error}"))?;
+    if !output.status.success() {
+        return Err("powerline_font_registry_failed".to_string());
+    }
+
+    unsafe { SendMessageW(HWND_BROADCAST, WM_FONTCHANGE, 0, 0) };
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn activate_powerline_fonts(target: &Path, _fonts: &[PathBuf]) -> Result<(), String> {
+    let mut command = silent_command("fc-cache");
+    command.args(["-f"]).arg(target);
+    let output = output_with_timeout(command, Duration::from_secs(30))
+        .map_err(|error| format!("powerline_font_cache_failed: {error}"))?;
+    if output.status.success() { Ok(()) } else { Err("powerline_font_cache_failed".to_string()) }
+}
+
+#[cfg(target_os = "macos")]
+fn activate_powerline_fonts(_target: &Path, _fonts: &[PathBuf]) -> Result<(), String> {
+    Ok(())
 }
 
 fn install_powerline_fonts() -> Result<PowerlineFontInstallResult, String> {
     let target = powerline_font_dirs()?.into_iter().next().ok_or_else(|| "powerline_font_platform_unsupported".to_string())?;
     fs::create_dir_all(&target).map_err(|err| format!("powerline_font_create_dir_failed: {err}"))?;
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-    let temp = std::env::temp_dir().join(format!("cli-manager-powerline-fonts-{stamp}"));
-    let mut command = silent_command("git");
-    command.args(["clone", "--depth=1", "https://github.com/powerline/fonts.git"]).arg(&temp);
-    let output = match output_with_timeout(command, Duration::from_secs(120)) {
-        Ok(output) => output,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&temp);
-            return Err(format!("powerline_font_clone_failed: {error}"));
-        }
-    };
-    if !output.status.success() { let _ = fs::remove_dir_all(&temp); return Err("powerline_font_clone_failed".to_string()); }
-    let mut fonts = Vec::new();
-    collect_powerline_fonts(&temp, &mut fonts);
-    let mut installed = 0;
-    for font in fonts {
-        if let Some(name) = font.file_name() {
-            if fs::copy(&font, target.join(name)).is_ok() { installed += 1; }
-        }
-    }
-    let _ = fs::remove_dir_all(&temp);
-    Ok(PowerlineFontInstallResult { success: installed > 0, message: if installed > 0 { "powerline_fonts_installed" } else { "powerline_fonts_not_found" }.to_string(), installed_count: installed })
+    let installed_font = target.join(BUNDLED_POWERLINE_FONT_NAME);
+    fs::write(&installed_font, BUNDLED_POWERLINE_FONT)
+        .map_err(|err| format!("powerline_font_write_failed: {err}"))?;
+    let fonts = vec![PathBuf::from(BUNDLED_POWERLINE_FONT_NAME)];
+    activate_powerline_fonts(&target, &fonts)?;
+    Ok(PowerlineFontInstallResult { success: true, message: "powerline_fonts_installed".to_string(), installed_count: 1 })
 }
 
 fn legacy_settings_path() -> Result<PathBuf, String> {
@@ -498,10 +589,7 @@ pub fn managed_command() -> Result<String, String> {
     ))
 }
 
-pub fn install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String> {
-    let path = claude_settings_path()?;
-    let mut root = read_json_object(&path)?;
-    backup_file(&path)?;
+fn managed_status_line(refresh_interval: Option<u8>) -> Result<Value, String> {
     let mut status_line = Map::new();
     status_line.insert("type".to_string(), json!("command"));
     status_line.insert("command".to_string(), json!(managed_command()?));
@@ -509,7 +597,14 @@ pub fn install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String>
     if let Some(interval) = refresh_interval {
         status_line.insert("refreshInterval".to_string(), json!(interval.clamp(1, 60)));
     }
-    root.insert("statusLine".to_string(), Value::Object(status_line));
+    Ok(Value::Object(status_line))
+}
+
+pub fn install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String> {
+    let path = claude_settings_path()?;
+    let mut root = read_json_object(&path)?;
+    backup_file(&path)?;
+    root.insert("statusLine".to_string(), managed_status_line(refresh_interval)?);
     let bytes = serde_json::to_vec_pretty(&Value::Object(root)).map_err(|err| err.to_string())?;
     atomic_write(&path, &bytes)?;
     get_status()
@@ -556,6 +651,7 @@ pub fn get_status() -> Result<StatuslineStatus, String> {
         current_command: command,
         legacy_settings_path: legacy.to_string_lossy().to_string(),
         legacy_settings_available: legacy.exists(),
+        cc_switch: None,
     })
 }
 
@@ -1417,12 +1513,34 @@ pub fn statusline_render_preview(
     render_preview(&settings, &payload, language.as_deref().unwrap_or("en-US"))
 }
 #[tauri::command]
-pub fn statusline_install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String> {
-    install(refresh_interval)
+pub async fn statusline_install(
+    app: AppHandle,
+    refresh_interval: Option<u8>,
+    cc_switch_db_path: Option<String>,
+) -> Result<StatuslineStatus, String> {
+    let status_line = managed_status_line(refresh_interval)?;
+    let mut status = install(refresh_interval)?;
+    let claude_dir = Path::new(&status.claude_settings_path)
+        .parent()
+        .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
+    status.cc_switch = Some(
+        sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, Some(status_line))
+            .await,
+    );
+    Ok(status)
 }
 #[tauri::command]
-pub fn statusline_uninstall() -> Result<StatuslineStatus, String> {
-    uninstall()
+pub async fn statusline_uninstall(
+    app: AppHandle,
+    cc_switch_db_path: Option<String>,
+) -> Result<StatuslineStatus, String> {
+    let mut status = uninstall()?;
+    let claude_dir = Path::new(&status.claude_settings_path)
+        .parent()
+        .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
+    status.cc_switch =
+        Some(sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, None).await);
+    Ok(status)
 }
 #[tauri::command]
 pub fn statusline_get_catalog() -> Vec<WidgetCatalogEntry> {
@@ -1528,5 +1646,22 @@ mod tests {
         assert!(looks_like_powerline_font("CaskaydiaCove NerdFont.ttf"));
         assert!(looks_like_powerline_font("Meslo LG S for Powerline.ttf"));
         assert!(!looks_like_powerline_font("Arial.ttf"));
+    }
+    #[test]
+    fn prefers_bundled_powerline_symbol_font() {
+        let fonts = vec![
+            PathBuf::from("Meslo LG S Bold for Powerline.ttf"),
+            PathBuf::from(BUNDLED_POWERLINE_FONT_NAME),
+        ];
+        assert_eq!(
+            preferred_powerline_font(&fonts).and_then(Path::file_name),
+            Some(std::ffi::OsStr::new(BUNDLED_POWERLINE_FONT_NAME)),
+        );
+    }
+    #[test]
+    fn bundled_powerline_font_has_expected_family() {
+        let mut db = fontdb::Database::new();
+        db.load_font_data(BUNDLED_POWERLINE_FONT.to_vec());
+        assert!(db.faces().flat_map(|face| &face.families).any(|(family, _)| family == "Symbols Nerd Font Mono"));
     }
 }

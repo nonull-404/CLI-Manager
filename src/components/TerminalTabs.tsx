@@ -167,6 +167,11 @@ const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
 };
 const SPLIT_PICKER_OUTSIDE_GUARD_MS = 250;
 type SplitPickerAnchor = DOMRect | { x: number; y: number };
+
+interface WorkspanTabOverflowState {
+  isOverflowing: boolean;
+  hiddenIds: string[];
+}
 type SplitPickerAlign = "start" | "end";
 
 type SplitPickerState = {
@@ -1982,10 +1987,12 @@ function TerminalCloseConfirmBubble({
 function SortableToolbarButton({
   id,
   isDragging,
+  tooltip,
   children,
 }: {
   id: string;
   isDragging: boolean;
+  tooltip: string;
   children: ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -2000,7 +2007,14 @@ function SortableToolbarButton({
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="ui-terminal-action-sort-item flex w-full justify-center" {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="ui-terminal-action-sort-item flex w-full justify-center"
+      data-tooltip={isDragging ? undefined : tooltip}
+      {...attributes}
+      {...listeners}
+    >
       {children}
     </div>
   );
@@ -2021,8 +2035,10 @@ function CpuCatIndicator({
   if (!enabled) return null;
 
   const usage = snapshot ? Math.max(0, Math.min(100, snapshot.cpu.usagePercent)) : 0;
-  // 速度按跑动频率线性映射（0%≈1.67s/圈 → 100%≈0.31s/圈），日常低占用区间的变速才肉眼可辨
-  const speed = `${(1 / (0.6 + 2.6 * (usage / 100))).toFixed(2)}s`;
+  const baseDuration = 1 / (0.6 + 2.6 * (usage / 100));
+  // 45% 以下保持原变速，超过后平滑加速，100% 时约 0.20s/圈
+  const urgencyFactor = usage <= 45 ? 1 : 1 - 0.35 * ((usage - 45) / 55);
+  const speed = `${(baseDuration * urgencyFactor).toFixed(2)}s`;
   const color =
     usage >= 75
       ? "var(--term-panel-red, #f25e5e)"
@@ -2140,6 +2156,10 @@ export function TerminalTabs({
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
   const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null);
   const [workspanTabListOpen, setWorkspanTabListOpen] = useState(false);
+  const [workspanTabOverflow, setWorkspanTabOverflow] = useState<WorkspanTabOverflowState>({
+    isOverflowing: false,
+    hiddenIds: [],
+  });
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [sidePanelTab, setSidePanelTab] = useState<TerminalSidePanelTab>("stats");
   // 非合并模式：实时统计与 Git 变更各自独立开关，可并排显示
@@ -2157,6 +2177,7 @@ export function TerminalTabs({
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
   const closeConfirmOutsideGuardUntilRef = useRef(0);
+  const workspanTabBarRef = useRef<HTMLDivElement | null>(null);
   const workspanTabScrollRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
@@ -2194,20 +2215,36 @@ export function TerminalTabs({
     }
     return next;
   }, [projectById, projectScopedTerminalViewEnabled, projects, scopedGroupProjectIds, sessions, terminalScopeValue, worktrees]);
-  const visibleWorkspanLayouts = useMemo(() => workspans.flatMap((workspan) => {
-    const paneTree = scopedSessionIds
+  // Keep the original Workspan trees mounted. The scoped tree is presentation-only;
+  // moving a session into a separate hidden tree would recreate its xterm instance.
+  const mountedWorkspanLayouts = useMemo(() => workspans.flatMap((workspan) => {
+    if (!workspan.paneTree) return [];
+    const visiblePaneTree = scopedSessionIds
       ? filterPaneTreeBySessionIds(workspan.paneTree, scopedSessionIds)
       : workspan.paneTree;
-    if (!paneTree) return [];
-    const visibleSessionIds = collectPaneLeaves(paneTree).flatMap((pane) => pane.sessionIds);
+    const visiblePanes = collectPaneLeaves(visiblePaneTree);
+    const visibleSessionIds = visiblePanes.flatMap((pane) => pane.sessionIds);
     return [{
       workspan,
-      paneTree,
-      panes: collectPaneLeaves(paneTree),
+      paneTree: workspan.paneTree,
+      visiblePaneTree,
+      visiblePanes,
+      visiblePaneIds: new Set(visiblePanes.map((pane) => pane.id)),
       sessionIds: collectWorkspanSessionIds(workspan),
       closeSessionIds: visibleSessionIds,
     }];
   }), [scopedSessionIds, workspans]);
+  const visibleWorkspanLayouts = useMemo(() => mountedWorkspanLayouts.flatMap((layout) => (
+    layout.visiblePaneTree
+      ? [{
+          workspan: layout.workspan,
+          paneTree: layout.visiblePaneTree,
+          panes: layout.visiblePanes,
+          sessionIds: layout.sessionIds,
+          closeSessionIds: layout.closeSessionIds,
+        }]
+      : []
+  )), [mountedWorkspanLayouts]);
   const effectiveActiveWorkspanId = visibleWorkspanLayouts.some(({ workspan }) => workspan.id === activeWorkspanId)
     ? activeWorkspanId
     : visibleWorkspanLayouts[0]?.workspan.id ?? null;
@@ -2215,12 +2252,6 @@ export function TerminalTabs({
   const renderPaneTree = activeWorkspanLayout?.paneTree ?? null;
   const visibleSessions = useMemo(
     () => (scopedSessionIds ? sessions.filter((session) => scopedSessionIds.has(session.id)) : sessions),
-    [scopedSessionIds, sessions]
-  );
-  const preservedHiddenPtySessions = useMemo(
-    () => scopedSessionIds
-      ? sessions.filter((session) => (session.kind ?? "pty") === "pty" && !scopedSessionIds.has(session.id))
-      : [],
     [scopedSessionIds, sessions]
   );
   const allPanes = activeWorkspanLayout?.panes ?? [];
@@ -2296,10 +2327,92 @@ export function TerminalTabs({
       vendor: singleSession ? inferSessionVendor(singleSession) : null,
     };
   }), [sessions, t, tabNotifications, visibleWorkspanLayouts]);
+  const workspanTabSignature = workspanTabModels
+    .map(({ workspan, title, vendor }) => `${workspan.id}:${title}:${vendor ?? "none"}`)
+    .join("|");
+  const hiddenWorkspanTabModels = useMemo(() => {
+    const hiddenIds = new Set(workspanTabOverflow.hiddenIds);
+    return workspanTabModels.filter(({ workspan }) => hiddenIds.has(workspan.id));
+  }, [workspanTabModels, workspanTabOverflow.hiddenIds]);
   const activateWorkspanTab = useCallback((workspanId: string) => {
     setActiveWorkspaceTab("terminal");
     setActiveWorkspan(workspanId);
   }, [setActiveWorkspan]);
+
+  const updateWorkspanTabOverflow = useCallback(() => {
+    if (activeDragWorkspanId) return;
+    const bar = workspanTabBarRef.current;
+    const scroller = workspanTabScrollRef.current;
+    if (!bar || !scroller) {
+      setWorkspanTabOverflow((current) => {
+        if (!current.isOverflowing && current.hiddenIds.length === 0) return current;
+        return { isOverflowing: false, hiddenIds: [] };
+      });
+      return;
+    }
+
+    const barStyle = window.getComputedStyle(bar);
+    const paddingLeft = Number.parseFloat(barStyle.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(barStyle.paddingRight) || 0;
+    const fullAvailableWidth = Math.max(0, bar.clientWidth - paddingLeft - paddingRight);
+    const isOverflowing = scroller.scrollWidth > fullAvailableWidth + 1;
+    const viewportRect = scroller.getBoundingClientRect();
+    const hiddenIds = isOverflowing
+      ? Array.from(scroller.querySelectorAll<HTMLElement>("[data-workspan-id]"))
+          .filter((tab) => {
+            const tabRect = tab.getBoundingClientRect();
+            return tabRect.left < viewportRect.left + 1 || tabRect.right > viewportRect.right - 1;
+          })
+          .map((tab) => tab.dataset.workspanId)
+          .filter((id): id is string => Boolean(id))
+      : [];
+
+    setWorkspanTabOverflow((current) => {
+      const hiddenIdsUnchanged =
+        current.hiddenIds.length === hiddenIds.length &&
+        current.hiddenIds.every((id, index) => id === hiddenIds[index]);
+      if (current.isOverflowing === isOverflowing && hiddenIdsUnchanged) return current;
+      return { isOverflowing, hiddenIds };
+    });
+  }, [activeDragWorkspanId]);
+
+  useEffect(() => {
+    const bar = workspanTabBarRef.current;
+    const scroller = workspanTabScrollRef.current;
+    let frameId: number | null = null;
+    const scheduleUpdate = () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        updateWorkspanTabOverflow();
+      });
+    };
+
+    scheduleUpdate();
+    if (!bar || !scroller) {
+      return () => {
+        if (frameId !== null) window.cancelAnimationFrame(frameId);
+      };
+    }
+
+    scroller.addEventListener("scroll", scheduleUpdate, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
+    observer?.observe(bar);
+    observer?.observe(scroller);
+    scroller.querySelectorAll<HTMLElement>("[data-workspan-id]").forEach((tab) => observer?.observe(tab));
+
+    return () => {
+      scroller.removeEventListener("scroll", scheduleUpdate);
+      observer?.disconnect();
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+    };
+  }, [updateWorkspanTabOverflow, workspanTabSignature]);
+
+  useEffect(() => {
+    if (!workspanTabOverflow.isOverflowing || workspanTabOverflow.hiddenIds.length === 0) {
+      setWorkspanTabListOpen(false);
+    }
+  }, [workspanTabOverflow.hiddenIds.length, workspanTabOverflow.isOverflowing]);
 
   useEffect(() => {
     if (!effectiveActiveWorkspanId) return;
@@ -3128,12 +3241,30 @@ export function TerminalTabs({
   }, [activeFullscreenPaneId, onToggleFullscreen]);
 
   const renderToolbarActions = useCallback(() => {
+    const toolbarTooltips: Record<string, string> = {
+      new: t("terminal.toolbar.newTerminal"),
+      templates: t("commandTemplate.title"),
+      commandHistory: t("commandHistory.title"),
+      fullscreen: fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.immersiveFullscreen"),
+      sessionHistory: `${t("terminal.toolbar.sessionHistory")} (${sessionHistoryShortcutHint})`,
+      replay: replayPanelActive ? t("terminal.toolbar.closeReplayPanel") : t("terminal.toolbar.openReplayPanel"),
+      gitChanges: gitPanelActive ? t("terminal.toolbar.closeGit") : t("terminal.toolbar.openGit"),
+      files:
+        !filesPanelActive && !filePanelProject
+          ? t("termStats.noProject")
+          : filesPanelActive
+            ? t("terminal.toolbar.closeFilesPanel")
+            : t("terminal.toolbar.openFilesPanel"),
+      stats: statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel"),
+      systemResources: systemResourcesPanelActive
+        ? t("terminal.toolbar.closeSystemResourcesPanel")
+        : t("terminal.toolbar.openSystemResourcesPanel"),
+    };
     const buttonMap: Record<string, ReactNode> = {
       new: (
         <button
           onClick={handleNewTab}
           className="ui-focus-ring ui-icon-action ui-primary-action ui-action-new"
-          title={t("terminal.toolbar.newTerminal")}
           aria-label={t("terminal.toolbar.newTerminal")}
         >
           <Plus size={15} strokeWidth={2} />
@@ -3159,7 +3290,6 @@ export function TerminalTabs({
           onClick={handleToggleGlobalFullscreen}
           className="ui-focus-ring ui-icon-action ui-action-fullscreen"
           data-active={fullscreen ? "true" : "false"}
-          title={fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.immersiveFullscreen")}
           aria-label={fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.enterImmersiveFullscreen")}
           aria-pressed={fullscreen}
         >
@@ -3171,7 +3301,6 @@ export function TerminalTabs({
           onClick={handleOpenHistoryTab}
           className="ui-focus-ring ui-icon-action ui-action-session-history"
           data-active={historyOpen ? "true" : "false"}
-          title={`${t("terminal.toolbar.sessionHistory")} (${sessionHistoryShortcutHint})`}
           aria-label={historyOpen ? t("terminal.toolbar.closeSessionHistory") : t("terminal.toolbar.openSessionHistory")}
           aria-controls="history-workspace"
           aria-expanded={historyOpen}
@@ -3185,7 +3314,6 @@ export function TerminalTabs({
           onClick={handleToggleReplayPanel}
           className="ui-focus-ring ui-icon-action ui-action-replay"
           data-active={replayPanelActive ? "true" : "false"}
-          title={replayPanelActive ? t("terminal.toolbar.closeReplayPanel") : t("terminal.toolbar.openReplayPanel")}
           aria-label={replayPanelActive ? t("terminal.toolbar.closeReplayPanel") : t("terminal.toolbar.openReplayPanel")}
           aria-pressed={replayPanelActive}
         >
@@ -3198,7 +3326,6 @@ export function TerminalTabs({
           onClick={handleToggleGitChangesPanel}
           className="ui-focus-ring ui-icon-action ui-action-git"
           data-active={gitPanelActive ? "true" : "false"}
-          title={gitPanelActive ? t("terminal.toolbar.closeGit") : t("terminal.toolbar.openGit")}
           aria-label={gitPanelActive ? t("terminal.toolbar.closeGitPanel") : t("terminal.toolbar.openGitPanel")}
           aria-pressed={gitPanelActive}
         >
@@ -3211,13 +3338,6 @@ export function TerminalTabs({
           disabled={!filesPanelActive && !filePanelProject}
           className="ui-focus-ring ui-icon-action ui-action-files"
           data-active={filesPanelActive ? "true" : "false"}
-          title={
-            !filesPanelActive && !filePanelProject
-              ? t("termStats.noProject")
-              : filesPanelActive
-                ? t("terminal.toolbar.closeFilesPanel")
-                : t("terminal.toolbar.openFilesPanel")
-          }
           aria-label={
             !filesPanelActive && !filePanelProject
               ? t("termStats.noProject")
@@ -3235,7 +3355,6 @@ export function TerminalTabs({
           onClick={handleToggleStatsPanel}
           className="ui-focus-ring ui-icon-action ui-action-stats"
           data-active={statsPanelActive ? "true" : "false"}
-          title={statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel")}
           aria-label={statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel")}
           aria-pressed={statsPanelActive}
         >
@@ -3247,7 +3366,6 @@ export function TerminalTabs({
           onClick={handleToggleSystemResourcesPanel}
           className="ui-focus-ring ui-icon-action ui-action-system-resources"
           data-active={systemResourcesPanelActive ? "true" : "false"}
-          title={systemResourcesPanelActive ? t("terminal.toolbar.closeSystemResourcesPanel") : t("terminal.toolbar.openSystemResourcesPanel")}
           aria-label={systemResourcesPanelActive ? t("terminal.toolbar.closeSystemResourcesPanel") : t("terminal.toolbar.openSystemResourcesPanel")}
           aria-pressed={systemResourcesPanelActive}
         >
@@ -3284,7 +3402,12 @@ export function TerminalTabs({
         >
           <SortableContext items={visibleButtons.map((b) => b.id)} strategy={verticalListSortingStrategy}>
             {visibleButtons.map((btn) => (
-              <SortableToolbarButton key={btn.id} id={btn.id} isDragging={activeToolbarDragId === btn.id}>
+              <SortableToolbarButton
+                key={btn.id}
+                id={btn.id}
+                isDragging={activeToolbarDragId === btn.id}
+                tooltip={toolbarTooltips[btn.id]}
+              >
                 {btn.element}
               </SortableToolbarButton>
             ))}
@@ -3380,56 +3503,61 @@ export function TerminalTabs({
     layoutPanes: TerminalPaneLeaf[],
     layoutActiveSessionId: string | null,
     layoutVisible: boolean
-  ) => (
-    <MemoPaneLeafView
-      key={pane.id}
-      pane={pane}
-      sessions={sessions}
-      visibleSessionIds={scopedSessionIds}
-      projects={projects}
-      worktrees={worktrees}
-      allPanes={layoutPanes}
-      activeSessionId={layoutActiveSessionId}
-      historyActive={historyActive}
-      editingSessionId={editingSessionId}
-      tabNotifications={tabNotifications}
-      fontSize={fontSize}
-      fontFamily={fontFamily}
-      resolvedTheme={resolvedTheme}
-      terminalThemeName={terminalThemeName}
-      terminalThemeBackground={terminalThemeBackground}
-      lightThemePalette={lightThemePalette}
-      darkThemePalette={darkThemePalette}
-      terminalBackgroundEnabled={terminalBackgroundEnabled}
-      terminalBackgroundImagePath={terminalBackgroundImagePath}
-      hiddenBackgroundSessionIds={hiddenBackgroundSessionIds}
-      isPaneFullscreen={layoutVisible && activeFullscreenPaneId === pane.id}
-      isLayoutVisible={layoutVisible && (!activeFullscreenPaneId || activeFullscreenPaneId === pane.id)}
-      activeDropPreview={layoutVisible ? activeDropPreview : null}
-      onActivateSession={handleActivateSession}
-      onCloseSessions={handleCloseSessions}
-      onStartEdit={setEditingSessionId}
-      onSubmitEdit={(sessionId, title) => {
-        void handleSubmitTabEdit(sessionId, title);
-      }}
-      onCancelEdit={() => setEditingSessionId(null)}
-      onNewTab={() => void handleNewTab()}
-      onDuplicateSession={handleDuplicateSession}
-      onOpenSplitPicker={handleOpenSplitPicker}
-      onUnsplit={(sessionId) => void unsplitTerminal(sessionId)}
-      onMoveToPane={moveSessionToPane}
-      onHideBackground={hideBackgroundForSession}
-      onShowBackground={showBackgroundForSession}
-      onTogglePaneFullscreen={handleTogglePaneFullscreen}
-      onOpenWorktreeChanges={handleOpenWorktreeChanges}
-      onOpenWorktreeHistory={handleOpenWorktreeHistory}
-      onFinishWorktree={(project, worktree) => setFinishTarget({ project, worktree })}
-      onInstallWorktreeDeps={handleInstallWorktreeDeps}
-      onDiscardWorktree={(project, worktree) => setDiscardTarget({ project, worktree })}
-      onOpenWorktreeDirectory={handleOpenWorktreeDirectory}
-      hideTabBar={pane.sessionIds.length <= 1}
-    />
-  ), [
+  ) => {
+    const visiblePaneSessionCount = scopedSessionIds
+      ? pane.sessionIds.filter((sessionId) => scopedSessionIds.has(sessionId)).length
+      : pane.sessionIds.length;
+    return (
+      <MemoPaneLeafView
+        key={pane.id}
+        pane={pane}
+        sessions={sessions}
+        visibleSessionIds={scopedSessionIds}
+        projects={projects}
+        worktrees={worktrees}
+        allPanes={layoutPanes}
+        activeSessionId={layoutActiveSessionId}
+        historyActive={historyActive}
+        editingSessionId={editingSessionId}
+        tabNotifications={tabNotifications}
+        fontSize={fontSize}
+        fontFamily={fontFamily}
+        resolvedTheme={resolvedTheme}
+        terminalThemeName={terminalThemeName}
+        terminalThemeBackground={terminalThemeBackground}
+        lightThemePalette={lightThemePalette}
+        darkThemePalette={darkThemePalette}
+        terminalBackgroundEnabled={terminalBackgroundEnabled}
+        terminalBackgroundImagePath={terminalBackgroundImagePath}
+        hiddenBackgroundSessionIds={hiddenBackgroundSessionIds}
+        isPaneFullscreen={layoutVisible && activeFullscreenPaneId === pane.id}
+        isLayoutVisible={layoutVisible && (!activeFullscreenPaneId || activeFullscreenPaneId === pane.id)}
+        activeDropPreview={layoutVisible ? activeDropPreview : null}
+        onActivateSession={handleActivateSession}
+        onCloseSessions={handleCloseSessions}
+        onStartEdit={setEditingSessionId}
+        onSubmitEdit={(sessionId, title) => {
+          void handleSubmitTabEdit(sessionId, title);
+        }}
+        onCancelEdit={() => setEditingSessionId(null)}
+        onNewTab={() => void handleNewTab()}
+        onDuplicateSession={handleDuplicateSession}
+        onOpenSplitPicker={handleOpenSplitPicker}
+        onUnsplit={(sessionId) => void unsplitTerminal(sessionId)}
+        onMoveToPane={moveSessionToPane}
+        onHideBackground={hideBackgroundForSession}
+        onShowBackground={showBackgroundForSession}
+        onTogglePaneFullscreen={handleTogglePaneFullscreen}
+        onOpenWorktreeChanges={handleOpenWorktreeChanges}
+        onOpenWorktreeHistory={handleOpenWorktreeHistory}
+        onFinishWorktree={(project, worktree) => setFinishTarget({ project, worktree })}
+        onInstallWorktreeDeps={handleInstallWorktreeDeps}
+        onDiscardWorktree={(project, worktree) => setDiscardTarget({ project, worktree })}
+        onOpenWorktreeDirectory={handleOpenWorktreeDirectory}
+        hideTabBar={visiblePaneSessionCount <= 1}
+      />
+    );
+  }, [
     activeFullscreenPaneId,
     activeDropPreview,
     darkThemePalette,
@@ -3582,6 +3710,7 @@ export function TerminalTabs({
                 onDragEnd={handleDragEnd}
               >
                 <div
+                  ref={workspanTabBarRef}
                   className="ui-terminal-pane-chrome ui-workspan-tabbar flex h-9 shrink-0 items-center px-1"
                 >
                   <div
@@ -3660,84 +3789,89 @@ export function TerminalTabs({
                       ))}
                     </SortableContext>
                   </div>
-                  <Popover open={workspanTabListOpen} onOpenChange={setWorkspanTabListOpen}>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="ui-terminal-tab-list-button"
-                        aria-label={t("terminal.workspan.openList")}
-                        aria-expanded={workspanTabListOpen}
-                        title={t("terminal.workspan.list")}
+                  {workspanTabOverflow.isOverflowing && (
+                    <Popover open={workspanTabListOpen} onOpenChange={setWorkspanTabListOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="ui-terminal-tab-list-button"
+                          aria-label={t("terminal.workspan.openList")}
+                          aria-expanded={workspanTabListOpen}
+                          title={t("terminal.workspan.list")}
+                        >
+                          <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="terminal-skin ui-terminal-tab-list-popover w-72 p-1.5"
+                        style={splitPickerMenuStyle}
+                        onOpenAutoFocus={(event) => event.preventDefault()}
+                        onCloseAutoFocus={(event) => event.preventDefault()}
                       >
-                        <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="end"
-                      className="terminal-skin ui-terminal-tab-list-popover w-72 p-1.5"
-                      style={splitPickerMenuStyle}
-                      onOpenAutoFocus={(event) => event.preventDefault()}
-                      onCloseAutoFocus={(event) => event.preventDefault()}
-                    >
-                      <div className="ui-terminal-tab-list-title px-2 py-1 text-[11px] font-semibold">
-                        {t("terminal.workspan.tabs")}
-                      </div>
-                      <div className="max-h-72 overflow-y-auto">
-                        {workspanTabModels.map((model) => (
-                          <div
-                            key={model.workspan.id}
-                            className="ui-interactive ui-terminal-tab-list-item flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs text-on-surface-variant"
-                            data-selected={model.workspan.id === effectiveActiveWorkspanId ? "true" : "false"}
-                          >
-                            <button
-                              type="button"
-                              className="ui-focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left"
-                              onClick={() => {
-                                activateWorkspanTab(model.workspan.id);
-                                setWorkspanTabListOpen(false);
-                              }}
-                              title={model.title}
+                        <div className="ui-terminal-tab-list-title px-2 py-1 text-[11px] font-semibold">
+                          {t("terminal.workspan.tabs")}
+                        </div>
+                        <div className="max-h-72 overflow-y-auto">
+                          {hiddenWorkspanTabModels.map((model) => (
+                            <div
+                              key={model.workspan.id}
+                              className="ui-interactive ui-terminal-tab-list-item flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs text-on-surface-variant"
+                              data-selected={model.workspan.id === effectiveActiveWorkspanId ? "true" : "false"}
                             >
-                              <span
-                                className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
-                                data-pulsing={PULSING_TAB_STATES.has(model.notification) ? "true" : "false"}
-                                style={{ backgroundColor: TAB_NOTIFICATION_COLORS[model.notification], color: TAB_NOTIFICATION_COLORS[model.notification] }}
-                                aria-hidden="true"
-                              />
-                              {model.vendor ? (
-                                <span className="inline-flex shrink-0 items-center" aria-hidden="true">
-                                  <VendorIcon vendor={model.vendor} size={14} />
-                                </span>
-                              ) : (
-                                <Terminal size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
-                              )}
-                              <span className="min-w-0 flex-1 truncate">{model.title}</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="ui-focus-ring ui-terminal-tab-close inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setWorkspanTabListOpen(false);
-                                handleCloseSessions(model.closeSessionIds, event.currentTarget.getBoundingClientRect());
-                              }}
-                              aria-label={t("terminal.workspan.close", { title: model.title })}
-                              title={t("terminal.workspan.close", { title: model.title })}
-                            >
-                              <X size={13} strokeWidth={2} aria-hidden="true" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+                              <button
+                                type="button"
+                                className="ui-focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left"
+                                onClick={() => {
+                                  activateWorkspanTab(model.workspan.id);
+                                  setWorkspanTabListOpen(false);
+                                }}
+                                title={model.title}
+                              >
+                                <span
+                                  className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
+                                  data-pulsing={PULSING_TAB_STATES.has(model.notification) ? "true" : "false"}
+                                  style={{ backgroundColor: TAB_NOTIFICATION_COLORS[model.notification], color: TAB_NOTIFICATION_COLORS[model.notification] }}
+                                  aria-hidden="true"
+                                />
+                                {model.vendor ? (
+                                  <span className="inline-flex shrink-0 items-center" aria-hidden="true">
+                                    <VendorIcon vendor={model.vendor} size={14} />
+                                  </span>
+                                ) : (
+                                  <Terminal size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+                                )}
+                                <span className="min-w-0 flex-1 truncate">{model.title}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="ui-focus-ring ui-terminal-tab-close inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setWorkspanTabListOpen(false);
+                                  handleCloseSessions(model.closeSessionIds, event.currentTarget.getBoundingClientRect());
+                                }}
+                                aria-label={t("terminal.workspan.close", { title: model.title })}
+                                title={t("terminal.workspan.close", { title: model.title })}
+                              >
+                                <X size={13} strokeWidth={2} aria-hidden="true" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-hidden">
-                  {visibleWorkspanLayouts.map((layout) => {
-                    const layoutVisible = layout.workspan.id === effectiveActiveWorkspanId;
+                  {mountedWorkspanLayouts.map((layout) => {
+                    const layoutVisible = Boolean(layout.visiblePaneTree)
+                      && layout.workspan.id === effectiveActiveWorkspanId;
                     const layoutActiveSessionId = layoutVisible
                       ? effectiveActiveSessionId
-                      : layout.workspan.activeSessionId;
+                      : layout.visiblePaneTree
+                        ? layout.workspan.activeSessionId
+                        : null;
                     return (
                       <div
                         key={layout.workspan.id}
@@ -3747,39 +3881,18 @@ export function TerminalTabs({
                       >
                         <SplitTerminalView
                           node={layout.paneTree}
+                          visibleNode={layout.visiblePaneTree}
                           renderLeaf={(pane) => renderWorkspanLeaf(
                             pane,
-                            layout.panes,
+                            layout.visiblePanes,
                             layoutActiveSessionId,
-                            layoutVisible
+                            layoutVisible && layout.visiblePaneIds.has(pane.id)
                           )}
                           fullscreenLeafId={layoutVisible ? activeFullscreenPaneId : null}
                         />
                       </div>
                     );
                   })}
-                  {preservedHiddenPtySessions.length > 0 && (
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none fixed left-0 top-0 h-px w-px overflow-hidden opacity-0"
-                      tabIndex={-1}
-                    >
-                      {preservedHiddenPtySessions.map((session) => (
-                        <XTermTerminal
-                          key={`preserve:${session.id}`}
-                          sessionId={session.id}
-                          isActive={false}
-                          isVisible={false}
-                          fontSize={fontSize}
-                          fontFamily={fontFamily}
-                          resolvedTheme={resolvedTheme}
-                          terminalThemeName={terminalThemeName}
-                          lightThemePalette={lightThemePalette}
-                          darkThemePalette={darkThemePalette}
-                        />
-                      ))}
-                    </div>
-                  )}
                 </div>
                 <DragOverlay dropAnimation={null}>
                   {activeDragWorkspanModel ? (

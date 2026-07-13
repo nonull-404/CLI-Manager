@@ -46,6 +46,7 @@ const NETWORK_DOWNLOAD_COLOR = `color-mix(in srgb, ${TERM_PANEL.blue} 82%, ${TER
 const DISK_READ_COLOR = `color-mix(in srgb, ${TERM_PANEL.green} 84%, ${TERM_PANEL.fg})`;
 const DISK_WRITE_COLOR = `color-mix(in srgb, ${TERM_PANEL.blue} 82%, ${TERM_PANEL.cyan})`;
 const MODULE_TITLE_COLOR = TERM_PANEL.green;
+const SYSTEM_RESOURCES_RUNTIME_CACHE_KEY = "system-resources-panel";
 
 const PANEL_SCROLLBAR_STYLE = {
   "--ui-scrollbar-thumb": TERM_PANEL.border,
@@ -855,7 +856,12 @@ export function SystemResourcesPanel({ open, visible = true, embedded = false }:
     processes: cardVisibility.processes,
   }), [cardVisibility]);
 
-  const { snapshot, history, loading, error, refresh } = useSystemResources(panelActive && orderedCards.length > 0, samplingOptions, 2500);
+  const { snapshot, history, loading, error, refresh } = useSystemResources(
+    panelActive && orderedCards.length > 0,
+    samplingOptions,
+    2500,
+    SYSTEM_RESOURCES_RUNTIME_CACHE_KEY
+  );
 
   const sampleTime = useMemo(() => {
     if (!snapshot?.sampledAt) return null;

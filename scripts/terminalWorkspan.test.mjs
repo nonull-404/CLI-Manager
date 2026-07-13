@@ -28,7 +28,11 @@ transpile(
   (code) => code.replace('from "./terminalPaneTree"', 'from "./terminalPaneTree.mjs"')
 );
 
-const { resolvePaneDropEdgeFromPoint } = await import(pathToFileURL(join(tempDir, "terminalPaneTree.mjs")).href);
+const {
+  collectPaneLeaves,
+  filterPaneTreeBySessionIds,
+  resolvePaneDropEdgeFromPoint,
+} = await import(pathToFileURL(join(tempDir, "terminalPaneTree.mjs")).href);
 
 const {
   collectWorkspanSessionIds,
@@ -56,6 +60,28 @@ test("workspan pane drop keeps a neutral center and resolves outer directions", 
   assert.equal(resolvePaneDropEdgeFromPoint(200, 275, rect, activationRatio), "bottom");
   assert.equal(resolvePaneDropEdgeFromPoint(200, 250, rect, activationRatio), null);
   assert.equal(resolvePaneDropEdgeFromPoint(170, 250, rect, activationRatio), null);
+});
+
+test("scoped pane filtering collapses visible layout without mutating the mounted pane tree", () => {
+  const firstLeaf = { type: "leaf", id: "first-pane", sessionIds: ["project-a"], activeSessionId: "project-a" };
+  const secondLeaf = { type: "leaf", id: "second-pane", sessionIds: ["project-b"], activeSessionId: "project-b" };
+  const mountedTree = {
+    type: "split",
+    id: "root",
+    direction: "horizontal",
+    ratio: 0.5,
+    first: firstLeaf,
+    second: secondLeaf,
+  };
+
+  const projectAView = filterPaneTreeBySessionIds(mountedTree, new Set(["project-a"]));
+  const projectBView = filterPaneTreeBySessionIds(mountedTree, new Set(["project-b"]));
+
+  assert.deepEqual(collectPaneLeaves(projectAView).map((leaf) => leaf.id), ["first-pane"]);
+  assert.deepEqual(collectPaneLeaves(projectBView).map((leaf) => leaf.id), ["second-pane"]);
+  assert.deepEqual(collectPaneLeaves(mountedTree).map((leaf) => leaf.id), ["first-pane", "second-pane"]);
+  assert.equal(mountedTree.first, firstLeaf);
+  assert.equal(mountedTree.second, secondLeaf);
 });
 
 test("mergeTerminalWorkspansAtPaneEdge preserves sessions and honors all four edges", () => {
