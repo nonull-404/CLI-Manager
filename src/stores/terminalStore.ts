@@ -33,6 +33,7 @@ import {
   type TerminalPaneSplitDirection,
 } from "./terminalPaneTree";
 import {
+  collapseTerminalWorkspansToLegacy,
   collectWorkspanSessionIds,
   createTerminalWorkspan,
   findWorkspanByPane,
@@ -192,6 +193,7 @@ interface TerminalStore {
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  setWorkspanModeEnabled: (enabled: boolean) => void;
   setActiveWorkspan: (id: string) => void;
   reorderWorkspans: (fromId: string, toId: string) => void;
   mergeWorkspanAtPaneEdge: (sourceId: string, targetId: string, targetPaneId: string, edge: TerminalPaneDropEdge) => void;
@@ -1054,9 +1056,19 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const newSessions = [...state.sessions, session];
     let workspans: TerminalWorkspan[];
     let activeWorkspanId: string;
-    const targetWorkspan = paneId ? findWorkspanByPane(state.workspans, paneId) : null;
-    if (paneId && targetWorkspan) {
-      const paneResult = addSessionToPaneTree(targetWorkspan.paneTree, paneId, sessionId, createPaneId);
+    const workspanEnabled = useSettingsStore.getState().workspanEnabled;
+    const explicitTargetWorkspan = paneId ? findWorkspanByPane(state.workspans, paneId) : null;
+    const targetWorkspan = explicitTargetWorkspan
+      ?? (!workspanEnabled
+        ? state.workspans.find((workspan) => workspan.id === state.activeWorkspanId) ?? state.workspans[0] ?? null
+        : null);
+    if (targetWorkspan) {
+      const paneResult = addSessionToPaneTree(
+        targetWorkspan.paneTree,
+        explicitTargetWorkspan ? paneId ?? null : targetWorkspan.activePaneId,
+        sessionId,
+        createPaneId
+      );
       workspans = updateTerminalWorkspan(state.workspans, targetWorkspan.id, (workspan) => (
         syncTerminalWorkspanLayout(workspan, paneResult.tree, paneResult.activePaneId, sessionId)
       ));
@@ -1202,6 +1214,20 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     set(mirror);
     scheduleSaveActiveId(id);
     persistWorkspanState(workspans, owner.id, state.sessions);
+  },
+
+  setWorkspanModeEnabled: (enabled) => {
+    const state = get();
+    const workspans = enabled
+      ? state.workspans
+      : collapseTerminalWorkspansToLegacy(state.workspans, state.activeWorkspanId, createPaneId);
+    const activeWorkspanId = enabled
+      ? state.activeWorkspanId
+      : workspans[0]?.id ?? null;
+    const mirror = buildWorkspanMirror(workspans, activeWorkspanId);
+    set({ ...mirror, splits: {} });
+    scheduleSaveActiveId(mirror.activeSessionId);
+    persistWorkspanState(workspans, mirror.activeWorkspanId, state.sessions);
   },
 
   setActiveWorkspan: (id) => {
@@ -1894,12 +1920,16 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       workspans.push(createTerminalWorkspan(createWorkspanId(), createPaneId(), session.id));
       assignedSessionIds.add(session.id);
     }
-    const activeWorkspanId = persistedActiveWorkspanId
+    let activeWorkspanId = persistedActiveWorkspanId
       && workspans.some((workspan) => workspan.id === persistedActiveWorkspanId)
       ? persistedActiveWorkspanId
       : newActiveId
         ? findWorkspanBySession(workspans, newActiveId)?.id ?? workspans[workspans.length - 1]?.id ?? null
         : workspans[workspans.length - 1]?.id ?? null;
+    if (!useSettingsStore.getState().workspanEnabled) {
+      workspans = collapseTerminalWorkspansToLegacy(workspans, activeWorkspanId, createPaneId);
+      activeWorkspanId = workspans[0]?.id ?? null;
+    }
     const mirror = buildWorkspanMirror(workspans, activeWorkspanId);
 
     set({

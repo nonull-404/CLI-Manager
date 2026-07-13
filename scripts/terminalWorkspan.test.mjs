@@ -35,6 +35,7 @@ const {
 } = await import(pathToFileURL(join(tempDir, "terminalPaneTree.mjs")).href);
 
 const {
+  collapseTerminalWorkspansToLegacy,
   collectWorkspanSessionIds,
   createTerminalWorkspan,
   mergeTerminalWorkspansAtPaneEdge,
@@ -82,6 +83,63 @@ test("scoped pane filtering collapses visible layout without mutating the mounte
   assert.deepEqual(collectPaneLeaves(mountedTree).map((leaf) => leaf.id), ["first-pane", "second-pane"]);
   assert.equal(mountedTree.first, firstLeaf);
   assert.equal(mountedTree.second, secondLeaf);
+});
+
+test("legacy collapse preserves the active layout and appends other workspans as tabs", () => {
+  const first = createTerminalWorkspan("first", "first-pane", "first-session");
+  const active = {
+    id: "active",
+    paneTree: {
+      type: "split",
+      id: "active-root",
+      direction: "horizontal",
+      ratio: 0.4,
+      first: { type: "leaf", id: "active-left", sessionIds: ["left-a", "left-b"], activeSessionId: "left-b" },
+      second: { type: "leaf", id: "active-right", sessionIds: ["right-a"], activeSessionId: "right-a" },
+    },
+    activePaneId: "active-left",
+    activeSessionId: "left-b",
+  };
+  const last = createTerminalWorkspan("last", "last-pane", "last-session");
+
+  const collapsed = collapseTerminalWorkspansToLegacy([first, active, last], "active", idFactory("legacy"));
+
+  assert.equal(collapsed.length, 1);
+  assert.equal(collapsed[0].id, "active");
+  assert.equal(collapsed[0].paneTree.id, "active-root");
+  assert.equal(collapsed[0].paneTree.direction, "horizontal");
+  assert.deepEqual(collapsed[0].paneTree.first.sessionIds, ["left-a", "left-b", "first-session", "last-session"]);
+  assert.deepEqual(collapsed[0].paneTree.second.sessionIds, ["right-a"]);
+  assert.equal(collapsed[0].paneTree.first.activeSessionId, "left-b");
+  assert.equal(collapsed[0].activePaneId, "active-left");
+  assert.equal(collapsed[0].activeSessionId, "left-b");
+  assert.deepEqual(
+    collectWorkspanSessionIds(collapsed[0]),
+    ["left-a", "left-b", "first-session", "last-session", "right-a"]
+  );
+});
+
+test("legacy collapse handles empty and single workspan layouts", () => {
+  assert.deepEqual(collapseTerminalWorkspansToLegacy([], null, idFactory()), []);
+
+  const single = createTerminalWorkspan("single", "single-pane", "single-session");
+  const collapsed = collapseTerminalWorkspansToLegacy([single], "single", idFactory());
+  assert.equal(collapsed.length, 1);
+  assert.deepEqual(collectWorkspanSessionIds(collapsed[0]), ["single-session"]);
+  assert.equal(collapsed[0].activeSessionId, "single-session");
+});
+
+test("legacy collapse keeps duplicate session ownership only once", () => {
+  const active = createTerminalWorkspan("active", "active-pane", "shared-session");
+  const duplicate = {
+    id: "duplicate",
+    paneTree: { type: "leaf", id: "duplicate-pane", sessionIds: ["shared-session", "new-session"], activeSessionId: "new-session" },
+    activePaneId: "duplicate-pane",
+    activeSessionId: "new-session",
+  };
+
+  const collapsed = collapseTerminalWorkspansToLegacy([active, duplicate], "active", idFactory());
+  assert.deepEqual(collectWorkspanSessionIds(collapsed[0]), ["shared-session", "new-session"]);
 });
 
 test("mergeTerminalWorkspansAtPaneEdge preserves sessions and honors all four edges", () => {

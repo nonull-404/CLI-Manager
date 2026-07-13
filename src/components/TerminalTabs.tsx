@@ -2132,6 +2132,7 @@ export function TerminalTabs({
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const terminalBackgroundEnabled = useSettingsStore((s) => s.terminalBackground.enabled);
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
+  const workspanEnabled = useSettingsStore((s) => s.workspanEnabled);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
   const systemResourceMonitoringEnabled = useSettingsStore((s) => s.systemResourceMonitoringEnabled);
@@ -2407,7 +2408,7 @@ export function TerminalTabs({
       observer?.disconnect();
       if (frameId !== null) window.cancelAnimationFrame(frameId);
     };
-  }, [updateWorkspanTabOverflow, workspanTabSignature]);
+  }, [updateWorkspanTabOverflow, workspanEnabled, workspanTabSignature]);
 
   useEffect(() => {
     if (!workspanTabOverflow.isOverflowing || workspanTabOverflow.hiddenIds.length === 0) {
@@ -2424,7 +2425,7 @@ export function TerminalTabs({
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [effectiveActiveWorkspanId, workspanTabModels.length]);
+  }, [effectiveActiveWorkspanId, workspanEnabled, workspanTabModels.length]);
   const activeDragWorkspanModel = activeDragWorkspan
     ? workspanTabModels.find(({ workspan }) => workspan.id === activeDragWorkspan.id) ?? null
     : null;
@@ -3569,7 +3570,7 @@ export function TerminalTabs({
         onInstallWorktreeDeps={handleInstallWorktreeDeps}
         onDiscardWorktree={(project, worktree) => setDiscardTarget({ project, worktree })}
         onOpenWorktreeDirectory={handleOpenWorktreeDirectory}
-        hideTabBar={visiblePaneSessionCount <= 1}
+        hideTabBar={workspanEnabled && visiblePaneSessionCount <= 1}
       />
     );
   }, [
@@ -3600,6 +3601,7 @@ export function TerminalTabs({
     scopedSessionIds,
     sessions,
     worktrees,
+    workspanEnabled,
     showBackgroundForSession,
     tabNotifications,
     terminalThemeBackground,
@@ -3724,10 +3726,11 @@ export function TerminalTabs({
                 onDragCancel={clearDragState}
                 onDragEnd={handleDragEnd}
               >
-                <div
-                  ref={workspanTabBarRef}
-                  className="ui-terminal-pane-chrome ui-workspan-tabbar flex h-9 shrink-0 items-center px-1"
-                >
+                {workspanEnabled && (
+                  <div
+                    ref={workspanTabBarRef}
+                    className="ui-terminal-pane-chrome ui-workspan-tabbar flex h-9 shrink-0 items-center px-1"
+                  >
                   <div
                     ref={workspanTabScrollRef}
                     className="ui-workspan-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto"
@@ -3877,7 +3880,8 @@ export function TerminalTabs({
                       </PopoverContent>
                     </Popover>
                   )}
-                </div>
+                  </div>
+                )}
                 <div className="relative min-h-0 flex-1 overflow-hidden">
                   {mountedWorkspanLayouts.map((layout) => {
                     const layoutVisible = Boolean(layout.visiblePaneTree)

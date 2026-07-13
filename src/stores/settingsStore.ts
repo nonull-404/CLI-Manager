@@ -335,6 +335,7 @@ interface Settings {
   /** 批量启动分屏方向：vertical（上下分屏） / horizontal（左右分屏）。默认 horizontal。 */
   batchLaunchPaneDirection: BatchLaunchPaneDirection;
   projectScopedTerminalViewEnabled: boolean;
+  workspanEnabled: boolean;
 }
 
 interface SettingsStore extends Settings {
@@ -479,6 +480,7 @@ const DEFAULTS: Settings = {
   batchLaunchGroupInPane: false,
   batchLaunchPaneDirection: "horizontal",
   projectScopedTerminalViewEnabled: false,
+  workspanEnabled: true,
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -1193,6 +1195,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.projectScopedTerminalViewEnabled === "boolean"
         ? entries.projectScopedTerminalViewEnabled
         : DEFAULTS.projectScopedTerminalViewEnabled;
+    entries.workspanEnabled =
+      typeof entries.workspanEnabled === "boolean"
+        ? entries.workspanEnabled
+        : DEFAULTS.workspanEnabled;
 
     if (pendingStoreWrites.length > 0) {
       await Promise.all(pendingStoreWrites);
