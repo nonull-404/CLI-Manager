@@ -84,6 +84,56 @@ fn app_open_devtools(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub fn run_daemon_and_exit() -> ! {
+    use crate::daemon::discovery::daemon_info_path;
+    use crate::daemon::server::{DaemonServer, DaemonServerConfig};
+
+    let _ = simple_stderr_logger::init();
+    daemon::setup_process_governance();
+
+    let data_dir = match app_paths::cli_manager_data_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("cli-manager-daemon: data dir unavailable: {err}");
+            std::process::exit(1);
+        }
+    };
+    let info_path = daemon_info_path(&data_dir, cfg!(debug_assertions));
+    let config = DaemonServerConfig {
+        info_path,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    if let Err(err) = DaemonServer::run(config) {
+        eprintln!("cli-manager-daemon: {err}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+mod simple_stderr_logger {
+    use log::{Level, Metadata, Record};
+
+    struct StderrLogger;
+
+    impl log::Log for StderrLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= Level::Info
+        }
+        fn log(&self, record: &Record) {
+            if self.enabled(record.metadata()) {
+                eprintln!("[{}] {}", record.level(), record.args());
+            }
+        }
+        fn flush(&self) {}
+    }
+
+    static LOGGER: StderrLogger = StderrLogger;
+
+    pub fn init() -> Result<(), log::SetLoggerError> {
+        log::set_logger(&LOGGER).map(|_| log::set_max_level(log::LevelFilter::Info))
+    }
+}
+
 pub(crate) const MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION: i64 = 13;
 pub(crate) const MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION: &str =
     "create_session_favorite_snapshots_table";

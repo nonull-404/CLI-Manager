@@ -429,35 +429,18 @@ fn spawn_and_connect(
 }
 
 fn daemon_executable_path() -> Result<std::path::PathBuf, String> {
-    let name = if cfg!(target_os = "windows") {
-        "cli-manager-daemon.exe"
-    } else {
-        "cli-manager-daemon"
-    };
     let current = std::env::current_exe().map_err(|err| format!("current_exe failed: {err}"))?;
-    if let Some(dir) = current.parent() {
-        let path = dir.join(name);
-        if path.is_file() {
-            return Ok(path);
-        }
+    if current.is_file() {
+        return Ok(current);
     }
-    // 兜底：PATH 查找。覆盖发行版把主程序挪出安装目录的场景
-    // （如 AUR wrapper 将主程序移至 /usr/lib/CLI-Manager 而 daemon 留在 /usr/bin）。
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let path = dir.join(name);
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
-    }
-    Err(format!("daemon executable not found: {name}"))
+    Err("main executable not found for daemon self-spawn".to_string())
 }
 
 fn spawn_daemon_process() -> Result<(), String> {
     let exe = daemon_executable_path()?;
     let mut command = std::process::Command::new(&exe);
     command
+        .arg("__daemon")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

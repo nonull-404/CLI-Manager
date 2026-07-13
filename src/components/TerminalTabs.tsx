@@ -3308,6 +3308,7 @@ export function TerminalTabs({
       systemResources: systemResourcesPanelActive
         ? t("terminal.toolbar.closeSystemResourcesPanel")
         : t("terminal.toolbar.openSystemResourcesPanel"),
+      backgroundTasks: t("terminal.backgroundTasks.title"),
     };
     const buttonMap: Record<string, ReactNode> = {
       new: (

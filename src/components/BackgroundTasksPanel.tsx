@@ -100,7 +100,6 @@ export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverStyle 
           data-active={open ? "true" : "false"}
           data-has-tasks={tasks.length > 0 ? "true" : "false"}
           disabled={tasks.length === 0}
-          title={t("terminal.backgroundTasks.title")}
           aria-label={t("terminal.backgroundTasks.title")}
         >
           <Activity size={14} strokeWidth={1.8} />

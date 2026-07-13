@@ -12,6 +12,9 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("__statusline") {
         cli_manager_lib::statusline::run_and_exit();
     }
+    if args.get(1).map(String::as_str) == Some("__daemon") {
+        cli_manager_lib::run_daemon_and_exit();
+    }
 
     cli_manager_lib::run()
 }
