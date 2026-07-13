@@ -3919,8 +3919,14 @@
   height: 36px;
   min-height: 36px;
   border-color: color-mix(in srgb, var(--terminal-tab-border) 38%, transparent);
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 22%, transparent) transparent;
+}
+
+.ui-workspan-tab-scroll {
+  scrollbar-width: none;
+}
+
+.ui-workspan-tab-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .ui-workspan-tabbar .ui-workspan-tab {

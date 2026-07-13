@@ -746,6 +746,8 @@ function SortableWorkspanTab({
   onActivate,
   onClose,
   onRename,
+  menuContent,
+  menuStyle,
 }: {
   workspan: TerminalWorkspan;
   title: string;
@@ -755,8 +757,10 @@ function SortableWorkspanTab({
   dragDisabled: boolean;
   renameDisabled: boolean;
   onActivate: () => void;
-  onClose: (anchor: DOMRect) => void;
+  onClose: (anchor?: SplitPickerAnchor) => void;
   onRename: (title: string) => void;
+  menuContent: (getAnchor: () => SplitPickerAnchor | undefined, startRename: () => void) => ReactNode;
+  menuStyle?: CSSProperties;
 }) {
   const { t } = useI18n();
   const sortableId = `${WORKSPAN_DRAG_PREFIX}${workspan.id}`;
@@ -769,6 +773,8 @@ function SortableWorkspanTab({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const tabElementRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuPointRef = useRef<SplitPickerAnchor | null>(null);
   const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
   const style: CSSProperties = {
     transform: isDragging ? undefined : CSS.Transform.toString(horizontalTransform),
@@ -793,68 +799,91 @@ function SortableWorkspanTab({
     setEditing(false);
   }, [editValue, onRename, title]);
 
+  const startRename = useCallback(() => {
+    if (!renameDisabled) setEditing(true);
+  }, [renameDisabled]);
+  const setTabNodeRef = useCallback((node: HTMLDivElement | null) => {
+    tabElementRef.current = node;
+    setNodeRef(node);
+  }, [setNodeRef]);
+  const getTabAnchor = useCallback(
+    () => contextMenuPointRef.current ?? tabElementRef.current?.getBoundingClientRect(),
+    []
+  );
+
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="ui-interactive ui-tab-trigger ui-terminal-tab-item ui-workspan-tab mx-1 flex h-7 min-w-[104px] max-w-[200px] shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
-      data-workspan-id={workspan.id}
-      data-selected={isActive ? "true" : "false"}
-      onClick={onActivate}
-      onDoubleClick={(event) => {
-        event.stopPropagation();
-        if (!renameDisabled) setEditing(true);
-      }}
-      {...sortableAttributes}
-      {...listeners}
-    >
-      <span
-        className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
-        data-pulsing={PULSING_TAB_STATES.has(notification) ? "true" : "false"}
-        style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification], color: TAB_NOTIFICATION_COLORS[notification] }}
-        aria-label={t(TAB_NOTIFICATION_LABELS[notification])}
-        role="status"
-      />
-      {vendor ? (
-        <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
-          <VendorIcon vendor={vendor} size={14} />
-        </span>
-      ) : (
-        <Terminal size={14} strokeWidth={1.8} aria-hidden="true" />
-      )}
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={editValue}
-          onChange={(event) => setEditValue(event.target.value)}
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={setTabNodeRef}
+          style={style}
+          className="ui-interactive ui-tab-trigger ui-terminal-tab-item ui-workspan-tab mx-1 flex h-7 min-w-[104px] max-w-[200px] shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
+          data-workspan-id={workspan.id}
+          data-selected={isActive ? "true" : "false"}
+          onClick={onActivate}
+          onDoubleClick={(event) => {
             event.stopPropagation();
-            if (event.key === "Enter") submitRename();
-            if (event.key === "Escape") setEditing(false);
+            startRename();
           }}
-          onBlur={submitRename}
-          className="ui-input h-5 min-w-0 flex-1 rounded-md px-1.5 py-0 text-[12px] text-on-surface outline-none"
-          aria-label={t("terminal.tab.rename")}
-        />
-      ) : (
-        <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
-      )}
-      <button
-        type="button"
-        className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          onClose(event.currentTarget.getBoundingClientRect());
-        }}
-        aria-label={t("terminal.workspan.close", { title })}
-        title={t("terminal.workspan.close", { title })}
-      >
-        <X size={13} strokeWidth={2.2} aria-hidden="true" />
-      </button>
-    </div>
+          onContextMenu={(event) => {
+            contextMenuPointRef.current = { x: event.clientX, y: event.clientY };
+          }}
+          {...sortableAttributes}
+          {...listeners}
+        >
+          <span
+            className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
+            data-pulsing={PULSING_TAB_STATES.has(notification) ? "true" : "false"}
+            style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification], color: TAB_NOTIFICATION_COLORS[notification] }}
+            aria-label={t(TAB_NOTIFICATION_LABELS[notification])}
+            role="status"
+          />
+          {vendor ? (
+            <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
+              <VendorIcon vendor={vendor} size={14} />
+            </span>
+          ) : (
+            <Terminal size={14} strokeWidth={1.8} aria-hidden="true" />
+          )}
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={editValue}
+              onChange={(event) => setEditValue(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") submitRename();
+                if (event.key === "Escape") setEditing(false);
+              }}
+              onBlur={submitRename}
+              className="ui-input h-5 min-w-0 flex-1 rounded-md px-1.5 py-0 text-[12px] text-on-surface outline-none"
+              aria-label={t("terminal.tab.rename")}
+            />
+          ) : (
+            <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
+          )}
+          <button
+            type="button"
+            className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onClose(event.currentTarget.getBoundingClientRect());
+            }}
+            aria-label={t("terminal.workspan.close", { title })}
+            title={t("terminal.workspan.close", { title })}
+          >
+            <X size={13} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="terminal-skin" style={menuStyle}>
+        {menuContent(getTabAnchor, startRename)}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -2110,6 +2139,7 @@ export function TerminalTabs({
   const [activeDragWorkspanId, setActiveDragWorkspanId] = useState<string | null>(null);
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
   const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null);
+  const [workspanTabListOpen, setWorkspanTabListOpen] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [sidePanelTab, setSidePanelTab] = useState<TerminalSidePanelTab>("stats");
   // 非合并模式：实时统计与 Git 变更各自独立开关，可并排显示
@@ -2127,6 +2157,7 @@ export function TerminalTabs({
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
   const closeConfirmOutsideGuardUntilRef = useRef(0);
+  const workspanTabScrollRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
 
@@ -2265,6 +2296,21 @@ export function TerminalTabs({
       vendor: singleSession ? inferSessionVendor(singleSession) : null,
     };
   }), [sessions, t, tabNotifications, visibleWorkspanLayouts]);
+  const activateWorkspanTab = useCallback((workspanId: string) => {
+    setActiveWorkspaceTab("terminal");
+    setActiveWorkspan(workspanId);
+  }, [setActiveWorkspan]);
+
+  useEffect(() => {
+    if (!effectiveActiveWorkspanId) return;
+    const frameId = window.requestAnimationFrame(() => {
+      const tab = Array.from(workspanTabScrollRef.current?.querySelectorAll<HTMLElement>("[data-workspan-id]") ?? [])
+        .find((node) => node.dataset.workspanId === effectiveActiveWorkspanId);
+      tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [effectiveActiveWorkspanId, workspanTabModels.length]);
   const activeDragWorkspanModel = activeDragWorkspan
     ? workspanTabModels.find(({ workspan }) => workspan.id === activeDragWorkspan.id) ?? null
     : null;
@@ -3536,35 +3582,155 @@ export function TerminalTabs({
                 onDragEnd={handleDragEnd}
               >
                 <div
-                  className="ui-terminal-pane-chrome ui-workspan-tabbar flex h-9 shrink-0 items-center overflow-x-auto px-1"
-                  role="tablist"
-                  aria-label={t("terminal.workspan.tabList")}
+                  className="ui-terminal-pane-chrome ui-workspan-tabbar flex h-9 shrink-0 items-center px-1"
                 >
-                  <SortableContext
-                    items={workspanTabModels.map(({ workspan }) => `${WORKSPAN_DRAG_PREFIX}${workspan.id}`)}
-                    strategy={horizontalListSortingStrategy}
+                  <div
+                    ref={workspanTabScrollRef}
+                    className="ui-workspan-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto"
+                    role="tablist"
+                    aria-label={t("terminal.workspan.tabList")}
+                    onWheel={(event) => {
+                      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+                      event.currentTarget.scrollLeft += event.deltaY;
+                      event.preventDefault();
+                    }}
                   >
-                    {workspanTabModels.map((model) => (
-                      <SortableWorkspanTab
-                        key={model.workspan.id}
-                        workspan={model.workspan}
-                        title={model.title}
-                        notification={model.notification}
-                        vendor={model.vendor}
-                        isActive={model.workspan.id === effectiveActiveWorkspanId}
-                        dragDisabled={hasScopedTerminalFilter}
-                        renameDisabled={!model.singleSession}
-                        onActivate={() => {
-                          setActiveWorkspaceTab("terminal");
-                          setActiveWorkspan(model.workspan.id);
-                        }}
-                        onClose={(anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
-                        onRename={(title) => {
-                          if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
-                        }}
-                      />
-                    ))}
-                  </SortableContext>
+                    <SortableContext
+                      items={workspanTabModels.map(({ workspan }) => `${WORKSPAN_DRAG_PREFIX}${workspan.id}`)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      {workspanTabModels.map((model, index) => (
+                        <SortableWorkspanTab
+                          key={model.workspan.id}
+                          workspan={model.workspan}
+                          title={model.title}
+                          notification={model.notification}
+                          vendor={model.vendor}
+                          isActive={model.workspan.id === effectiveActiveWorkspanId}
+                          dragDisabled={hasScopedTerminalFilter}
+                          renameDisabled={!model.singleSession}
+                          onActivate={() => activateWorkspanTab(model.workspan.id)}
+                          onClose={(anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
+                          onRename={(title) => {
+                            if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
+                          }}
+                          menuStyle={splitPickerMenuStyle}
+                          menuContent={(getAnchor, startRename) => (
+                            <>
+                              <ContextMenuItem onSelect={() => handleCloseSessions(model.closeSessionIds, getAnchor())}>
+                                {t("terminal.workspan.closeCurrent")}
+                              </ContextMenuItem>
+                              {model.singleSession && (
+                                <ContextMenuItem onSelect={() => window.setTimeout(startRename, 0)}>
+                                  {t("terminal.tab.rename")}
+                                </ContextMenuItem>
+                              )}
+                              <ContextMenuItem
+                                disabled={workspanTabModels.length <= 1}
+                                onSelect={() => handleCloseSessions(
+                                  workspanTabModels
+                                    .filter((item) => item.workspan.id !== model.workspan.id)
+                                    .flatMap((item) => item.closeSessionIds),
+                                  getAnchor()
+                                )}
+                              >
+                                {t("terminal.workspan.closeOthers")}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                disabled={index === 0}
+                                onSelect={() => handleCloseSessions(
+                                  workspanTabModels.slice(0, index).flatMap((item) => item.closeSessionIds),
+                                  getAnchor()
+                                )}
+                              >
+                                {t("terminal.workspan.closeLeft")}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                disabled={index === workspanTabModels.length - 1}
+                                onSelect={() => handleCloseSessions(
+                                  workspanTabModels.slice(index + 1).flatMap((item) => item.closeSessionIds),
+                                  getAnchor()
+                                )}
+                              >
+                                {t("terminal.workspan.closeRight")}
+                              </ContextMenuItem>
+                            </>
+                          )}
+                        />
+                      ))}
+                    </SortableContext>
+                  </div>
+                  <Popover open={workspanTabListOpen} onOpenChange={setWorkspanTabListOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="ui-terminal-tab-list-button"
+                        aria-label={t("terminal.workspan.openList")}
+                        aria-expanded={workspanTabListOpen}
+                        title={t("terminal.workspan.list")}
+                      >
+                        <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="terminal-skin ui-terminal-tab-list-popover w-72 p-1.5"
+                      style={splitPickerMenuStyle}
+                      onOpenAutoFocus={(event) => event.preventDefault()}
+                      onCloseAutoFocus={(event) => event.preventDefault()}
+                    >
+                      <div className="ui-terminal-tab-list-title px-2 py-1 text-[11px] font-semibold">
+                        {t("terminal.workspan.tabs")}
+                      </div>
+                      <div className="max-h-72 overflow-y-auto">
+                        {workspanTabModels.map((model) => (
+                          <div
+                            key={model.workspan.id}
+                            className="ui-interactive ui-terminal-tab-list-item flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs text-on-surface-variant"
+                            data-selected={model.workspan.id === effectiveActiveWorkspanId ? "true" : "false"}
+                          >
+                            <button
+                              type="button"
+                              className="ui-focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left"
+                              onClick={() => {
+                                activateWorkspanTab(model.workspan.id);
+                                setWorkspanTabListOpen(false);
+                              }}
+                              title={model.title}
+                            >
+                              <span
+                                className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
+                                data-pulsing={PULSING_TAB_STATES.has(model.notification) ? "true" : "false"}
+                                style={{ backgroundColor: TAB_NOTIFICATION_COLORS[model.notification], color: TAB_NOTIFICATION_COLORS[model.notification] }}
+                                aria-hidden="true"
+                              />
+                              {model.vendor ? (
+                                <span className="inline-flex shrink-0 items-center" aria-hidden="true">
+                                  <VendorIcon vendor={model.vendor} size={14} />
+                                </span>
+                              ) : (
+                                <Terminal size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+                              )}
+                              <span className="min-w-0 flex-1 truncate">{model.title}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="ui-focus-ring ui-terminal-tab-close inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setWorkspanTabListOpen(false);
+                                handleCloseSessions(model.closeSessionIds, event.currentTarget.getBoundingClientRect());
+                              }}
+                              aria-label={t("terminal.workspan.close", { title: model.title })}
+                              title={t("terminal.workspan.close", { title: model.title })}
+                            >
+                              <X size={13} strokeWidth={2} aria-hidden="true" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-hidden">
                   {visibleWorkspanLayouts.map((layout) => {
