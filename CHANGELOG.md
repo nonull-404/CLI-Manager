@@ -2,14 +2,6 @@
 
 ## [V1.2.8] - 2026-07-14
 
-### 修复
-- **WebDAV Worktree 同步修复**：WebDAV 与本地同步 payload 补齐 active Worktree 记录及项目 Worktree 配置字段，旧同步包缺失 `worktrees` 时按空列表兼容；解决 Worktree 子目录记录上传/下载后丢失的问题，已丢弃或 missing 的 Worktree 不进入同步。
-- **WebDAV 冲突处理修复**：点击“保留本地”成功上传后会清除冲突状态；点击“使用远程”会应用远程数据并回写当前设备快照，避免重启后同一冲突再次出现。
-- **WebDAV Worktree 缺失目录拦截**：从远端恢复 Worktree 后会立即校验本机路径，不存在的目录标记为 missing，并阻止打开终端、文件面板、资源管理器或依赖安装终端。
-- **同步配置迁移备份修复**：启动迁移旧数据目录时不再把废弃的 `webdavPassword` / `hasPassword` 键反复合并回 `.cli-manager/sync-config.json`，避免生成大量 `sync-config.json.backup-*` 文件。
-
-## [TEMP] - 2026-07-13
-
 ### 历史与统计
 - **历史用量分析全屏看板**：历史用量分析改为应用窗口内全屏工作区，Token / 费用趋势独占中间整行，底部按项目排行、模型排行、24 小时活跃和 Token 构成四列展示，并保留原有筛选、下钻和其他统计能力。
 - **本地请求日志**：历史用量分析新增“请求日志”页签，直接增量同步本机 Claude/Codex 会话日志中的 usage 事件到 CLI-Manager 自身数据库，支持来源、项目、模型、会话、日期筛选、分页、手动刷新和历史会话跳转；不调用、不读取、不依赖 cc-switch。
@@ -22,6 +14,7 @@
 - **Workspan 自定义名称**：顶层 Workspan 右键菜单新增“重命名工作区”，通过应用内弹窗设置并持久化自定义名称；提交空白名称后恢复单会话终端标题或多会话 `Workspan · N` 默认标题。
 
 ### 修复
+- **终端切换渐进重绘修复**：保留隐藏终端恢复时的积压输出续写和整视口刷新，在 xterm 完成整屏渲染前临时隐藏绘制层并通过超时兜底恢复显示，避免切换终端时出现从左上到右下的可见重绘，同时不重新引入偶发白屏。
 - **Tauri 开发启动修复**：移除仓库根目录误放的 Rust 与 Tauri 配置副本，恢复 CLI 对 `src-tauri` 项目的正确识别，修复 `npm run tauri dev` 在 `cargo metadata` 阶段启动失败。
 - **Codex 供应商通用配置解析修复**：切换 Codex 供应商时按 TOML 合并 `common_config_codex` 与供应商 `config`，不再把 Codex 通用配置误当 JSON 解析，修复 AnyRouter 等供应商提示“配置解析失败、无法应用”。
 - **Codex 供应商重复配置修复**：合并通用配置与供应商配置时按 TOML 键语义识别单双引号等价表头，避免 Hook 状态表被重复写入 profile 并触发 `duplicate key`。
@@ -31,12 +24,12 @@
 - **本地路径打开权限修复**：项目、Worktree 和终端路径统一通过 Rust 命令调用系统文件管理器或默认应用，不再依赖 WebView opener 路径 scope，修复 `open_path not allowed by ACL` 及 `Not allowed to open path` 错误。
 - **历史统计入口无响应修复**：修正全屏统计面板被共享样式覆盖为相对定位的问题，点击侧边栏历史用量分析后可正常显示看板；同样适用于 ccusage 全屏看板。
 - **鼠标侧键切换 Workspan 修复**：Workspan 默认开启且当前工作区只有一个会话时，鼠标前进/后退侧键和 Tab 切换快捷键会切换到相邻 Workspan，不再因仅在当前 Pane 树内循环而停留在原标签。
-
-## [V1.2.8] - 2026-07-14
-
-### 修复
 - **终端背景图状态栏可读性修复**：开启背景图时，在终端底部增加随终端主题明暗和现有遮罩强度自适应的渐变可读性遮罩，并提高 ANSI 色块内前景文字的最小对比度；背景图模式下会同步增强终端默认前景色和常用灰色 ANSI 文本颜色，避免 Claude Code 状态栏文字落在复杂图像或深色块上时看不清。未启用背景图的终端保持原样。
 - **Tauri 开发启动修复**：保留根目录 Rust/Tauri 文件，启动脚本改为从 `src-tauri` 工程目录运行 Tauri CLI，并统一解析 dev/local 自定义配置路径，避免 `cargo metadata` 把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 解析。
+- **WebDAV Worktree 同步修复**：WebDAV 与本地同步 payload 补齐 active Worktree 记录及项目 Worktree 配置字段，旧同步包缺失 `worktrees` 时按空列表兼容；解决 Worktree 子目录记录上传/下载后丢失的问题，已丢弃或 missing 的 Worktree 不进入同步。
+- **WebDAV 冲突处理修复**：点击“保留本地”成功上传后会清除冲突状态；点击“使用远程”会应用远程数据并回写当前设备快照，避免重启后同一冲突再次出现。
+- **WebDAV Worktree 缺失目录拦截**：从远端恢复 Worktree 后会立即校验本机路径，不存在的目录标记为 missing，并阻止打开终端、文件面板、资源管理器或依赖安装终端。
+- **同步配置迁移备份修复**：启动迁移旧数据目录时不再把废弃的 `webdavPassword` / `hasPassword` 键反复合并回 `.cli-manager/sync-config.json`，避免生成大量 `sync-config.json.backup-*` 文件。
 
 ## [V1.2.7] - 2026-07-12
 

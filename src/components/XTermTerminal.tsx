@@ -53,7 +53,11 @@ import {
   registerTerminalDropZone,
   updateTerminalFileDragPointFromEvent,
 } from "../lib/terminalFileDrag";
-import { planTerminalVisibilityRestore, refreshTerminalViewport } from "../lib/terminalVisibility";
+import {
+  didRenderFullTerminalViewport,
+  planTerminalVisibilityRestore,
+  refreshTerminalViewport,
+} from "../lib/terminalVisibility";
 import {
   getLinuxGraphicsDiagnostics,
   isLinuxGraphicsConstrained,
@@ -92,6 +96,7 @@ const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
 const ENABLE_CLICK_CURSOR_POSITIONING = false;
 const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
+const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
 // Minimum time the app must stay in the background before a foreground return
 // triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
 // trigger) implies a long absence; quick alt-tabs skip the re-rasterization.
@@ -704,6 +709,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const inactiveReplayStickToBottomRef = useRef(false);
   const inactiveReplayPendingWritesRef = useRef(0);
   const inactiveReplayPendingRef = useRef(false);
+  const visibilityRestorePendingRef = useRef(false);
+  const visibilityRestoreRevealTimerRef = useRef<number | null>(null);
+  const visibilityRestoreRevealRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
   const runtimeOscBufferRef = useRef("");
@@ -743,6 +751,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [searchResult, setSearchResult] = useState<SearchResultState>(EMPTY_SEARCH_RESULT);
   const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
   const [inactiveReplayPending, setInactiveReplayPending] = useState(false);
+  const [visibilityRestorePending, setVisibilityRestorePending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
   const [linuxGraphicsConstrained, setLinuxGraphicsConstrained] = useState(false);
   const [linuxGraphicsDisableWebgl, setLinuxGraphicsDisableWebgl] = useState(false);
@@ -1432,6 +1441,56 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     setInactiveReplayPending(pending);
   };
 
+  const clearVisibilityRestoreRevealSchedule = () => {
+    if (visibilityRestoreRevealTimerRef.current !== null) {
+      window.clearTimeout(visibilityRestoreRevealTimerRef.current);
+      visibilityRestoreRevealTimerRef.current = null;
+    }
+    if (visibilityRestoreRevealRafRef.current !== null) {
+      window.cancelAnimationFrame(visibilityRestoreRevealRafRef.current);
+      visibilityRestoreRevealRafRef.current = null;
+    }
+  };
+
+  const finishVisibilityRestoreReveal = () => {
+    clearVisibilityRestoreRevealSchedule();
+    if (!visibilityRestorePendingRef.current) return;
+    visibilityRestorePendingRef.current = false;
+    setVisibilityRestorePending(false);
+  };
+
+  const beginVisibilityRestoreReveal = () => {
+    clearVisibilityRestoreRevealSchedule();
+    if (!visibilityRestorePendingRef.current) {
+      visibilityRestorePendingRef.current = true;
+      setVisibilityRestorePending(true);
+    }
+    visibilityRestoreRevealTimerRef.current = window.setTimeout(() => {
+      visibilityRestoreRevealTimerRef.current = null;
+      finishVisibilityRestoreReveal();
+    }, VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS);
+  };
+
+  const handleVisibilityRestoreRender = (terminal: Terminal, range: { start: number; end: number }) => {
+    if (
+      !visibilityRestorePendingRef.current
+      || terminalRef.current !== terminal
+      || !isVisibleRef.current
+      || !didRenderFullTerminalViewport(range, terminal.rows)
+      || visibilityRestoreRevealRafRef.current !== null
+    ) {
+      return;
+    }
+    if (visibilityRestoreRevealTimerRef.current !== null) {
+      window.clearTimeout(visibilityRestoreRevealTimerRef.current);
+      visibilityRestoreRevealTimerRef.current = null;
+    }
+    visibilityRestoreRevealRafRef.current = window.requestAnimationFrame(() => {
+      visibilityRestoreRevealRafRef.current = null;
+      finishVisibilityRestoreReveal();
+    });
+  };
+
   const hasQueuedInactiveReplay = () => activeWriteQueueRef.current.some((item) => item.inactiveReplay);
 
   const finishInactiveReplayIfReady = (terminal: Terminal) => {
@@ -1594,6 +1653,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     isVisibleRef.current = isVisible;
 
     if (!isVisible) {
+      finishVisibilityRestoreReveal();
       clearHiddenWebglDisposeTimer();
       if ((lowMemoryMode || linuxGraphicsConstrained) && webglAddonRef.current) {
         webglDisposeTimerRef.current = window.setTimeout(() => {
@@ -1644,6 +1704,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
     }
     if (restorePlan.shouldRefreshViewport) {
+      beginVisibilityRestoreReveal();
       needsViewportRefreshRef.current = true;
     }
     // Wait for display:block to take effect and the layout to stabilize.
@@ -3357,7 +3418,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
     });
-    const renderDisposable = terminal.onRender(() => {
+    const renderDisposable = terminal.onRender((range) => {
+      handleVisibilityRestoreRender(terminal, range);
       scheduleTuiComposerBackgroundNormalization(terminal);
       if (!isComposingRef.current) {
         updateSuggestionGhostPosition(suggestionRef.current);
@@ -3579,6 +3641,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       }
       pendingChunks = [];
       clearHiddenWebglDisposeTimer();
+      clearVisibilityRestoreRevealSchedule();
+      visibilityRestorePendingRef.current = false;
       activeWriteQueueRef.current = [];
       activeWriteQueueSizeRef.current = 0;
       inactiveReplayStickToBottomRef.current = false;
@@ -3786,7 +3850,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         "--terminal-bg-overlay-color": backgroundOverlayColor,
       } as CSSProperties)
     : ({ "--terminal-font-family": effectiveFontFamily, backgroundColor } as CSSProperties);
-  const terminalContainerStyle: CSSProperties | undefined = inactiveReplayPending
+  const visibilityRestoreStarting = isVisible && !isVisibleRef.current;
+  const terminalContainerStyle: CSSProperties | undefined = inactiveReplayPending || visibilityRestorePending || visibilityRestoreStarting
     ? { visibility: "hidden" }
     : undefined;
 
