@@ -241,6 +241,7 @@ test("migration validates compound workspan data", () => {
   const migrated = migrateTerminalWorkspans([
     {
       id: "valid",
+      customTitle: "  Focus Mode  ",
       paneTree: {
         type: "split",
         id: "root",
@@ -261,6 +262,21 @@ test("migration validates compound workspan data", () => {
   assert.equal(migrated[0].paneTree.ratio, 0.8);
   assert.deepEqual(collectWorkspanSessionIds(migrated[0]), ["a", "b"]);
   assert.equal(migrated[0].activeSessionId, "a");
+  assert.equal(migrated[0].customTitle, "Focus Mode");
+});
+
+test("workspan titles default to null and blank persisted titles are cleared", () => {
+  assert.equal(createTerminalWorkspan("new", "pane", "session").customTitle, null);
+
+  const [migrated] = migrateTerminalWorkspans([{
+    id: "blank-title",
+    customTitle: "   ",
+    paneTree: { type: "leaf", id: "pane", sessionIds: ["session"], activeSessionId: "session" },
+    activePaneId: "pane",
+    activeSessionId: "session",
+  }]);
+
+  assert.equal(migrated.customTitle, null);
 });
 
 test("sanitize and restore remove invalid or duplicate membership", () => {
@@ -268,6 +284,7 @@ test("sanitize and restore remove invalid or duplicate membership", () => {
     createTerminalWorkspan("first", "first-pane", "old-a"),
     {
       id: "second",
+      customTitle: "Restored",
       paneTree: { type: "leaf", id: "second-pane", sessionIds: ["old-a", "old-b"], activeSessionId: "old-b" },
       activePaneId: "second-pane",
       activeSessionId: "old-b",
@@ -279,6 +296,7 @@ test("sanitize and restore remove invalid or duplicate membership", () => {
   assert.deepEqual(collectWorkspanSessionIds(sanitized[0]), ["new-a"]);
   assert.deepEqual(collectWorkspanSessionIds(sanitized[1]), ["new-b"]);
   assert.equal(sanitized[1].activeSessionId, "new-b");
+  assert.equal(sanitized[1].customTitle, "Restored");
 });
 
 test("sanitize keeps each session in only one pane", () => {
