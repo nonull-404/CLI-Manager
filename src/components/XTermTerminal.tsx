@@ -31,6 +31,29 @@ import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import { decodeOscPathValue, parseOsc7Cwd } from "../lib/terminalOscPath";
 import { findTerminalFileLinks, resolveTerminalFileSystemPath } from "../lib/terminalFileLinks";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
+import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
+import {
+  clampTextCursorIndex,
+  getTextCursorLength,
+  insertTextAtCursor,
+  removeTextAtCursor,
+  removeTextBeforeCursor,
+  repeatControlSequence,
+  sliceTextByCursor,
+} from "../lib/terminalTextEditing";
+import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
+import {
+  arrayBufferToBase64,
+  createClipboardImageFileName,
+  getClipboardImageFile,
+  hasDataTransferType,
+} from "../lib/terminalClipboardImage";
+import {
+  terminalShortcutMatches,
+  trimTerminalPasteBoundaryLineBreaks,
+  wrapTerminalPasteTextForCtrlShiftV,
+} from "../lib/terminalKeyboard";
+import { formatShellPathList, joinLocalPath, normalizeShellForKnownOs } from "../lib/terminalShellPath";
 import {
   TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT,
   TERMINAL_INPUT_SUGGESTION_AI_MODEL,
@@ -63,10 +86,8 @@ import {
 import {
   defaultShellForOs,
   getOsPlatform,
-  normalizeShellForOs,
   normalizeShellKey,
   type OsPlatform,
-  type ShellKey,
 } from "../lib/shell";
 import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
@@ -225,10 +246,6 @@ interface CodexImeDebugState {
 
 const EMPTY_SEARCH_RESULT: SearchResultState = { resultIndex: 0, resultCount: 0 };
 
-const normalizeHexColor = (value: string | undefined, fallback: string) => (
-  value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback
-);
-
 const summarizeTextForDiagnostics = (value: string): TextDiagnosticSummary => {
   let hash = 0;
   let hasNonAscii = false;
@@ -248,16 +265,6 @@ const getInactiveBufferLimit = (scrollbackRows: number) => Math.min(
   INACTIVE_BUFFER_MAX_CHARS,
   Math.max(INACTIVE_BUFFER_MIN_CHARS, scrollbackRows * INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW)
 );
-
-const hexToRgba = (value: string | undefined, alpha: number, fallback: string) => {
-  const normalized = normalizeHexColor(value, "");
-  if (!normalized) return fallback;
-  const hex = normalized.slice(1);
-  const r = Number.parseInt(hex.slice(0, 2), 16);
-  const g = Number.parseInt(hex.slice(2, 4), 16);
-  const b = Number.parseInt(hex.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
 
 const getTerminalRenderedCellSize = (terminal: Terminal, terminalContainer: HTMLElement, fallbackFontSize: number) => {
   const renderedCell = (
@@ -336,67 +343,6 @@ const copyTextToClipboard = async (text: string) => {
 
 const readClipboardText = async () => navigator.clipboard.readText();
 
-const terminalEventToCombo = (e: KeyboardEvent): string => {
-  const parts: string[] = [];
-  if (e.ctrlKey) parts.push("Ctrl");
-  if (e.shiftKey) parts.push("Shift");
-  if (e.altKey) parts.push("Alt");
-  if (e.metaKey) parts.push("Meta");
-
-  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return "";
-  parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
-  return parts.join("+");
-};
-
-const terminalShortcutMatches = (e: KeyboardEvent, shortcut: string) => (
-  shortcut.trim() !== "" && terminalEventToCombo(e) === shortcut
-);
-
-const trimTerminalPasteBoundaryLineBreaks = (text: string) => (
-  text.replace(/^(?:\r\n?|\n)+|(?:\r\n?|\n)+$/gu, "")
-);
-
-const wrapTerminalPasteTextForCtrlShiftV = (text: string) => {
-  const trimmed = trimTerminalPasteBoundaryLineBreaks(text);
-  return /[\r\n]/u.test(trimmed) ? `'${trimmed}'` : trimmed;
-};
-
-const isCombiningCodePoint = (codePoint: number) => (
-  (codePoint >= 0x0300 && codePoint <= 0x036f) ||
-  (codePoint >= 0x1ab0 && codePoint <= 0x1aff) ||
-  (codePoint >= 0x1dc0 && codePoint <= 0x1dff) ||
-  (codePoint >= 0x20d0 && codePoint <= 0x20ff) ||
-  (codePoint >= 0xfe00 && codePoint <= 0xfe0f)
-);
-
-const isWideCodePoint = (codePoint: number) => (
-  codePoint >= 0x1100 && (
-    codePoint <= 0x115f ||
-    codePoint === 0x2329 ||
-    codePoint === 0x232a ||
-    (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
-    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
-    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
-    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
-    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
-    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
-    (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
-    (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
-    (codePoint >= 0x20000 && codePoint <= 0x3fffd)
-  )
-);
-
-const getTerminalCellWidth = (text: string) => {
-  let width = 0;
-  for (const char of text) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    if (codePoint === 0) continue;
-    if (codePoint < 32 || (codePoint >= 0x7f && codePoint < 0xa0) || isCombiningCodePoint(codePoint)) continue;
-    width += isWideCodePoint(codePoint) ? 2 : 1;
-  }
-  return width;
-};
-
 const lineHasVisibleTextAfterColumn = (line: IBufferLine, column: number, cols: number) => {
   const width = Math.min(cols, line.length);
   for (let index = Math.max(0, column); index < width; index += 1) {
@@ -421,55 +367,6 @@ const canShowSuggestionAtCurrentInputEnd = (terminal: Terminal, input: string) =
   return beforeCursor.endsWith(input);
 };
 
-const getTextCursorLength = (text: string) => Array.from(text).length;
-
-const sliceTextByCursor = (text: string, start: number, end?: number) => (
-  Array.from(text).slice(start, end).join("")
-);
-
-const clampTextCursorIndex = (text: string, index: number) => (
-  Math.min(Math.max(0, index), getTextCursorLength(text))
-);
-
-const insertTextAtCursor = (text: string, cursorIndex: number, insertion: string) => {
-  const chars = Array.from(text);
-  const index = Math.min(Math.max(0, cursorIndex), chars.length);
-  chars.splice(index, 0, ...Array.from(insertion));
-  return chars.join("");
-};
-
-const removeTextBeforeCursor = (text: string, cursorIndex: number) => {
-  const chars = Array.from(text);
-  const index = Math.min(Math.max(0, cursorIndex), chars.length);
-  if (index <= 0) return { text, cursorIndex: index };
-  chars.splice(index - 1, 1);
-  return { text: chars.join(""), cursorIndex: index - 1 };
-};
-
-const removeTextAtCursor = (text: string, cursorIndex: number) => {
-  const chars = Array.from(text);
-  const index = Math.min(Math.max(0, cursorIndex), chars.length);
-  if (index >= chars.length) return { text, cursorIndex: index };
-  chars.splice(index, 1);
-  return { text: chars.join(""), cursorIndex: index };
-};
-
-const resolveCursorIndexFromCellOffset = (text: string, cellOffset: number) => {
-  const chars = Array.from(text);
-  if (cellOffset <= 0) return 0;
-  let consumedCells = 0;
-  for (let index = 0; index < chars.length; index += 1) {
-    const charWidth = Math.max(1, getTerminalCellWidth(chars[index]));
-    consumedCells += charWidth;
-    if (cellOffset < consumedCells) return index + 1;
-  }
-  return chars.length;
-};
-
-const repeatControlSequence = (sequence: string, count: number) => (
-  count > 0 ? sequence.repeat(count) : ""
-);
-
 const isLikelyMacPlatform = (os: OsPlatform) => (
   os === "macos" || (os === "unknown" && navigator.platform.toLowerCase().includes("mac"))
 );
@@ -484,29 +381,6 @@ const withVisibleSelectionTheme = (theme: ITheme): ITheme => {
   };
 };
 
-const normalizeShellForKnownOs = (shell: string | null | undefined, os: OsPlatform): ShellKey | undefined => (
-  os === "unknown" ? normalizeShellKey(shell) : normalizeShellForOs(shell, os)
-);
-
-const quoteShellPath = (path: string, shell: string | null | undefined) => {
-  const normalized = normalizeShellKey(shell);
-  if (normalized === "cmd") return `"${path.replace(/"/g, "\"\"")}"`;
-  if (normalized === "powershell" || normalized === "pwsh") return `'${path.replace(/'/g, "''")}'`;
-  return `'${path.replace(/'/g, "'\\''")}'`;
-};
-
-const formatShellPathList = (paths: string[], shell: string | null | undefined) => (
-  paths.filter(Boolean).map((path) => quoteShellPath(path, shell)).join(" ")
-);
-
-const joinLocalPath = (rootPath: string, relativePath: string) => {
-  const normalizedRelativePath = relativePath.replace(/^[/\\]+/u, "");
-  if (/[\\/]/u.test(rootPath) && rootPath.includes("\\")) {
-    return `${rootPath.replace(/[\\/]+$/u, "")}\\${normalizedRelativePath.replace(/\//g, "\\")}`;
-  }
-  return `${rootPath.replace(/\/+$/u, "")}/${normalizedRelativePath.replace(/\\/g, "/")}`;
-};
-
 const attachClipboardImageData = async (rootPath: string, fileName: string, dataBase64: string) => (
   invoke<string>("file_attach_data", { rootPath, fileName, dataBase64 })
 );
@@ -514,45 +388,6 @@ const attachClipboardImageData = async (rootPath: string, fileName: string, data
 const cleanupExpiredAttachments = async (rootPath: string) => (
   invoke<number>("file_cleanup_expired_attachments", { rootPath })
 );
-
-const getClipboardImageFile = (clipboardData: DataTransfer | null) => {
-  const items = Array.from(clipboardData?.items ?? []);
-  const imageItem = items.find((item) => item.kind === "file" && item.type.startsWith("image/"));
-  return imageItem?.getAsFile() ?? null;
-};
-
-const getImageFileExtension = (file: File) => {
-  const typeExtension = file.type.split("/")[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "").toLowerCase();
-  if (typeExtension) return typeExtension;
-  const nameExtension = file.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return nameExtension || "png";
-};
-
-const createClipboardImageFileName = (file: File) => {
-  const trimmedName = file.name.trim();
-  if (trimmedName && /\.[a-z0-9]+$/iu.test(trimmedName)) return trimmedName;
-  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/u, "");
-  return `screenshot-${timestamp}.${getImageFileExtension(file)}`;
-};
-
-const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
-};
-
-const hasDataTransferType = (dataTransfer: DataTransfer | null, type: string): boolean => {
-  if (!dataTransfer) return false;
-  const types = dataTransfer.types as DataTransfer["types"] & {
-    contains?: (value: string) => boolean;
-  };
-  if (typeof types.contains === "function") return types.contains(type);
-  return Array.from(types).includes(type);
-};
 
 const openHttpUrl = (sessionId: string, uri: string) => {
   if (!/^https?:\/\//i.test(uri)) return;
