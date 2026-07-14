@@ -2,6 +2,9 @@
 
 ## [TEMP] - 2026-07-14
 
+### 新增
+- **第三方 Hook 通知（Issue #134）**：Hook 设置页新增“三方 Hook 通知”，支持配置多组 DingTalk、Feishu、WeCom、Bark、PushPlus、WxPusher、ServerChan、Telegram、ntfy、Gotify 和 Custom HTTP 通知目标；CLI-Manager 收到 Claude/Codex Hook 后由实际接收端异步批量 fan-out，支持按事件筛选、测试发送、平台业务码判断和少量 emoji 摘要文案。远程通知只发送 CLI 来源、项目名、事件、时间和通知 ID，不发送 Prompt、终端输出、绝对路径、session/tab id 或 transcript；第三方请求失败不会阻塞 Hook 204、本地 toast、系统通知、终端状态更新或 daemon 后台任务。
+
 ### 修复
 - **终端文件路径打开方式调整**：点击终端输出中的文件路径时统一使用 Windows 资源管理器打开所在文件夹并选中文件，不再切换到内置文件浏览器或调用系统默认应用打开文件；自动剥离 `:行号`、`:行号:列号` 及其后的源码片段，避免把定位信息误当成文件名。
 - **历史用量分析全屏布局修复**：移除用量概览内容区的最大宽度限制，使统计卡片和图表铺满应用窗口；隐藏内容区横向与纵向滚动条，同时保留滚轮和键盘滚动；Token 构成明细移到饼图下方，并统一同排统计卡片高度，避免宽屏留白、内容溢出和卡片底边错位。

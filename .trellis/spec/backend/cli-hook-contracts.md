@@ -293,6 +293,33 @@ showClaudeHookToast(payload, tabId);
 void sendSystemNotification(payload, tabTitle);
 ```
 
+## Scenario: Third-party Hook Notifications
+
+### 1. Scope / Trigger
+
+- Trigger: the local bridge or daemon accepts a validated Claude/Codex Hook payload for `SessionStart`, `UserPromptSubmit`, `Notification`, `Stop`, `StopFailure`, or `PermissionRequest`.
+- Applies to: `src-tauri/src/claude_hook.rs`, `src-tauri/src/daemon/server.rs`, `src-tauri/src/third_party_notification/*`, `thirdPartyHookTargets` in settings, and the Hook settings UI.
+
+### 2. Contracts
+
+- Dispatch ownership belongs to the process that actually receives the Hook HTTP request: app bridge in in-process mode, daemon hook sink in daemon mode.
+- Frontend `listen("claude-hook-notification")` handlers must not send third-party notifications; daemon cache replay is for UI state only and must not cause a second remote send.
+- Dispatch is best-effort and non-blocking: the sink may only try to enqueue into the bounded queue and must continue original emit/status/broadcast work even when the queue is full.
+- `thirdPartyHookNotificationsEnabled === false` disables production fan-out while keeping saved targets untouched; manual test send remains available for validating a draft target.
+- Remote message content is limited to a safe summary: CLI source, cwd basename project name, event label, 24-hour local time from the user's system timezone, generated notification UUID, and a short action summary derived only from the event enum. It must not include `payload.message`, Prompt, terminal output, absolute cwd, tab/session id, transcript paths/content, tool args, or environment variables.
+- Default remote copy may include fixed event emoji derived from the event enum only.
+- Supported providers: DingTalk, Feishu, WeCom, Bark, PushPlus, WxPusher, ServerChan, Telegram, ntfy, Gotify, and Custom HTTP.
+- Built-in providers must parse provider business responses, not treat HTTP 2xx alone as success. Custom HTTP accepts any 2xx.
+- Custom HTTP supports only GET/POST, fixed variable replacement, query, headers, JSON/form/text body, and no scripts/conditions/functions.
+- Secrets remain in the existing settings store; UI masking is not encryption. Logs must not include full URL/query/header/body/token/secret/device key or raw remote response.
+
+### 3. Tests Required
+
+- Rust unit tests for message minimization, unsupported event filtering, Custom HTTP JSON leaf replacement, and controlled header rejection.
+- Rust compile check must pass after bridge/daemon/command changes.
+- TypeScript type-check must pass after settings migration or Hook settings UI changes.
+- Regression: one Hook payload produces at most one third-party dispatch in app mode and one in daemon mode; frontend reconnect/cache replay produces zero additional remote dispatches.
+
 ## Scenario: CLI Hook Protection Through cc-switch Common Config
 
 ### 1. Scope / Trigger

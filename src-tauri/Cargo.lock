@@ -634,6 +634,7 @@ dependencies = [
  "chrono",
  "fontdb",
  "git2",
+ "hmac",
  "keyring-core",
  "local-ip-address",
  "log",

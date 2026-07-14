@@ -17,6 +17,7 @@ pub mod pty;
 mod shell_resolver;
 pub mod statusline;
 pub mod statusline_profiles;
+mod third_party_notification;
 mod sync;
 mod webdav;
 mod wsl;
@@ -712,6 +713,7 @@ pub fn run() {
             commands::terminal::pty_attach,
             take_pending_background_session,
             commands::terminal_shell::terminal_shell_scan,
+            commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
             commands::fs::file_watch_start,
