@@ -495,3 +495,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 全局统一应用内确认对话框
+
+**Date**: 2026-07-14
+**Task**: 全局统一应用内确认对话框
+**Branch**: `master`
+
+### Summary
+
+移除前端全部 window.confirm，新增 useAppConfirm 复用应用内 ConfirmDialog，并同步前端规范、变更记录和功能清单。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `34da804` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
