@@ -3,6 +3,7 @@ import { Copy, MoreHorizontal, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { StatuslineProfileState } from "@/lib/statuslineProfiles";
 import { useI18n } from "@/lib/i18n";
+import { useAppPrompt } from "@/components/ui/useAppPrompt";
 
 interface Props<T> {
   state: StatuslineProfileState<T> | null;
@@ -15,10 +16,6 @@ interface Props<T> {
   onDuplicate: (profileId: string, name: string) => Promise<void>;
   onDelete: (profileId: string) => Promise<void>;
   onCaptureExternal: (name: string) => Promise<void>;
-}
-
-function requestedName(message: string, initial = "") {
-  return window.prompt(message, initial)?.trim() ?? "";
 }
 
 export function StatuslineProfileBar<T>({
@@ -34,6 +31,7 @@ export function StatuslineProfileBar<T>({
   onCaptureExternal,
 }: Props<T>) {
   const { t } = useI18n();
+  const { prompt, promptDialog } = useAppPrompt();
   const active = state?.profiles.find((profile) => profile.id === state.activeProfileId);
   const profileName = (name: string) => name === "__current__" ? t("settings.statuslineProfiles.current") : name;
   const run = (action: () => Promise<void>) => action().catch((error) => toast.error(t("settings.statuslineProfiles.operationFailed"), { description: String(error) }));
@@ -66,18 +64,27 @@ export function StatuslineProfileBar<T>({
           </Menu.Target>
           <Menu.Dropdown>
             <Menu.Item leftSection={<Plus size={14} />} onClick={() => {
-              const name = requestedName(t("settings.statuslineProfiles.createPrompt"));
-              if (name) void run(() => onCreate(name));
+              void prompt({ title: t("settings.statuslineProfiles.createPrompt") }).then((name) => {
+                if (name) void run(() => onCreate(name));
+              });
             }}>{t("settings.statuslineProfiles.create")}</Menu.Item>
             <Menu.Item leftSection={<Copy size={14} />} onClick={() => {
               if (!active) return;
-              const name = requestedName(t("settings.statuslineProfiles.duplicatePrompt"), `${profileName(active.name)} Copy`);
-              if (name) void run(() => onDuplicate(active.id, name));
+              void prompt({
+                title: t("settings.statuslineProfiles.duplicatePrompt"),
+                initialValue: `${profileName(active.name)} Copy`,
+              }).then((name) => {
+                if (name) void run(() => onDuplicate(active.id, name));
+              });
             }}>{t("settings.statuslineProfiles.duplicate")}</Menu.Item>
             <Menu.Item onClick={() => {
               if (!active) return;
-              const name = requestedName(t("settings.statuslineProfiles.renamePrompt"), profileName(active.name));
-              if (name && name !== active.name) void run(() => onRename(active.id, name));
+              void prompt({
+                title: t("settings.statuslineProfiles.renamePrompt"),
+                initialValue: profileName(active.name),
+              }).then((name) => {
+                if (name && name !== active.name) void run(() => onRename(active.id, name));
+              });
             }}>{t("settings.statuslineProfiles.rename")}</Menu.Item>
             <Menu.Divider />
             <Menu.Item color="red" leftSection={<Trash2 size={14} />} disabled>
@@ -99,11 +106,13 @@ export function StatuslineProfileBar<T>({
         <Group justify="space-between" mt="xs" p="xs" className="rounded-lg border border-[var(--warning)] bg-surface-container-lowest">
           <Text size="xs">{t("settings.statuslineProfiles.externalDetected")}</Text>
           <Button size="xs" variant="light" onClick={() => {
-            const name = requestedName(t("settings.statuslineProfiles.externalPrompt"));
-            if (name) void run(() => onCaptureExternal(name));
+            void prompt({ title: t("settings.statuslineProfiles.externalPrompt") }).then((name) => {
+              if (name) void run(() => onCaptureExternal(name));
+            });
           }}>{t("settings.statuslineProfiles.saveExternal")}</Button>
         </Group>
       )}
+      {promptDialog}
     </>
   );
 }

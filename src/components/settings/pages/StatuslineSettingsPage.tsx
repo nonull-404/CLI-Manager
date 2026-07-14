@@ -22,6 +22,7 @@ import { useSettingsStore, type StatuslineEditorSource } from "@/stores/settings
 import { SettingsListItem } from "@/components/settings/SettingsListItem";
 import { StatuslineProfileBar } from "@/components/settings/StatuslineProfileBar";
 import { useStatuslineProfiles, type StatuslineImportAnalysis, type StatuslineImportDecision, type StatuslineProfileState } from "@/lib/statuslineProfiles";
+import { useAppPrompt } from "@/components/ui/useAppPrompt";
 
 const COLOR_DEFINITIONS = [
   ["", "默认 (Default)", "transparent"], ["black", "黑色 (Black)", "#000000"], ["red", "红色 (Red)", "#cc0000"],
@@ -568,6 +569,7 @@ function ClaudeStatuslineEditor({
 
 export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: string }) {
   const { t } = useI18n();
+  const { prompt, promptDialog } = useAppPrompt();
   const source = useSettingsStore((state) => state.statuslineEditorSource);
   const updateSetting = useSettingsStore((state) => state.update);
   const terminalThemeName = useSettingsStore((state) => state.terminalThemeName);
@@ -608,16 +610,22 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
       const decisions: StatuslineImportDecision[] = [];
       for (const conflict of analysis.conflicts) {
         const allowed = conflict.active ? "skip/rename" : "overwrite/skip/rename";
-        const action = window.prompt(t("settings.statuslineProfiles.conflictPrompt")
-          .replace("{tool}", conflict.tool)
-          .replace("{name}", conflict.name)
-          .replace("{allowed}", allowed), "skip")?.trim().toLowerCase();
+        const action = (await prompt({
+          title: t("settings.statuslineProfiles.conflictPrompt")
+            .replace("{tool}", conflict.tool)
+            .replace("{name}", conflict.name)
+            .replace("{allowed}", allowed),
+          initialValue: "skip",
+        }))?.toLowerCase();
         if (!action) return;
         if (action !== "overwrite" && action !== "skip" && action !== "rename") throw new Error("statusline_profiles_invalid_decision");
         if (conflict.active && action === "overwrite") throw new Error("statusline_profiles_active_overwrite_forbidden");
         const decision: StatuslineImportDecision = { tool: conflict.tool, profileId: conflict.profileId, action };
         if (action === "rename") {
-          const newName = window.prompt(t("settings.statuslineProfiles.renameImportPrompt"), `${conflict.name} (Import)`)?.trim();
+          const newName = await prompt({
+            title: t("settings.statuslineProfiles.renameImportPrompt"),
+            initialValue: `${conflict.name} (Import)`,
+          });
           if (!newName) return;
           decision.newName = newName;
         }
@@ -676,6 +684,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
           reloadToken={profileReloadToken}
         />
       )}
+      {promptDialog}
     </Stack>
   );
 }
