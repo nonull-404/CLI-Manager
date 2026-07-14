@@ -2326,28 +2326,81 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const removeSelectedInputText = () => {
       const selectedText = terminal.getSelection();
       const currentInput = inputBuffer.current;
+      const findSelectedTextRange = (preferredStartIndex?: number) => {
+        if (!selectedText || !currentInput) return null;
+        const candidates = [
+          selectedText,
+          selectedText.replace(/\r\n?/g, "\n"),
+          selectedText.replace(/\r\n?|\n/g, ""),
+        ].filter((text, index, list) => Boolean(text) && list.indexOf(text) === index);
+        const inputChars = Array.from(currentInput);
+
+        for (const candidate of candidates) {
+          const candidateChars = Array.from(candidate);
+          if (!candidateChars.length || candidateChars.length > inputChars.length) continue;
+
+          const ranges: Array<{ startIndex: number; endIndex: number }> = [];
+          for (let index = 0; index <= inputChars.length - candidateChars.length; index += 1) {
+            const matched = candidateChars.every((char, offset) => inputChars[index + offset] === char);
+            if (matched) {
+              ranges.push({ startIndex: index, endIndex: index + candidateChars.length });
+            }
+          }
+
+          if (ranges.length === 1 || (ranges.length && preferredStartIndex !== undefined)) {
+            return ranges.reduce((best, range) => (
+              Math.abs(range.startIndex - (preferredStartIndex ?? range.startIndex)) <
+              Math.abs(best.startIndex - (preferredStartIndex ?? best.startIndex))
+                ? range
+                : best
+            ));
+          }
+        }
+
+        return null;
+      };
+      const deleteInputRange = (startIndex: number, endIndex: number, stage: string) => {
+        if (startIndex >= endIndex) return false;
+        const nextInput = `${sliceTextByCursor(currentInput, 0, startIndex)}${sliceTextByCursor(currentInput, endIndex)}`;
+        rewriteCurrentInput(nextInput, stage, startIndex);
+        return true;
+      };
+
       if (keyboardInputSelection && terminal.hasSelection()) {
         const startIndex = Math.min(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
         const endIndex = Math.max(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
-        if (startIndex < endIndex) {
-          const focusIndex = keyboardInputSelection.focusIndex;
-          const nextInput = `${sliceTextByCursor(currentInput, 0, startIndex)}${sliceTextByCursor(currentInput, endIndex)}`;
-          const moveToSelectionEnd = repeatControlSequence("\x1b[C", endIndex - focusIndex);
-          const deleteSelection = repeatControlSequence("\x7f", endIndex - startIndex);
-          inputBuffer.current = nextInput;
-          inputCursorIndexRef.current = startIndex;
-          terminal.clearSelection();
-          keyboardInputSelection = null;
-          selectedInputSnapshot = null;
-          markAttentionInputHandled();
-          clearSuggestionGhost();
-          cancelAiSuggestionRefresh();
-          invoke("pty_write", { sessionId, data: `${moveToSelectionEnd}${deleteSelection}` })
-            .catch((err) => reportPtyWriteError("keyboard_selection_delete", err));
+        if (deleteInputRange(startIndex, endIndex, "keyboard_selection_delete")) return true;
+      }
+      keyboardInputSelection = null;
+
+      if (terminal.hasSelection() && currentInput) {
+        const selectionPosition = terminal.getSelectionPosition();
+        const visibleSelection = resolveVisibleInputSelection();
+        if (selectionPosition && visibleSelection) {
+          const inputStartCellIndex = (visibleSelection.startRow * terminal.cols) + visibleSelection.startColumn;
+          const inputEndCellIndex = inputStartCellIndex + visibleSelection.length;
+          const selectionStartCellIndex = (selectionPosition.start.y * terminal.cols) + selectionPosition.start.x;
+          const selectionEndCellIndex = (selectionPosition.end.y * terminal.cols) + selectionPosition.end.x;
+          const selectedStartCellIndex = Math.max(inputStartCellIndex, Math.min(selectionStartCellIndex, selectionEndCellIndex));
+          const selectedEndCellIndex = Math.min(inputEndCellIndex, Math.max(selectionStartCellIndex, selectionEndCellIndex));
+
+          if (selectedEndCellIndex > selectedStartCellIndex) {
+            const startIndex = resolveCursorIndexFromCellOffset(currentInput, selectedStartCellIndex - inputStartCellIndex);
+            const endIndex = resolveCursorIndexFromCellOffset(currentInput, selectedEndCellIndex - inputStartCellIndex);
+            const textRange = findSelectedTextRange(startIndex);
+            if (textRange && deleteInputRange(textRange.startIndex, textRange.endIndex, "selection_delete_text")) {
+              return true;
+            }
+            if (deleteInputRange(startIndex, endIndex, "selection_delete")) return true;
+          }
+        }
+
+        const textRange = findSelectedTextRange();
+        if (textRange && deleteInputRange(textRange.startIndex, textRange.endIndex, "selection_delete_text")) {
           return true;
         }
       }
-      keyboardInputSelection = null;
+
       if (!selectedText && selectedInputSnapshot === currentInput && currentInput) {
         rewriteCurrentInput("", "selection_delete_all");
         return true;
@@ -2363,20 +2416,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         return true;
       }
 
-      const candidates = [
-        selectedText,
-        selectedText.replace(/\r\n?/g, "\n"),
-        selectedText.replace(/\r\n?|\n/g, ""),
-      ].filter(Boolean);
-      const matchedText = candidates.find((text, index) => (
-        candidates.indexOf(text) === index && currentInput.includes(text)
-      ));
-      if (!matchedText) return false;
-
-      const index = currentInput.indexOf(matchedText);
-      const nextInput = `${currentInput.slice(0, index)}${currentInput.slice(index + matchedText.length)}`;
-      rewriteCurrentInput(nextInput, "selection_delete", getTextCursorLength(currentInput.slice(0, index)));
-      return true;
+      const textRange = findSelectedTextRange();
+      if (!textRange) return false;
+      return deleteInputRange(textRange.startIndex, textRange.endIndex, "selection_delete_text");
     };
 
     terminal.attachCustomKeyEventHandler((e) => {
@@ -2514,20 +2556,36 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         });
         return false;
       }
-      if (
-        e.type === "keydown" &&
-        e.key.toLowerCase() === "c" &&
-        !e.shiftKey &&
-        !e.altKey &&
-        ((isMacSelectAll && e.metaKey && !e.ctrlKey) || (!isMacSelectAll && e.ctrlKey && !e.metaKey)) &&
-        terminal.hasSelection()
-      ) {
-        e.preventDefault();
-        void copySelection();
-        terminal.clearSelection();
-        keyboardInputSelection = null;
-        selectedInputSnapshot = null;
-        return false;
+      if (e.type === "keydown" && e.key.toLowerCase() === "c" && !e.shiftKey && !e.altKey) {
+        const copyAndClearSelection = () => {
+          void copySelection();
+          terminal.clearSelection();
+          keyboardInputSelection = null;
+          selectedInputSnapshot = null;
+        };
+        const sendInterrupt = () => {
+          markAttentionInputHandled();
+          keyboardInputSelection = null;
+          selectedInputSnapshot = null;
+          invoke("pty_write", { sessionId, data: "\x03" }).catch((err) => reportPtyWriteError("interrupt", err));
+        };
+        const isMacCopy = isMacSelectAll && e.metaKey && !e.ctrlKey;
+        const isPlainCtrlC = e.ctrlKey && !e.metaKey;
+
+        if (isMacCopy && terminal.hasSelection()) {
+          e.preventDefault();
+          copyAndClearSelection();
+          return false;
+        }
+        if (isPlainCtrlC) {
+          e.preventDefault();
+          if (!isMacSelectAll && terminal.hasSelection()) {
+            copyAndClearSelection();
+          } else {
+            sendInterrupt();
+          }
+          return false;
+        }
       }
       if (e.type !== "keydown" || !e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return true;
       const key = e.key.toLowerCase();
@@ -2538,14 +2596,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           searchInputRef.current?.focus();
           searchInputRef.current?.select();
         });
-        return false;
-      }
-      if (key === "c" && terminal.hasSelection()) {
-        e.preventDefault();
-        void copySelection();
-        terminal.clearSelection();
-        keyboardInputSelection = null;
-        selectedInputSnapshot = null;
         return false;
       }
       if (key === "v") {
