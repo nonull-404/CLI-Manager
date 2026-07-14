@@ -318,6 +318,7 @@ splitSessionToPaneEdge(sessionId: string, targetPaneId: string, edge: TerminalPa
 - Background events such as subagent transcript creation locate the parent session's Workspan and mutate that Workspan even when it is inactive; they must not steal focus.
 - Closing the last session removes its Workspan and selects an adjacent Workspan. Closing a session in an inactive Workspan must keep the current Workspan active.
 - Persist only Workspans containing persistable sessions. Filter transient file editor, synced history, and subagent transcript sessions before writing.
+- `TerminalWorkspan.customTitle` is nullable and persists with the layout. A trimmed blank value clears it; the view then falls back to the single-session title or localized `Workspan · N` label.
 - PTY restoration creates new session IDs. Restore Workspan trees through the old-to-new session ID map before selecting the active Workspan.
 - Workspan edge-drop inserts the complete source pane tree beside the hovered target pane; it must preserve the full session ID set without duplicates.
 - Inactive Workspans stay mounted but hidden so xterm scrollback and live output survive switching.
@@ -333,6 +334,7 @@ splitSessionToPaneEdge(sessionId: string, targetPaneId: string, edge: TerminalPa
 - Assert legacy collapse preserves the active Pane tree, appends other Workspan sessions in deterministic order, and keeps every session ID exactly once.
 - Assert sanitization keeps a session ID in only one pane even when persisted layout data contains duplicates.
 - Assert adjacent Workspan navigation supports forward/backward movement and wraps at both ends without changing the existing multi-Tab or multi-Pane priority.
+- Assert persisted custom titles are trimmed, blank titles migrate to `null`, and restore/sanitize operations preserve non-empty titles.
 - Manual desktop verification: switch Workspans, change split ratios, restart, and verify each layout restores with the correct active session.
 - Manual desktop verification: with enough Workspans to overflow the tab strip, verify the dropdown trigger appears only while overflowing, the dropdown lists only hidden or partially clipped tabs, and activating the last Workspan through the dropdown, keyboard, or another navigation entry makes its tab visible without reordering tabs; mouse horizontal scrolling must still work.
 - Manual desktop verification: close focused and inactive sessions, and verify Workspan selection remains correct.

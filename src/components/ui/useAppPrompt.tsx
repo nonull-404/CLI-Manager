@@ -6,6 +6,7 @@ interface AppPromptOptions {
   title: string;
   initialValue?: string;
   placeholder?: string;
+  allowEmpty?: boolean;
 }
 
 export function useAppPrompt() {
@@ -44,7 +45,7 @@ export function useAppPrompt() {
     >
       <form onSubmit={(event) => {
         event.preventDefault();
-        if (trimmedValue) close(trimmedValue);
+        if (trimmedValue || request?.allowEmpty) close(trimmedValue);
       }}>
         <Stack gap="md">
           <TextInput
@@ -58,7 +59,7 @@ export function useAppPrompt() {
             <Button type="button" variant="subtle" onClick={() => close(null)}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={!trimmedValue}>
+            <Button type="submit" disabled={!request?.allowEmpty && !trimmedValue}>
               {t("common.confirm")}
             </Button>
           </Group>

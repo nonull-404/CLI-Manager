@@ -15,6 +15,8 @@
 - Workspan 切换、排序、合并不得重建或复制 PTY。
 - Workspan 的会话归属、Pane 布局、分屏比例和活动状态必须持久化，并兼容现有启动恢复流程。
 - 项目、分组或 Worktree 限定视图只做过滤展示，禁用 Workspan 拖拽以避免移动不可见会话。
+- Workspan 右键菜单支持通过应用内弹窗设置自定义名称；提交空白名称时清除自定义名称并恢复默认标题规则。
+- 自定义名称随 Workspan 布局持久化；取消弹窗不得修改现有名称。
 - 新增用户可见文案同时支持 `zh-CN` 和 `en-US`。
 - Changelog Target: `[TEMP]`。
 
@@ -28,12 +30,13 @@
 - [ ] 切换 Workspan 时终端保持挂载、继续接收输出且不丢失 scrollback。
 - [ ] 关闭单个 Pane、整个 Workspan 和最后一个 Workspan 时焦点回退正确。
 - [ ] 重启恢复后 Workspan 顺序、布局、比例和活动会话正确。
+- [ ] 多会话 Workspan 可通过右键菜单弹窗重命名，重启后名称保持不变。
+- [ ] 提交空白名称后，单会话恢复终端标题，多会话恢复 `Workspan · N`。
 - [ ] 中英文界面文案均可正常显示。
 
 ## Out of Scope
 
 - Focus/Split 模式切换、成员侧栏和 Workspan 模板。
-- Workspan 自定义名称；多会话标签固定显示 `Workspan · N`。
 - 从已合并 Workspan 中拖出单个 Pane。
 - Tauri 多窗口、Rust IPC 或 PTY 协议改动。
 

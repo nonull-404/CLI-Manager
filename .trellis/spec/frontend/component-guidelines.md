@@ -71,7 +71,7 @@ const name = window.prompt("Enter a name");
 
 - Dialog text must use the existing i18n system.
 - Cancel resolves without performing the operation.
-- Name-like values are trimmed and empty values cannot be submitted.
+- Name-like values are trimmed and empty values cannot be submitted by default. Use an explicit `allowEmpty` option only when blank input has a defined action such as clearing an optional custom name.
 - Sequential workflows such as import conflict resolution must stop without committing when the user cancels.
 
 **Tests**: Run `rg "window\\.prompt" src` and expect no matches; run `npx tsc --noEmit`; manually verify submit, Enter, Escape, cancel, default values, empty input, and both supported languages.

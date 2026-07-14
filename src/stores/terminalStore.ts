@@ -209,6 +209,7 @@ interface TerminalStore {
   setWorkspanModeEnabled: (enabled: boolean) => void;
   setActiveWorkspan: (id: string) => void;
   reorderWorkspans: (fromId: string, toId: string) => void;
+  renameWorkspan: (id: string, title: string) => void;
   mergeWorkspanAtPaneEdge: (sourceId: string, targetId: string, targetPaneId: string, edge: TerminalPaneDropEdge) => void;
   updateSessionCwd: (sessionId: string, cwd: string) => void;
   updateSessionTerminalSnapshot: (sessionId: string, initialTerminalOutput: string) => void;
@@ -1333,6 +1334,16 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const state = get();
     const workspans = reorderTerminalWorkspans(state.workspans, fromId, toId);
     if (workspans === state.workspans) return;
+    set({ workspans });
+    persistWorkspanState(workspans, state.activeWorkspanId, state.sessions);
+  },
+
+  renameWorkspan: (id, title) => {
+    const state = get();
+    const customTitle = title.trim() || null;
+    const current = state.workspans.find((workspan) => workspan.id === id);
+    if (!current || current.customTitle === customTitle) return;
+    const workspans = updateTerminalWorkspan(state.workspans, id, (workspan) => ({ ...workspan, customTitle }));
     set({ workspans });
     persistWorkspanState(workspans, state.activeWorkspanId, state.sessions);
   },

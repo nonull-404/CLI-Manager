@@ -13,6 +13,7 @@ import {
 
 export interface TerminalWorkspan {
   id: string;
+  customTitle: string | null;
   paneTree: TerminalPaneNode | null;
   activePaneId: string | null;
   activeSessionId: string | null;
@@ -88,6 +89,9 @@ export function migrateTerminalWorkspans(value: unknown): TerminalWorkspan[] {
     seenIds.add(item.id);
     workspans.push(resolveWorkspanLayout({
       id: item.id,
+      customTitle: typeof item.customTitle === "string" && item.customTitle.trim()
+        ? item.customTitle.trim()
+        : null,
       paneTree,
       activePaneId: typeof item.activePaneId === "string" ? item.activePaneId : null,
       activeSessionId: typeof item.activeSessionId === "string" ? item.activeSessionId : null,
@@ -100,6 +104,7 @@ export function migrateTerminalWorkspans(value: unknown): TerminalWorkspan[] {
 export function createTerminalWorkspan(id: string, paneId: string, sessionId: string): TerminalWorkspan {
   return {
     id,
+    customTitle: null,
     paneTree: createPaneLeaf(paneId, [sessionId], sessionId),
     activePaneId: paneId,
     activeSessionId: sessionId,

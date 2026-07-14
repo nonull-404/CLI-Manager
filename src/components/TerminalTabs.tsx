@@ -59,6 +59,7 @@ import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2,
 import { WorktreeIcon } from "./WorktreeIcon";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
+import { useAppPrompt } from "./ui/useAppPrompt";
 import { useHistoryStore } from "../stores/historyStore";
 import { useSystemResources } from "../hooks/useSystemResources";
 import {
@@ -2087,6 +2088,7 @@ export function TerminalTabs({
   terminalScope = ALL_TERMINALS_SCOPE,
 }: TerminalTabsProps = {}) {
   const { t } = useI18n();
+  const { prompt, promptDialog } = useAppPrompt();
   const { sessions, activeSessionId, workspans, activeWorkspanId, tabNotifications } = useTerminalStore(
     useShallow((s) => ({
       sessions: s.sessions,
@@ -2099,6 +2101,7 @@ export function TerminalTabs({
   const setActive = useTerminalStore((s) => s.setActive);
   const setActiveWorkspan = useTerminalStore((s) => s.setActiveWorkspan);
   const reorderWorkspans = useTerminalStore((s) => s.reorderWorkspans);
+  const renameWorkspan = useTerminalStore((s) => s.renameWorkspan);
   const mergeWorkspanAtPaneEdge = useTerminalStore((s) => s.mergeWorkspanAtPaneEdge);
   const closeSession = useTerminalStore((s) => s.closeSession);
   const createSession = useTerminalStore((s) => s.createSession);
@@ -2325,7 +2328,7 @@ export function TerminalTabs({
       sessionIds,
       closeSessionIds,
       singleSession,
-      title: singleSession?.title ?? t("terminal.workspan.title", { count: memberSessions.length }),
+      title: workspan.customTitle ?? singleSession?.title ?? t("terminal.workspan.title", { count: memberSessions.length }),
       notification: getWorkspanNotification(sessionIds, tabNotifications),
       vendor: singleSession ? inferSessionVendor(singleSession) : null,
     };
@@ -3708,6 +3711,7 @@ export function TerminalTabs({
       data-fullscreen={fullscreen ? "true" : "false"}
       style={terminalWellStyle}
     >
+      {promptDialog}
       <SplitProjectPicker
         picker={splitPicker}
         tree={projectTree}
@@ -3811,16 +3815,23 @@ export function TerminalTabs({
                             if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
                           }}
                           menuStyle={splitPickerMenuStyle}
-                          menuContent={(getAnchor, startRename) => (
+                          menuContent={(getAnchor) => (
                             <>
                               <ContextMenuItem onSelect={() => handleCloseSessions(model.closeSessionIds, getAnchor())}>
                                 {t("terminal.workspan.closeCurrent")}
                               </ContextMenuItem>
-                              {model.singleSession && (
-                                <ContextMenuItem onSelect={() => window.setTimeout(startRename, 0)}>
-                                  {t("terminal.tab.rename")}
-                                </ContextMenuItem>
-                              )}
+                              <ContextMenuItem onSelect={() => window.setTimeout(() => {
+                                void prompt({
+                                  title: t("terminal.workspan.renamePrompt"),
+                                  initialValue: model.workspan.customTitle ?? "",
+                                  placeholder: t("terminal.workspan.renamePlaceholder"),
+                                  allowEmpty: true,
+                                }).then((title) => {
+                                  if (title !== null) renameWorkspan(model.workspan.id, title);
+                                });
+                              }, 0)}>
+                                {t("terminal.workspan.rename")}
+                              </ContextMenuItem>
                               <ContextMenuItem
                                 disabled={workspanTabModels.length <= 1}
                                 onSelect={() => handleCloseSessions(
