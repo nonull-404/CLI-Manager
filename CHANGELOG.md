@@ -2,6 +2,9 @@
 
 ## [V1.2.8] - 2026-07-14
 
+### 新增
+- **第三方 Hook 通知（Issue #134）**：Hook 设置页新增“三方 Hook 通知”，支持配置多组 DingTalk、Feishu、WeCom、Bark、PushPlus、WxPusher、ServerChan、Telegram、ntfy、Gotify 和 Custom HTTP 通知目标；CLI-Manager 收到 Claude/Codex Hook 后由实际接收端异步批量 fan-out，支持按事件筛选、测试发送、平台业务码判断和少量 emoji 摘要文案。远程通知只发送 CLI 来源、项目名、事件、时间和通知 ID，不发送 Prompt、终端输出、绝对路径、session/tab id 或 transcript；第三方请求失败不会阻塞 Hook 204、本地 toast、系统通知、终端状态更新或 daemon 后台任务。
+
 ### 修复
 - **WebDAV Worktree 同步修复**：WebDAV 与本地同步 payload 补齐 active Worktree 记录及项目 Worktree 配置字段，旧同步包缺失 `worktrees` 时按空列表兼容；解决 Worktree 子目录记录上传/下载后丢失的问题，已丢弃或 missing 的 Worktree 不进入同步。
 - **WebDAV 冲突处理修复**：点击“保留本地”成功上传后会清除冲突状态；点击“使用远程”会应用远程数据并回写当前设备快照，避免重启后同一冲突再次出现。
