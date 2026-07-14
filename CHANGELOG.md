@@ -1,5 +1,13 @@
 # Changelog
 
+## [V1.2.8] - 2026-07-14
+
+### 修复
+- **WebDAV Worktree 同步修复**：WebDAV 与本地同步 payload 补齐 active Worktree 记录及项目 Worktree 配置字段，旧同步包缺失 `worktrees` 时按空列表兼容；解决 Worktree 子目录记录上传/下载后丢失的问题，已丢弃或 missing 的 Worktree 不进入同步。
+- **WebDAV 冲突处理修复**：点击“保留本地”成功上传后会清除冲突状态；点击“使用远程”会应用远程数据并回写当前设备快照，避免重启后同一冲突再次出现。
+- **WebDAV Worktree 缺失目录拦截**：从远端恢复 Worktree 后会立即校验本机路径，不存在的目录标记为 missing，并阻止打开终端、文件面板、资源管理器或依赖安装终端。
+- **同步配置迁移备份修复**：启动迁移旧数据目录时不再把废弃的 `webdavPassword` / `hasPassword` 键反复合并回 `.cli-manager/sync-config.json`，避免生成大量 `sync-config.json.backup-*` 文件。
+
 ## [TEMP] - 2026-07-13
 
 ### 历史与统计
@@ -23,6 +31,12 @@
 - **本地路径打开权限修复**：项目、Worktree 和终端路径统一通过 Rust 命令调用系统文件管理器或默认应用，不再依赖 WebView opener 路径 scope，修复 `open_path not allowed by ACL` 及 `Not allowed to open path` 错误。
 - **历史统计入口无响应修复**：修正全屏统计面板被共享样式覆盖为相对定位的问题，点击侧边栏历史用量分析后可正常显示看板；同样适用于 ccusage 全屏看板。
 - **鼠标侧键切换 Workspan 修复**：Workspan 默认开启且当前工作区只有一个会话时，鼠标前进/后退侧键和 Tab 切换快捷键会切换到相邻 Workspan，不再因仅在当前 Pane 树内循环而停留在原标签。
+
+## [V1.2.8] - 2026-07-14
+
+### 修复
+- **终端背景图状态栏可读性修复**：开启背景图时，在终端底部增加随终端主题明暗和现有遮罩强度自适应的渐变可读性遮罩，并提高 ANSI 色块内前景文字的最小对比度；背景图模式下会同步增强终端默认前景色和常用灰色 ANSI 文本颜色，避免 Claude Code 状态栏文字落在复杂图像或深色块上时看不清。未启用背景图的终端保持原样。
+- **Tauri 开发启动修复**：保留根目录 Rust/Tauri 文件，启动脚本改为从 `src-tauri` 工程目录运行 Tauri CLI，并统一解析 dev/local 自定义配置路径，避免 `cargo metadata` 把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 解析。
 
 ## [V1.2.7] - 2026-07-12
 
