@@ -11,6 +11,7 @@
 - **Workspan 自定义名称**：顶层 Workspan 右键菜单新增“重命名工作区”，通过应用内弹窗设置并持久化自定义名称；提交空白名称后恢复单会话终端标题或多会话 `Workspan · N` 默认标题。
 
 ### 修复
+- **Mantine 全局上下文修复**：在应用根节点挂载 Mantine 主题 Provider 并全局加载组件样式，修复终端工作区渲染应用内输入弹窗时因缺少 `MantineProvider` 导致的“界面渲染失败”。
 - **状态栏配置输入框统一**：状态栏配置的新建、复制、重命名、外部配置另存和整库导入冲突处理改为应用内主题弹窗，移除 WebView `window.prompt` 系统式输入框。
 - **Worktree 今日项目用量统计修复**：实时统计按当前 Worktree 实际路径聚合当天用量，不再因只使用历史会话的 `project_key` 而遗漏 Worktree 中产生的 Token 与费用。
 - **本地路径打开权限修复**：项目、Worktree 和终端路径统一通过 Rust 命令调用系统文件管理器或默认应用，不再依赖 WebView opener 路径 scope，修复 `open_path not allowed by ACL` 及 `Not allowed to open path` 错误。
