@@ -1,5 +1,13 @@
 # Changelog
 
+## [TEMP]
+
+### 修复
+- **Claude 状态栏 Powerline 符号修复**：WebView 直接加载应用内置符号字体，不再依赖 Windows 用户字体缓存，修复实时预览、Powerline 选项和应用内终端中的分隔符与端帽显示为方框的问题。
+
+### 终端
+- **终端回滚行数自定义开关**：设置页新增默认关闭的“自定义回滚行数”开关；关闭时统一使用 9000 行，开启后可在 1000–50000 行之间调整，并继续支持已有终端热更新而不重启 PTY。
+
 ## [V1.2.9] - 2026-07-15
 
 ### 修复
@@ -8,7 +16,9 @@
 ## [V1.2.8] - 2026-07-14
 
 ### 新增
+- **文件编辑器多编码文本兼容**：项目文件预览、编辑、内容搜索和 Git Diff 支持自动识别 UTF-8/BOM、UTF-16 BOM 及 GBK、Big5、Shift_JIS、Windows-125x 等常见文本编码；保存时保持原编码和 BOM，遇到原编码无法表示的新字符时阻止写入，避免乱码或静默转码。非 UTF-8 Diff 为保护原始字节禁用行级与 Hunk 级回滚，整文件 Git 操作保持可用。
 - **第三方 Hook 通知（Issue #134）**：Hook 设置页新增“三方 Hook 通知”，支持配置多组 DingTalk、Feishu、WeCom、Bark、PushPlus、WxPusher、ServerChan、Telegram、ntfy、Gotify 和 Custom HTTP 通知目标；CLI-Manager 收到 Claude/Codex Hook 后由实际接收端异步批量 fan-out，支持按事件筛选、测试发送、平台业务码判断和少量 emoji 摘要文案。远程通知只发送 CLI 来源、项目名、事件、时间和通知 ID，不发送 Prompt、终端输出、绝对路径、session/tab id 或 transcript；第三方请求失败不会阻塞 Hook 204、本地 toast、系统通知、终端状态更新或 daemon 后台任务。
+- **第三方 Hook 通知配置同步**：WebDAV 快照与本地 zip 同步包新增完整三方 Hook 通知配置，包含全局开关、目标、事件筛选及 Webhook、Token、Secret、自定义 Header/Body 等凭证；下载支持独立选择恢复域，旧快照不会清空本地配置，远端目标恢复前统一校验并限制为 20 个。同步设置页仅展示目标数量，不泄露凭证，并以警告色明确提示这些凭证会明文写入 `sync.json`、HTTP 无传输加密且 HTTPS 仅保护传输链路；WebDAV 密码仍只保存在系统凭据存储中。
 
 ### 历史与统计
 - **历史用量分析全屏看板**：历史用量分析改为应用窗口内全屏工作区，Token / 费用趋势独占中间整行，底部按项目排行、模型排行、24 小时活跃和 Token 构成四列展示，并保留原有筛选、下钻和其他统计能力。
@@ -45,7 +55,12 @@
 - **WebDAV Worktree 同步修复**：WebDAV 与本地同步 payload 补齐 active Worktree 记录及项目 Worktree 配置字段，旧同步包缺失 `worktrees` 时按空列表兼容；解决 Worktree 子目录记录上传/下载后丢失的问题，已丢弃或 missing 的 Worktree 不进入同步。
 - **WebDAV 冲突处理修复**：点击“保留本地”成功上传后会清除冲突状态；点击“使用远程”会应用远程数据并回写当前设备快照，避免重启后同一冲突再次出现。
 - **WebDAV Worktree 缺失目录拦截**：从远端恢复 Worktree 后会立即校验本机路径，不存在的目录标记为 missing，并阻止打开终端、文件面板、资源管理器或依赖安装终端。
+- **macOS/Linux WebDAV 密码安全存储修复**：WebDAV 密码在 macOS 上改用系统登录钥匙串，在 Linux 上改用 freedesktop Secret Service 的 CLI-Manager 专用 collection（兼容原生 WSL 缺少 default collection 的场景）；Windows 继续使用凭据管理器，密码仍不会写入明文配置、SQLite 或同步快照。
 - **同步配置迁移备份修复**：启动迁移旧数据目录时不再把废弃的 `webdavPassword` / `hasPassword` 键反复合并回 `.cli-manager/sync-config.json`，避免生成大量 `sync-config.json.backup-*` 文件。
+- **项目右键菜单图标区分**：项目“重命名”保留铅笔图标，“修改”改用设置图标，避免两个相邻操作使用相同图标。
+- **请求日志筛选与表格布局优化**：历史用量分析的请求日志将日期范围与其他查询条件放到同一行，统一居中显示汇总卡片、表头和数据单元格，并增强浅色主题下汇总卡片的边框层次。
+- **文件浏览器与文件预览交互修复**：启用 Workspan 时，文件预览恢复为独立顶层工作区，不再并入当前终端 Workspan；“已折叠文件”聚合行不再错误触发项目根目录右键菜单，避免右键后移动鼠标导致文件树漂移。
+- **文件浏览器折叠目录统一聚合**：已加载子目录中的默认折叠目录和手动忽略目录统一归入文件树底部的单一“已折叠文件”聚合行，并显示相对路径，避免每个父目录重复出现局部聚合行。
 
 ## [V1.2.7] - 2026-07-12
 
