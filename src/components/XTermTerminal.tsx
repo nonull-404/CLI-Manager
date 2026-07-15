@@ -5,13 +5,11 @@ import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useShallow } from "zustand/shallow";
 import {
   applyTransparency,
@@ -330,11 +328,6 @@ const attachClipboardImageData = async (rootPath: string, fileName: string, data
 const cleanupExpiredAttachments = async (rootPath: string) => (
   invoke<number>("file_cleanup_expired_attachments", { rootPath })
 );
-
-const openHttpUrl = (sessionId: string, uri: string) => {
-  if (!/^https?:\/\//i.test(uri)) return;
-  void openUrl(uri).catch((err) => logError("Failed to open terminal link", { sessionId, uri, err }));
-};
 
 const openTerminalFilePath = async (sessionId: string, rawPath: string) => {
   const terminalState = useTerminalStore.getState();
@@ -1518,15 +1511,13 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       // even though WebGL is disabled while a background image is active.
       allowTransparency: true,
       theme: withVisibleSelectionTheme(isTransparentRef.current ? applyTransparency(baseTheme, background.overlayDarken) : baseTheme, false),
-      // OSC 8 超链接（codex 等 CLI 输出）默认点击行为是 window.open，在 Tauri
-      // webview 里会被拦成"是否导航"确认框。接管为系统默认浏览器打开，仅放行
-      // http/https，避免恶意 scheme。
-      linkHandler: {
-        activate: (_event, uri) => openHttpUrl(sessionId, uri),
-      },
     });
     // Keep Claude Code / other TUIs from overriding the app-wide thin cursor via DECSCUSR.
     const cursorStyleDisposable = terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true);
+    // CLI tools such as Codex can wrap large TUI regions in OSC 8 repository links.
+    // Consume the control sequence so terminal text stays visible without clickable
+    // underlines or accidental browser navigation.
+    const webHyperlinkDisposable = terminal.parser.registerOscHandler(8, () => true);
 
     const fitAddon = new FitAddon();
     const imageAddon = new ImageAddon({
@@ -1539,7 +1530,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     const serializeAddon = new SerializeAddon();
     const unicode11Addon = new Unicode11Addon();
-    const webLinksAddon = new WebLinksAddon((_event, uri) => openHttpUrl(sessionId, uri));
     const fileLinkDisposable = terminal.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
         const line = terminal.buffer.active.getLine(bufferLineNumber - 1)?.translateToString(true) ?? "";
@@ -1561,7 +1551,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     terminal.loadAddon(serializeAddon);
     terminal.loadAddon(unicode11Addon);
     terminal.unicode.activeVersion = "11";
-    terminal.loadAddon(webLinksAddon);
     terminal.open(containerRef.current);
     // 注册定时节流落盘的快照来源：让崩溃/强杀也能恢复到最近一次落盘的画面。
     const unregisterSnapshotSource = registerTerminalSnapshotSource(sessionId, () => serializeAddon.serialize());
@@ -3429,6 +3418,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       unlisten?.();
       searchResultDisposable.dispose();
       fileLinkDisposable.dispose();
+      webHyperlinkDisposable.dispose();
       cursorStyleDisposable.dispose();
       webglAddonRef.current?.dispose();
       webglAddonRef.current = null;
