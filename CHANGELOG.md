@@ -29,6 +29,7 @@
 - **Tauri 开发启动修复**：移除仓库根目录误放的 Rust 与 Tauri 配置副本，恢复 CLI 对 `src-tauri` 项目的正确识别，并统一解析 dev/local 自定义配置路径，修复 `npm run tauri dev` 在 `cargo metadata` 阶段把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 而启动失败。
 - **Codex 供应商通用配置解析修复**：切换 Codex 供应商时按 TOML 合并 `common_config_codex` 与供应商 `config`，不再把 Codex 通用配置误当 JSON 解析，修复 AnyRouter 等供应商提示“配置解析失败、无法应用”。
 - **Codex 供应商重复配置修复**：合并通用配置与供应商配置时按 TOML 键语义识别单双引号等价表头，避免 Hook 状态表被重复写入 profile 并触发 `duplicate key`。
+- **Codex 供应商切换 CODEX_HOME 修复**：切换 Codex 供应商时不再把 `CODEX_HOME` 重定向到 `~/.cli-manager/providers/codex` 隔离空目录，改为将生成的 profile 写入用户真实 Codex home（自定义目录或 `~/.codex`），与用户的 `config.toml`、`auth.json` 同处，修复切换后丢失账号认证与基础配置的问题；`codex --profile <name>` 仍按 `$CODEX_HOME/<name>.config.toml` 加载，WSL/Bash 下注入的 `CODEX_HOME` 会转换为 `/mnt/<drive>/...`；切换时自动清理遗留在旧隔离目录的 `cli-manager-*` profile。
 - **Mantine 全局上下文修复**：在应用根节点挂载 Mantine 主题 Provider 并全局加载组件样式，修复终端工作区渲染应用内输入弹窗时因缺少 `MantineProvider` 导致的“界面渲染失败”。
 - **应用内输入与确认框统一**：状态栏配置命名、导入冲突、未保存内容切换、配置删除、Powerline 字体安装和终端背景移除统一使用应用内主题弹窗，移除 WebView `window.prompt` 与 `window.confirm` 系统式对话框。
 - **Worktree 今日项目用量统计修复**：实时统计按当前 Worktree 实际路径聚合当天用量，不再因只使用历史会话的 `project_key` 而遗漏 Worktree 中产生的 Token 与费用。
