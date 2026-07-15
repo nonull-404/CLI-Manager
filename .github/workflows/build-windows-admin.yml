@@ -1,0 +1,134 @@
+name: Build Latest Windows Administrator Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/build-windows-admin.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      NODE_OPTIONS: --max-old-space-size=4096
+
+    steps:
+      - name: Checkout latest fork source
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Read application version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = [string]$package.version
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Unable to read version from package.json."
+          }
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=admin-windows-v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SETUP_ASSET=CLI-Manager-v$version-Windows-x64-Setup.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MSI_ASSET=CLI-Manager-v$version-Windows-x64.msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Building CLI-Manager v$version"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Disable updater signing for administrator build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false
+            }
+          }
+          '@ | Set-Content src-tauri/tauri.admin-build.conf.json -Encoding utf8
+
+      - name: Build Windows MSI and Setup EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm run tauri -- build --config src-tauri/tauri.admin-build.conf.json --bundles msi,nsis
+
+      - name: Collect and normalize installer files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *.exe -File -Recurse |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          $msi = Get-ChildItem src-tauri/target/release/bundle/msi -Filter *.msi -File -Recurse |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $setup) { throw "NSIS Setup EXE was not generated." }
+          if (-not $msi) { throw "MSI package was not generated." }
+
+          Copy-Item $setup.FullName "artifacts/$env:SETUP_ASSET" -Force
+          Copy-Item $msi.FullName "artifacts/$env:MSI_ASSET" -Force
+
+          $lines = foreach ($file in Get-ChildItem artifacts -File) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+
+          Get-ChildItem artifacts | Format-Table Name,Length,LastWriteTime
+          Get-Content artifacts/SHA256SUMS.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CLI-Manager-v${{ env.APP_VERSION }}-Windows-x64
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish permanent GitHub Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          gh release view $env:RELEASE_TAG --repo $env:GH_REPO *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG `
+              --repo $env:GH_REPO `
+              --target $env:GITHUB_SHA `
+              --title "CLI-Manager v$env:APP_VERSION Windows x64" `
+              --notes "Windows x64 administrator build generated from the latest source in nonull-404/CLI-Manager master. Includes Setup EXE and MSI. Updater signing artifacts are intentionally disabled because the fork does not contain the upstream private signing key."
+          }
+          gh release upload $env:RELEASE_TAG `
+            "artifacts/$env:SETUP_ASSET" `
+            "artifacts/$env:MSI_ASSET" `
+            "artifacts/SHA256SUMS.txt" `
+            --clobber `
+            --repo $env:GH_REPO
