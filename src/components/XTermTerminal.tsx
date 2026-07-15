@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Terminal, type IBufferCell, type IBufferLine, type ILink, type ITheme } from "@xterm/xterm";
+import { Terminal, type IBufferCell, type IBufferLine, type IDisposable, type ILink, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
@@ -28,20 +28,11 @@ import { debugConsoleWarn } from "../lib/debugConsole";
 import { translateCurrent, useI18n } from "../lib/i18n";
 import { buildFastCursorMoveSequence } from "../lib/terminalCursorMovement";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
-import { parseOsc7Cwd } from "../lib/terminalOscPath";
-import {
-  LEGACY_RUNTIME_OSC_PREFIX,
-  OSC_PREFIX,
-  findOscTerminator,
-  formatSpecialColorReply,
-  matchIntegrationOscPrefix,
-  parseSpecialColorQuery,
-  parseStandardIntegrationCwd,
-} from "../lib/terminalOscParse";
 import { findTerminalFileLinks, resolveTerminalFileSystemPath } from "../lib/terminalFileLinks";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
+import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import {
   clampTextCursorIndex,
@@ -104,7 +95,7 @@ import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useTemplateStore } from "../stores/templateStore";
-import { formatStartupInputForPty, useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
+import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
 import {
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -143,7 +134,6 @@ import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import { registerTerminalSnapshotSource, markTerminalSnapshotDirty } from "../lib/sessionSnapshotPersistence";
 
-const OSC_CARRY_BUFFER_MAX = 8192;
 const XTERM_BG_COLOR_MASK = 0x03ffffff;
 const XTERM_COLOR_MODE_RGB = 0x03000000;
 const XTERM_INVERSE_FLAG = 0x04000000;
@@ -166,6 +156,8 @@ const NATIVE_TEXT_INPUT_DEDUP_WINDOW_MS = 16;
 const CJK_NATIVE_PUNCTUATION_PATTERN = /^[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]+$/u;
 
 type TerminalInputSource = "onData" | "nativeTextInput";
+
+type TerminalSubsystemDisposable = IDisposable;
 
 type MutableXtermCell = IBufferCell & {
   fg: number;
@@ -223,6 +215,13 @@ const getInactiveBufferLimit = (scrollbackRows: number) => Math.min(
   INACTIVE_BUFFER_MAX_CHARS,
   Math.max(INACTIVE_BUFFER_MIN_CHARS, scrollbackRows * INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW)
 );
+
+const disposeTerminalSubsystem = (disposables: TerminalSubsystemDisposable[]) => {
+  for (let index = disposables.length - 1; index >= 0; index -= 1) {
+    disposables[index].dispose();
+  }
+  disposables.length = 0;
+};
 
 const getTerminalRenderedCellSize = (terminal: Terminal, terminalContainer: HTMLElement, fallbackFontSize: number) => {
   const renderedCell = (
@@ -424,8 +423,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const inputBuffer = useRef("");
   const inputCursorIndexRef = useRef(0);
   const fitRafRef = useRef<number | null>(null);
+  // Input owns this ref. Display may only read it to suppress fit during IME composition.
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
+  // The orchestrator mirrors the visibility prop; display/viewport code reads it only.
   const isVisibleRef = useRef(isVisible);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const inactiveBufferRef = useRef<string[]>([]);
@@ -443,15 +444,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const visibilityRestoreRevealRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
-  const runtimeOscBufferRef = useRef("");
-  const specialOscBufferRef = useRef("");
   const suggestionRef = useRef<TerminalInputSuggestion | null>(null);
   const acceptSuggestionRef = useRef<() => boolean>(() => false);
   const cleanedAttachmentRootsRef = useRef<Set<string>>(new Set());
-  const terminalColorRepliesRef = useRef<{ foreground: string; background: string }>({
-    foreground: formatSpecialColorReply(10, "#d8dee9"),
-    background: formatSpecialColorReply(11, "#0c0e10"),
-  });
   const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
   const effectiveTerminalScrollbackRows = terminalScrollbackCustomEnabled
@@ -713,18 +708,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     }, 80);
   };
 
-  const emitShellRuntimeEvent = (event: ShellRuntimeEventName, exitCode: number | null) => {
-    useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event, exitCode, origin: "osc" });
-  };
-
-  const updateSessionCwdIfChanged = (cwd: string | null) => {
-    const value = cwd?.trim();
-    if (!value) return;
-    const store = useTerminalStore.getState();
-    const session = store.sessions.find((item) => item.id === sessionId);
-    if (!session || session.cwd === value) return;
-    store.updateSessionCwd(sessionId, value);
-  };
+  const {
+    normalizeTerminalOutput,
+    updateSessionCwdIfChanged,
+    updateTerminalColorReplies,
+  } = useTerminalOsc({
+    sessionId,
+    osPlatformRef,
+    onPtyWriteError: reportPtyWriteError,
+  });
 
   const getSessionToolContext = () => {
     const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -768,164 +760,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const shouldNormalizeTuiComposerBackground = (context = getSessionToolContext()) => (
     isTransparentRef.current || (isClaudeOrCodexSession(context) && isLightTerminalRef.current)
   );
-
-  // 私有 OSC 777：session=<id>;event=<name>[;exit=<code>]
-  const handleLegacyRuntimeOsc = (body: string) => {
-    const fields = Object.fromEntries(body.split(";").map((part) => {
-      const separator = part.indexOf("=");
-      return separator < 0 ? [part, ""] : [part.slice(0, separator), part.slice(separator + 1)];
-    }));
-    if (fields.session !== sessionId) return;
-    const eventName = fields.event;
-    if (eventName !== "command_started" && eventName !== "command_finished" && eventName !== "prompt_shown") return;
-    const exitCode = fields.exit !== undefined && fields.exit !== "" ? Number(fields.exit) : null;
-    emitShellRuntimeEvent(eventName as ShellRuntimeEventName, Number.isFinite(exitCode) ? exitCode : null);
-  };
-
-  // 标准 OSC 7/133/633：OSC 7 与 633;P;Cwd 同步 cwd；A=prompt 开始，C=命令开始执行，D[;exit]=命令结束。
-  // D 不带 exit code 表示没跑命令（空回车 / prompt 处 Ctrl+C），不改变状态。
-  const handleStandardIntegrationOsc = (body: string) => {
-    const osc7Cwd = parseOsc7Cwd(body, osPlatformRef.current);
-    if (osc7Cwd) {
-      updateSessionCwdIfChanged(osc7Cwd);
-      return;
-    }
-
-    const separator = body.indexOf(";");
-    const command = separator < 0 ? body : body.slice(0, separator);
-    const rest = separator < 0 ? "" : body.slice(separator + 1);
-    const cwd = parseStandardIntegrationCwd(command, rest);
-    if (cwd) {
-      updateSessionCwdIfChanged(cwd);
-      return;
-    }
-
-    if (command === "A") {
-      emitShellRuntimeEvent("prompt_shown", null);
-    } else if (command === "C") {
-      emitShellRuntimeEvent("command_started", null);
-    } else if (command === "D") {
-      const exitField = rest.split(";")[0] ?? "";
-      const exitCode = exitField === "" ? null : Number(exitField);
-      emitShellRuntimeEvent("command_finished", Number.isFinite(exitCode) ? exitCode : null);
-    }
-  };
-
-  const processShellIntegrationOsc = (text: string) => {
-    const combined = runtimeOscBufferRef.current + text;
-    runtimeOscBufferRef.current = "";
-    let output = "";
-    let cursor = 0;
-
-    while (cursor < combined.length) {
-      const start = combined.indexOf("\x1b]", cursor);
-      if (start < 0) {
-        // 尾部孤立 ESC 可能是下个 chunk 里 "\x1b]" 的前半，留待拼接；
-        // 扣下的字符不会渲染出任何可见内容，显示安全。
-        if (combined.charCodeAt(combined.length - 1) === 0x1b) {
-          output += combined.slice(cursor, combined.length - 1);
-          runtimeOscBufferRef.current = "\x1b";
-        } else {
-          output += combined.slice(cursor);
-        }
-        break;
-      }
-
-      const matched = matchIntegrationOscPrefix(combined, start);
-      if (matched.kind === "none") {
-        output += combined.slice(cursor, start + 2);
-        cursor = start + 2;
-        continue;
-      }
-      if (matched.kind === "partial") {
-        output += combined.slice(cursor, start);
-        runtimeOscBufferRef.current = combined.slice(start);
-        break;
-      }
-
-      const terminator = findOscTerminator(combined, start + matched.prefix.length);
-      if (terminator === null) {
-        output += combined.slice(cursor, start);
-        runtimeOscBufferRef.current = combined.slice(start);
-        break;
-      }
-      if ("abortAt" in terminator) {
-        output += combined.slice(cursor, terminator.abortAt);
-        cursor = terminator.abortAt;
-        continue;
-      }
-
-      const body = combined.slice(start + matched.prefix.length, terminator.index);
-      const sequenceEnd = terminator.index + terminator.length;
-      if (matched.prefix === LEGACY_RUNTIME_OSC_PREFIX) {
-        handleLegacyRuntimeOsc(body);
-      } else {
-        handleStandardIntegrationOsc(body);
-        output += combined.slice(start, sequenceEnd);
-      }
-      cursor = sequenceEnd;
-    }
-
-    if (runtimeOscBufferRef.current.length > OSC_CARRY_BUFFER_MAX) {
-      runtimeOscBufferRef.current = "";
-    }
-
-    return output;
-  };
-
-  const processSpecialOscQueries = (text: string) => {
-    const combined = specialOscBufferRef.current + text;
-    specialOscBufferRef.current = "";
-    let output = "";
-    let cursor = 0;
-
-    while (cursor < combined.length) {
-      const start = combined.indexOf(OSC_PREFIX, cursor);
-      if (start < 0) {
-        if (combined.charCodeAt(combined.length - 1) === 0x1b) {
-          output += combined.slice(cursor, combined.length - 1);
-          specialOscBufferRef.current = "\x1b";
-        } else {
-          output += combined.slice(cursor);
-        }
-        break;
-      }
-
-      output += combined.slice(cursor, start);
-      const terminator = findOscTerminator(combined, start + OSC_PREFIX.length);
-      if (terminator === null) {
-        specialOscBufferRef.current = combined.slice(start);
-        break;
-      }
-      if ("abortAt" in terminator) {
-        output += combined.slice(start, terminator.abortAt);
-        cursor = terminator.abortAt;
-        continue;
-      }
-
-      const body = combined.slice(start + OSC_PREFIX.length, terminator.index);
-      const queryId = parseSpecialColorQuery(body);
-      if (queryId === 10 || queryId === 11) {
-        // Codex only waits briefly for OSC 10/11 terminal color replies during
-        // startup. Reply directly from the raw PTY stream path so theme
-        // detection is not delayed by xterm's render/write scheduling.
-        const reply =
-          queryId === 10
-            ? terminalColorRepliesRef.current.foreground
-            : terminalColorRepliesRef.current.background;
-        invoke("pty_write", { sessionId, data: reply }).catch((err) => reportPtyWriteError("osc_color_reply", err));
-      } else {
-        output += combined.slice(start, terminator.index + terminator.length);
-      }
-      cursor = terminator.index + terminator.length;
-    }
-
-    if (specialOscBufferRef.current.length > OSC_CARRY_BUFFER_MAX) {
-      specialOscBufferRef.current = "";
-    }
-
-    return output;
-  };
 
   const normalizeTuiComposerBackground = (terminal: Terminal) => {
     const toolContext = getSessionToolContext();
@@ -1536,8 +1370,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         activate: (_event, uri) => openHttpUrl(sessionId, uri),
       },
     });
+    const baseDisposables: TerminalSubsystemDisposable[] = [];
+    const displayDisposables: TerminalSubsystemDisposable[] = [];
+    const inputDisposables: TerminalSubsystemDisposable[] = [];
     // Keep Claude Code / other TUIs from overriding the app-wide thin cursor via DECSCUSR.
-    const cursorStyleDisposable = terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true);
+    baseDisposables.push(terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true));
 
     const fitAddon = new FitAddon();
     const imageAddon = new ImageAddon({
@@ -1551,7 +1388,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const serializeAddon = new SerializeAddon();
     const unicode11Addon = new Unicode11Addon();
     const webLinksAddon = new WebLinksAddon((_event, uri) => openHttpUrl(sessionId, uri));
-    const fileLinkDisposable = terminal.registerLinkProvider({
+    baseDisposables.push(terminal.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
         const line = terminal.buffer.active.getLine(bufferLineNumber - 1)?.translateToString(true) ?? "";
         const links: ILink[] = findTerminalFileLinks(line).map((match) => ({
@@ -1565,7 +1402,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }));
         callback(links.length > 0 ? links : undefined);
       },
-    });
+    }));
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(imageAddon);
     terminal.loadAddon(searchAddon);
@@ -1576,7 +1413,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     terminal.open(containerRef.current);
     // 注册定时节流落盘的快照来源：让崩溃/强杀也能恢复到最近一次落盘的画面。
     const unregisterSnapshotSource = registerTerminalSnapshotSource(sessionId, () => serializeAddon.serialize());
-    const searchResultDisposable = searchAddon.onDidChangeResults(handleSearchResults);
+    baseDisposables.push(searchAddon.onDidChangeResults(handleSearchResults));
 
     let webglAddon: WebglAddon | null = null;
     if (!(lowMemoryMode && !isVisibleRef.current) && canUseWebglRenderer(baseTheme)) {
@@ -2813,17 +2650,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       updateInputBufferFromTerminalData(data);
     }
 
-    terminal.onData((data) => {
+    // Contract: terminal.onData is input direction and belongs to the input subsystem.
+    inputDisposables.push(terminal.onData((data) => {
       forwardTerminalInput(data, "onData");
-    });
+    }));
 
     // Sync resize to PTY
-    terminal.onResize(({ cols, rows }) => {
+    displayDisposables.push(terminal.onResize(({ cols, rows }) => {
       if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
       invoke("pty_resize", { sessionId, cols, rows }).catch((err) => {
         logError("PTY resize failed in XTermTerminal", { sessionId, cols, rows, err });
       });
-    });
+    }));
 
     // Per-session TextDecoder with stream mode：
     // 跨 chunk 的多字节 UTF-8 必须使用 streaming decode，否则截断的 head/tail
@@ -2874,6 +2712,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         stashInactiveText(combined);
       }
     };
+    // Contract: pty-output is display direction and belongs to the display subsystem.
     listen<string>(`pty-output-${sessionId}`, (event) => {
       if (cancelled) return;
       const binaryString = atob(event.payload);
@@ -2881,7 +2720,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       for (let i = 0; i < binaryString.length; i += 1) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      const text = processShellIntegrationOsc(processSpecialOscQueries(textDecoder.decode(bytes, { stream: true })));
+      const text = normalizeTerminalOutput(textDecoder.decode(bytes, { stream: true }));
       if (!text) return;
       // 标记脏，供定时节流落盘判断是否需要重新序列化该终端。
       markTerminalSnapshotDirty(sessionId);
@@ -3190,7 +3029,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     scheduleHelperTextareaAnchorPin();
     terminalContainer.addEventListener("scroll", scheduleTerminalContainerScrollReset, { passive: true });
-    const cursorMoveDisposable = terminal.onCursorMove(() => {
+    inputDisposables.push(terminal.onCursorMove(() => {
       if (!isActiveRef.current) return;
       if (isComposingRef.current) {
         clearSuggestionGhost();
@@ -3202,8 +3041,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (!textarea || document.activeElement !== textarea) return;
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
-    });
-    const renderDisposable = terminal.onRender((range) => {
+    }));
+    displayDisposables.push(terminal.onRender((range) => {
       handleVisibilityRestoreRender(terminal, range);
       scheduleTuiComposerBackgroundNormalization(terminal);
       if (!isComposingRef.current) {
@@ -3213,7 +3052,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       clearSuggestionGhost();
       scheduleCompositionScrollRestore();
       scheduleCompositionAnchorFix();
-    });
+    }));
 
     // 中文 IME 的直出标点可能不会稳定进入 xterm 的 textarea diff：
     // Windows 常见信号是 keyCode 229；macOS 中文输入法的全角标点（如 "（"）
@@ -3373,8 +3212,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       textarea?.removeEventListener("compositionupdate", onCompositionUpdate);
       textarea?.removeEventListener("compositionend", onCompositionEnd);
       terminalContainer.removeEventListener("scroll", scheduleTerminalContainerScrollReset);
-      cursorMoveDisposable.dispose();
-      renderDisposable.dispose();
+      disposeTerminalSubsystem(inputDisposables);
+      disposeTerminalSubsystem(displayDisposables);
       wheelTarget.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
       resizeObserver.disconnect();
       if (fitRafRef.current !== null) {
@@ -3438,9 +3277,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       needsViewportRefreshRef.current = false;
       unregisterSnapshotSource();
       unlisten?.();
-      searchResultDisposable.dispose();
-      fileLinkDisposable.dispose();
-      cursorStyleDisposable.dispose();
+      disposeTerminalSubsystem(baseDisposables);
       webglAddonRef.current?.dispose();
       webglAddonRef.current = null;
       webglAddon = null;
@@ -3453,10 +3290,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   const backgroundOverlayColor = getTerminalBackgroundOverlayColor(terminalTheme);
   const showBackgroundImage = isTransparent && assetUrl !== null;
-  terminalColorRepliesRef.current = {
-    foreground: formatSpecialColorReply(10, normalizeHexColor(terminalTheme.foreground, "#d8dee9")),
-    background: formatSpecialColorReply(11, normalizeHexColor(terminalTheme.background, backgroundColor)),
-  };
+  updateTerminalColorReplies({
+    foreground: normalizeHexColor(terminalTheme.foreground, "#d8dee9"),
+    background: normalizeHexColor(terminalTheme.background, backgroundColor),
+  });
   const searchForeground = normalizeHexColor(terminalTheme.foreground, "#d8dee9");
   const searchBackground = normalizeHexColor(terminalTheme.background, backgroundColor);
   const searchAccent = normalizeHexColor(terminalTheme.cursor, searchForeground);
