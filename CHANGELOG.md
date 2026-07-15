@@ -49,6 +49,7 @@
 - **WebDAV Worktree 同步修复**：WebDAV 与本地同步 payload 补齐 active Worktree 记录及项目 Worktree 配置字段，旧同步包缺失 `worktrees` 时按空列表兼容；解决 Worktree 子目录记录上传/下载后丢失的问题，已丢弃或 missing 的 Worktree 不进入同步。
 - **WebDAV 冲突处理修复**：点击“保留本地”成功上传后会清除冲突状态；点击“使用远程”会应用远程数据并回写当前设备快照，避免重启后同一冲突再次出现。
 - **WebDAV Worktree 缺失目录拦截**：从远端恢复 Worktree 后会立即校验本机路径，不存在的目录标记为 missing，并阻止打开终端、文件面板、资源管理器或依赖安装终端。
+- **macOS/Linux WebDAV 密码安全存储修复**：WebDAV 密码在 macOS 上改用系统登录钥匙串，在 Linux 上改用 freedesktop Secret Service 的 CLI-Manager 专用 collection（兼容原生 WSL 缺少 default collection 的场景）；Windows 继续使用凭据管理器，密码仍不会写入明文配置、SQLite 或同步快照。
 - **同步配置迁移备份修复**：启动迁移旧数据目录时不再把废弃的 `webdavPassword` / `hasPassword` 键反复合并回 `.cli-manager/sync-config.json`，避免生成大量 `sync-config.json.backup-*` 文件。
 - **项目右键菜单图标区分**：项目“重命名”保留铅笔图标，“修改”改用设置图标，避免两个相邻操作使用相同图标。
 - **请求日志筛选与表格布局优化**：历史用量分析的请求日志将日期范围与其他查询条件放到同一行，统一居中显示汇总卡片、表头和数据单元格，并增强浅色主题下汇总卡片的边框层次。

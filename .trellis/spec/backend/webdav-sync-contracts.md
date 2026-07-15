@@ -38,6 +38,12 @@ pub async fn sync_download(
     device_name: Option<String>,
     remote_dir: Option<String>,
 ) -> Result<SyncDownloadResult, String>;
+
+pub async fn sync_save_password(password: String) -> Result<(), String>;
+
+pub async fn sync_load_password() -> Result<Option<String>, String>;
+
+pub async fn sync_delete_password() -> Result<(), String>;
 ```
 
 Rust sync layer:
@@ -77,6 +83,20 @@ runAutoSync(phase: "startup" | "close"): Promise<"skipped" | "success" | "confli
 ```
 
 ### 3. Contracts
+
+#### Credential storage
+
+- The credential identity is fixed as `service=CLI-Manager`, `user=webdav` on every supported platform.
+- Windows stores the password through `windows-native-keyring-store` in Windows Credential Manager.
+- macOS stores the password through `apple-native-keyring-store` with the `keychain` feature in the user/login Keychain. Do not switch to the `protected` backend without adding and validating the required provisioning-profile entitlements.
+- Linux stores the password through `zbus-secret-service-keyring-store` with `rt-tokio-crypto-rust` in freedesktop Secret Service. Every Linux entry uses the fixed `target=CLI-Manager` collection so native WSL does not depend on a missing default collection.
+- `keyring-core` and each native provider must remain target-scoped so unsupported platforms do not compile an unused native backend.
+- Save/load/delete run through `tokio::task::spawn_blocking`; native credential APIs must not block the async Tauri command executor.
+- Loading a missing credential returns `Ok(None)`. Deleting a missing credential returns `Ok(())`.
+- An empty password is equivalent to deleting the credential.
+- Native store initialization or access failures propagate to the caller. Never fall back to Tauri store, SQLite, sync payloads, logs, or another plaintext location.
+- WSL shells opened by the Windows desktop app still use Windows Credential Manager because password commands execute in the Windows Tauri host process.
+- Native Linux and CLI-Manager processes running inside WSL/WSLg require a working D-Bus session plus a Secret Service provider such as GNOME Keyring or KWallet. Missing infrastructure is an error; Linux kernel keyutils and plaintext files are not fallbacks.
 
 #### Remote storage
 
@@ -155,6 +175,14 @@ pub struct SyncPayload {
 
 | Condition | Result |
 |---|---|
+| Save/load/delete on Windows | Use Windows Credential Manager with `CLI-Manager` / `webdav` identity. |
+| Save/load/delete on macOS | Use the user/login Keychain with `CLI-Manager` / `webdav` identity. |
+| Save/load/delete on Linux or native WSL | Use Secret Service with `service=CLI-Manager`, `user=webdav`, `target=CLI-Manager`. |
+| Linux D-Bus/Secret Service is unavailable | Propagate the provider error; do not persist plaintext fallback data. |
+| Password is empty | Delete the native credential; missing entry is success. |
+| Password credential is missing during load | `Ok(None)`. |
+| Native credential store is unavailable or access is denied | Propagate the error; do not persist plaintext fallback data. |
+| Password save on an unsupported target | Return the unsupported-platform error; do not persist the password. |
 | Device name sanitizes to empty | `Err("设备名称不能为空")` |
 | Requested device snapshot returns HTTP 404 in frontend preview | `SyncPreview.remote.missing = true` |
 | Requested device snapshot returns HTTP 404 for download/restore | toast `无法从云端同步`; no local overwrite |
@@ -173,6 +201,9 @@ pub struct SyncPayload {
 ### 5. Good/Base/Bad Cases
 
 - Good: current device `Work-Laptop` uploads to `cli-manager/devices/Work-Laptop.json` and records `device_name: "Work-Laptop"` in the JSON.
+- Good: Windows, macOS, and Linux use the same service/user identity while selecting only their own native provider at compile time.
+- Good: restarting on macOS loads the WebDAV password from the login Keychain and restores `hasPassword` without writing a secret to app storage.
+- Good: native WSL with a running Secret Service creates/reuses the dedicated `CLI-Manager` collection and restores the password after restart without a default collection.
 - Good: manual upload when the device snapshot does not exist shows an empty remote summary and still allows upload.
 - Good: manual download when the device snapshot does not exist shows `无法从云端同步` and leaves local data untouched.
 - Base: download with `force = true` applies selected domains from the requested device snapshot.
@@ -180,6 +211,10 @@ pub struct SyncPayload {
 - Bad: do not fall back from `cli-manager/devices/<device>.json` to `cli-manager/sync.json` inside the public `sync_download` command, because that turns an empty current-device snapshot into unrelated remote data.
 - Bad: do not implement partial restore by deleting all three tables and only reinserting selected remote domains; that erases unselected local domains.
 - Bad: do not treat any error text containing `404` as a missing snapshot; only a clear `HTTP error: 404` should be classified as missing.
+- Bad: do not silence a Keychain error and keep only the in-memory password; that reports a successful save which will fail after restart.
+- Bad: do not use Apple protected-data storage without provisioning entitlements or add a plaintext fallback for unsigned/development builds.
+- Bad: do not use the Linux default collection for WebDAV entries; native WSL commonly has no default collection.
+- Bad: do not fall back to a config file or kernel keyutils when Secret Service is missing; those mechanisms have different persistence/security contracts.
 
 ### 6. Tests Required
 
@@ -187,6 +222,9 @@ Minimum checks after WebDAV sync contract changes:
 
 - `npx tsc --noEmit` must pass after frontend sync-store or settings UI changes.
 - `cargo check --manifest-path src-tauri/Cargo.toml` must pass after Rust/Tauri sync changes.
+- Native Windows checks must keep `windows-native-keyring-store` selected; Cargo metadata/tree checks must select `apple-native-keyring-store` with `keychain` only on macOS and `zbus-secret-service-keyring-store` with `rt-tokio-crypto-rust` only on Linux.
+- A macOS runtime check must save, restart/load, replace, and delete the fixed `CLI-Manager` / `webdav` login-Keychain entry. Denied/locked Keychain access must surface an error without creating a plaintext secret.
+- A Linux runtime check must repeat the lifecycle against Secret Service using `target=CLI-Manager`, including native WSL without a default collection; missing D-Bus/Secret Service must surface an error without plaintext fallback.
 - Manual or automated assertions:
   - device name sanitization produces identical safe names in frontend and Rust;
   - upload path uses `cli-manager/devices/<safe-device-name>.json`;
@@ -246,3 +284,21 @@ if (mode === "download" && preview.remote.missing) {
   return;
 }
 ```
+
+#### Wrong: reject every non-Windows password save
+
+```rust
+#[cfg(not(target_os = "windows"))]
+return Err("WebDAV password secure storage is only supported on Windows".to_string());
+```
+
+This makes the frontend promise of system secure storage false on macOS and prevents password recovery after restart.
+
+#### Correct: share the password lifecycle across native desktop providers
+
+```rust
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+let entry = webdav_password_entry()?;
+```
+
+`webdav_password_entry` initializes Windows Credential Manager, the macOS login Keychain, or Linux Secret Service behind the same `keyring-core::Entry` contract. Linux entries add the fixed target modifier for WSL; unsupported platforms still receive no plaintext fallback.
