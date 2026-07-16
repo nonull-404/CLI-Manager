@@ -272,6 +272,63 @@ terminalRef.current = null;
 
 **Tests**: Run `npx tsc --noEmit`. Manually enable low memory mode, switch away from a terminal for more than 10 seconds, verify the session keeps running, then switch back and confirm the current viewport repaints without restarting the shell or losing scrollback.
 
+### Convention: Terminal display state stays in the Display controller
+
+**What**: `useTerminalDisplay` owns renderer state and output-direction state: `WebglAddon`, fit/viewport scheduling, active write queue, inactive output buffer, and the `pty-output-{sessionId}` listener. `XTermTerminal` only orchestrates the terminal instance and passes narrow ref/callback contracts into the hook.
+
+**Why**: Display, input, and OSC handling previously shared one large lifecycle closure. Moving only the display-owned refs and listener into one controller means an input change cannot accidentally alter output buffering or renderer cleanup.
+
+**Correct**:
+
+```tsx
+const display = useTerminalDisplay({
+  terminalRef,
+  fitAddonRef,
+  isVisibleRef,
+  isComposingRef,
+  normalizeOutputRef,
+  transformOutputRef,
+});
+
+// Output direction belongs to Display.
+const detachPtyOutput = display.attachPtyOutput();
+```
+
+**Contracts**:
+
+- The orchestrator owns writes to `terminalRef` and `isVisibleRef`; Display reads them only.
+- Input owns writes to `isComposingRef`; Display reads it only to suppress a fit during IME composition.
+- Display-owned queue, buffer, renderer, and PTY-listener refs must not be recreated in `XTermTerminal` or accessed by Input.
+- Display transforms output through the supplied OSC/cursor callbacks before writing; it must not import Input state or register `terminal.onData`.
+
+**Tests**: Run `npx tsc --noEmit` and `node scripts/terminalVisibility.test.mjs`. Manually verify tab switching with background output, resize, WebGL restoration, and IME composition after any Display controller change.
+
+### Convention: Async terminal suggestions are scoped to one input attachment
+
+**What**: `useTerminalInput.attachSuggestions()` resets all suggestion state and assigns an attachment generation. Delayed template/history/path/AI results must verify that generation before they update the ghost suggestion.
+
+**Why**: Input suggestions are asynchronous while terminal sessions can be disposed and recreated immediately. Resetting shared refs alone lets an old request observe the new session's reset state and paint stale text into its terminal.
+
+**Correct**:
+
+```tsx
+const generation = resetSuggestionState();
+const isCurrentAttachment = () => (
+  attachmentGenerationRef.current === generation && !suggestionDisposedRef.current
+);
+
+const result = await getTerminalInputSuggestionAiResult(context);
+if (!isCurrentAttachment() || context.input !== getInput()) return;
+```
+
+**Contracts**:
+
+- `attachSuggestions()` resets timers, in-flight flags, request ids, cache, previous-command state, and the visible ghost before registering a new session.
+- Every asynchronous completion and delayed timer checks the current attachment generation before mutating a ref or React state.
+- Cleanup invalidates only its own attachment; it must not clear callbacks installed by a newer session.
+
+**Tests**: Run `npx tsc --noEmit`. With AI suggestions enabled, type a prefix and immediately switch sessions or close/reopen the tab; no ghost text from the old session may appear. Also verify local, path, and AI suggestions still accept with Tab, Right Arrow, and Ctrl+Space.
+
 ### Convention: Visibility-restoration refresh stays masked until xterm render completes
 
 **What**: When `XTermTerminal` changes from hidden to visible, keep the existing queued-write recovery and full viewport refresh, but hide the xterm drawing container until `Terminal.onRender` reports a range covering the current viewport. Reveal on the next animation frame and keep a bounded timeout fallback.
@@ -323,6 +380,19 @@ setVisibilityRestorePending(false);
 - Manually switch normal tabs and Workspans repeatedly; verify there is no progressive diagonal repaint.
 - Manually switch back to a terminal with background output; verify the final buffer appears without blanking, partial replay, lost scrollback, or shell restart.
 - Manually verify the timeout fallback cannot leave the terminal permanently hidden.
+
+### Convention: Custom terminal scrollback keeps one effective row count
+
+**What**: `terminalScrollbackCustomEnabled` defaults to `false`. When it is disabled, every terminal uses `TERMINAL_SCROLLBACK_ROWS_DEFAULT` (9000). When enabled, terminals use the validated `terminalScrollbackRows` value in the 1000–50000 range.
+
+**Contracts**:
+
+- Terminal construction, xterm option hot updates, and hidden-output buffer sizing must all use the same effective row count.
+- Changing the switch or row value must update the existing xterm instance; do not recreate the terminal, reconnect the PTY, or reset addons/input state.
+- Keep the saved custom value while the switch is disabled so re-enabling restores the user's value.
+- Hidden terminal output remains bounded; disabling custom rows does not mean unlimited scrollback.
+
+**Tests**: Run `npx tsc --noEmit`; manually toggle Custom in Settings > Terminal and verify existing/new/hidden terminals use 9000 rows while disabled and the saved custom value while enabled.
 
 ### Convention: Session history transcripts use a history render layer before Markdown
 
@@ -1161,11 +1231,18 @@ const data = text.replace(/\r\n?/g, "\n");
 invoke("pty_write", { sessionId, data });
 ```
 
+**Contracts**:
+
+- Browser paste, keyboard/menu paste, in-app file drag, and native WebView file drop belong to the Input controller and must converge on one `terminal.paste()` path.
+- `attachPasteAndDrop()` owns its DOM listeners, drop-zone registration, and native drag-drop unlisten callback; its returned cleanup must release all of them, including an unlisten callback that resolves after cleanup begins.
+- File/image paths are formatted for the resolved shell before native paste; do not bypass shell quoting by writing the raw path directly to the PTY.
+
 **Tests / manual checks**:
 
 - [ ] Windows 10 + PowerShell retains scrollback after tab switch / resize / fit.
 - [ ] Claude Code multi-line paste preserves line order and is not submitted line-by-line.
 - [ ] CMD still accepts normal paste and Enter behavior.
+- [ ] Browser text/image paste, app-internal file drag, and system file drop all focus the intended visible terminal only once.
 
 ### Common Mistake: Letting xterm sync updates clear the screen while the user is reading scrollback
 

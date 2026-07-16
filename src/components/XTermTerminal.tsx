@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Terminal, type IBufferCell, type IBufferLine, type ILink, type ITheme } from "@xterm/xterm";
+import { Terminal, type IBufferCell, type IBufferLine, type IDisposable, type ILink, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useShallow } from "zustand/shallow";
 import {
@@ -22,26 +18,17 @@ import {
   isLightTerminalTheme,
 } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
-import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
-import { debugConsoleWarn } from "../lib/debugConsole";
 import { translateCurrent, useI18n } from "../lib/i18n";
 import { buildFastCursorMoveSequence } from "../lib/terminalCursorMovement";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
-import { parseOsc7Cwd } from "../lib/terminalOscPath";
-import {
-  LEGACY_RUNTIME_OSC_PREFIX,
-  OSC_PREFIX,
-  findOscTerminator,
-  formatSpecialColorReply,
-  matchIntegrationOscPrefix,
-  parseSpecialColorQuery,
-  parseStandardIntegrationCwd,
-} from "../lib/terminalOscParse";
 import { findTerminalFileLinks, resolveTerminalFileSystemPath } from "../lib/terminalFileLinks";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
+import { useTerminalOsc } from "../hooks/useTerminalOsc";
+import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
+import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import {
   clampTextCursorIndex,
@@ -53,37 +40,8 @@ import {
   sliceTextByCursor,
 } from "../lib/terminalTextEditing";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
-import {
-  arrayBufferToBase64,
-  createClipboardImageFileName,
-  getClipboardImageFile,
-  hasDataTransferType,
-} from "../lib/terminalClipboardImage";
-import {
-  terminalShortcutMatches,
-  trimTerminalPasteBoundaryLineBreaks,
-  wrapTerminalPasteTextForCtrlShiftV,
-} from "../lib/terminalKeyboard";
-import { formatShellPathList, joinLocalPath, normalizeShellForKnownOs } from "../lib/terminalShellPath";
-import {
-  TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT,
-  TERMINAL_INPUT_SUGGESTION_AI_MODEL,
-  getLocalTerminalInputSuggestions,
-  getTerminalPathInputSuggestions,
-  getTerminalInputSuggestionAiResult,
-  mergeTerminalInputSuggestions,
-  resolveSubmittedDirectoryChange,
-  type TerminalInputSuggestion,
-  type TerminalInputSuggestionContext,
-} from "../lib/terminalInputSuggestions";
-import type { CommandHistoryEntry, CommandTemplate, TerminalSession } from "../lib/types";
-import {
-  endTerminalFileDrag,
-  getTerminalFileDropZoneIdAtPoint,
-  getTerminalFileDragText,
-  registerTerminalDropZone,
-  updateTerminalFileDragPointFromEvent,
-} from "../lib/terminalFileDrag";
+import { terminalShortcutMatches, wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
+import { resolveSubmittedDirectoryChange } from "../lib/terminalInputSuggestions";
 import {
   didRenderFullTerminalViewport,
   planTerminalVisibilityRestore,
@@ -94,36 +52,27 @@ import {
   isLinuxGraphicsConstrained,
   shouldDisableTerminalWebgl,
 } from "../lib/linuxGraphics";
-import {
-  defaultShellForOs,
-  getOsPlatform,
-  normalizeShellKey,
-  type OsPlatform,
-} from "../lib/shell";
+import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../lib/shell";
 import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
-import { useTemplateStore } from "../stores/templateStore";
-import { formatStartupInputForPty, useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
-import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN, useSettingsStore, type LightThemePalette, type DarkThemePalette } from "../stores/settingsStore";
+import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
+import {
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  TERMINAL_SCROLLBACK_ROWS_DEFAULT,
+  useSettingsStore,
+  type LightThemePalette,
+  type DarkThemePalette,
+} from "../stores/settingsStore";
 
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
-const ACTIVE_WRITE_FRAME_BUDGET = 64 * 1024;
-const ACTIVE_WRITE_QUEUE_MAX_CHARS = 16 * 1024 * 1024;
-const ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS = 2000;
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
-const INACTIVE_BUFFER_MIN_CHARS = 256 * 1024;
-const INACTIVE_BUFFER_MAX_CHARS = 8 * 1024 * 1024;
-const INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW = 256;
 const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
-const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
-const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
-const SUGGESTION_AI_DEBOUNCE_MS = 400;
 const ENABLE_CLICK_CURSOR_POSITIONING = false;
-const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
 const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
 // Minimum time the app must stay in the background before a foreground return
 // triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
@@ -134,9 +83,8 @@ const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏
 const TUI_BORDER_PREFIX_PATTERN = /^[\s│┃║▏▎▍▌▋▊▉█┆┊╎╏]+/u;
 import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { registerTerminalSnapshotSource, markTerminalSnapshotDirty } from "../lib/sessionSnapshotPersistence";
+import { registerTerminalSnapshotSource } from "../lib/sessionSnapshotPersistence";
 
-const OSC_CARRY_BUFFER_MAX = 8192;
 const XTERM_BG_COLOR_MASK = 0x03ffffff;
 const XTERM_COLOR_MODE_RGB = 0x03000000;
 const XTERM_INVERSE_FLAG = 0x04000000;
@@ -160,6 +108,8 @@ const CJK_NATIVE_PUNCTUATION_PATTERN = /^[\u3000-\u303f\uff01-\uff0f\uff1a-\uff2
 
 type TerminalInputSource = "onData" | "nativeTextInput";
 
+type TerminalSubsystemDisposable = IDisposable;
+
 type MutableXtermCell = IBufferCell & {
   fg: number;
   bg: number;
@@ -175,14 +125,6 @@ type XtermBufferLineApiView = IBufferLine & {
   // xterm's public buffer line is read-only; v6 keeps the mutable line here.
   _line?: MutableXtermLine;
 };
-
-interface TerminalSuggestionGhostState {
-  suffix: string;
-  left: number;
-  top: number;
-  height: number;
-  maxWidth: number;
-}
 
 interface TextDiagnosticSummary {
   length: number;
@@ -212,10 +154,12 @@ const summarizeTextForDiagnostics = (value: string): TextDiagnosticSummary => {
   };
 };
 
-const getInactiveBufferLimit = (scrollbackRows: number) => Math.min(
-  INACTIVE_BUFFER_MAX_CHARS,
-  Math.max(INACTIVE_BUFFER_MIN_CHARS, scrollbackRows * INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW)
-);
+const disposeTerminalSubsystem = (disposables: TerminalSubsystemDisposable[]) => {
+  for (let index = disposables.length - 1; index >= 0; index -= 1) {
+    disposables[index].dispose();
+  }
+  disposables.length = 0;
+};
 
 const getTerminalRenderedCellSize = (terminal: Terminal, terminalContainer: HTMLElement, fallbackFontSize: number) => {
   const renderedCell = (
@@ -323,10 +267,6 @@ const withVisibleSelectionTheme = (theme: ITheme, searchActive = false): ITheme 
   };
 };
 
-const attachClipboardImageData = async (rootPath: string, fileName: string, dataBase64: string) => (
-  invoke<string>("file_attach_data", { rootPath, fileName, dataBase64 })
-);
-
 const cleanupExpiredAttachments = async (rootPath: string) => (
   invoke<number>("file_cleanup_expired_attachments", { rootPath })
 );
@@ -399,11 +339,6 @@ interface Props extends TerminalContextMenuActions {
   darkThemePalette?: DarkThemePalette;
 }
 
-interface ActiveWriteQueueItem {
-  text: string;
-  inactiveReplay: boolean;
-}
-
 export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo", onNewTab, onCloseSession, onCloseOthers, onCloseToLeft, onCloseToRight, onSplitRight, onSplitDown }: Props) {
   const { t } = useI18n();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -411,47 +346,32 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
-  const webglAddonRef = useRef<WebglAddon | null>(null);
-  const webglDisposeTimerRef = useRef<number | null>(null);
-  const webglContextLostRef = useRef(false);
   const inputBuffer = useRef("");
   const inputCursorIndexRef = useRef(0);
-  const fitRafRef = useRef<number | null>(null);
+  // Input owns this ref. Display may only read it to suppress fit during IME composition.
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
+  // The orchestrator mirrors the visibility prop; display/viewport code reads it only.
   const isVisibleRef = useRef(isVisible);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const inactiveBufferRef = useRef<string[]>([]);
-  const inactiveBufferSizeRef = useRef(0);
-  const activeWriteQueueRef = useRef<ActiveWriteQueueItem[]>([]);
-  const activeWriteQueueSizeRef = useRef(0);
-  const activeWriteQueueLastDropLogAtRef = useRef(0);
-  const activeWriteRafRef = useRef<number | null>(null);
-  const needsViewportRefreshRef = useRef(false);
-  const inactiveReplayStickToBottomRef = useRef(false);
-  const inactiveReplayPendingWritesRef = useRef(0);
-  const inactiveReplayPendingRef = useRef(false);
   const visibilityRestorePendingRef = useRef(false);
   const visibilityRestoreRevealTimerRef = useRef<number | null>(null);
   const visibilityRestoreRevealRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
-  const runtimeOscBufferRef = useRef("");
-  const specialOscBufferRef = useRef("");
-  const suggestionRef = useRef<TerminalInputSuggestion | null>(null);
-  const acceptSuggestionRef = useRef<() => boolean>(() => false);
+  const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
+  const displayTransformOutputRef = useRef<(text: string) => string>((text) => text);
+  const displayAfterWriteRef = useRef<((terminal: Terminal) => void) | null>(null);
   const cleanedAttachmentRootsRef = useRef<Set<string>>(new Set());
-  const terminalColorRepliesRef = useRef<{ foreground: string; background: string }>({
-    foreground: formatSpecialColorReply(10, "#d8dee9"),
-    background: formatSpecialColorReply(11, "#0c0e10"),
-  });
+  const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
+  const effectiveTerminalScrollbackRows = terminalScrollbackCustomEnabled
+    ? terminalScrollbackRows
+    : TERMINAL_SCROLLBACK_ROWS_DEFAULT;
   const lowMemoryMode = useSettingsStore((s) => s.lowMemoryMode);
   const disableHardwareAcceleration = useSettingsStore((s) => s.disableHardwareAcceleration);
   const terminalInputSuggestionsEnabled = useSettingsStore((s) => s.terminalInputSuggestionsEnabled);
   const terminalInputSuggestionProvider = useSettingsStore((s) => s.terminalInputSuggestionProvider);
-  const inactiveBufferLimitRef = useRef(getInactiveBufferLimit(terminalScrollbackRows));
-  inactiveBufferLimitRef.current = getInactiveBufferLimit(terminalScrollbackRows);
 
   const background = useSettingsStore(
     useShallow((s) => ({
@@ -568,111 +488,77 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     closeTerminalSearch,
   } = useTerminalSearch(terminalRef, searchAddonRef, searchDecorationColors);
 
+  const {
+    attachSuggestions,
+    clearSuggestion: clearSuggestionGhost,
+    cancelAiSuggestionRefresh,
+    scheduleSuggestionRefresh,
+    updateSuggestionGhostPosition,
+    acceptSuggestion,
+    onCommandSubmitted,
+    attachPasteAndDrop,
+    pasteText,
+  } = useTerminalInput({
+    sessionId,
+    wrapperRef,
+    containerRef,
+    isActiveRef,
+    isVisibleRef,
+    isComposingRef,
+    fontSize,
+    getInput: () => inputBuffer.current,
+    canShowSuggestionAtCurrentInputEnd,
+    getTerminalRenderedCellSize,
+    setSuggestionGhost,
+    getOsPlatformForPathQuoting,
+    cleanupExpiredAttachmentsOnce,
+  });
+
   // Clear suggestions when search opens (must come after hook call to read searchOpen)
   useEffect(() => {
     if (terminalInputSuggestionsEnabled && !searchOpen) return;
-    suggestionRef.current = null;
-    setSuggestionGhost(null);
+    clearSuggestionGhost();
   }, [searchOpen, terminalInputSuggestionsEnabled]);
 
   useEffect(() => {
-    suggestionRef.current = null;
-    setSuggestionGhost(null);
+    clearSuggestionGhost();
   }, [terminalInputSuggestionProvider]);
 
-  const clearHiddenWebglDisposeTimer = () => {
-    if (webglDisposeTimerRef.current === null) return;
-    window.clearTimeout(webglDisposeTimerRef.current);
-    webglDisposeTimerRef.current = null;
-  };
-
-  const disposeWebglRenderer = () => {
-    if (!webglAddonRef.current) return false;
-    webglAddonRef.current.dispose();
-    webglAddonRef.current = null;
-    return true;
-  };
-
-  const canUseWebglRenderer = (theme: ReturnType<typeof getTerminalTheme>) => (
-    !disableHardwareAcceleration
-    && !linuxGraphicsDisableWebgl
-    && !webglContextLostRef.current
-    && !isTransparentRef.current
-    && !isLightTerminalTheme(theme)
-  );
-
-  const createWebglAddon = () => {
-    const addon = new WebglAddon();
-    addon.onContextLoss(() => {
-      webglContextLostRef.current = true;
-      addon.dispose();
-      if (webglAddonRef.current === addon) {
-        webglAddonRef.current = null;
-      }
-      logWarn("Terminal WebGL context lost; keeping the default renderer for this session", { sessionId });
-    });
-    return addon;
-  };
-
-  const syncWebglRenderer = (terminal: Terminal, theme: ReturnType<typeof getTerminalTheme>) => {
-    if (!canUseWebglRenderer(theme)) {
-      return disposeWebglRenderer();
-    }
-    if (lowMemoryMode && !isVisibleRef.current) return false;
-    if (webglAddonRef.current) return false;
-    try {
-      const addon = createWebglAddon();
-      terminal.loadAddon(addon);
-      webglAddonRef.current = addon;
-      return true;
-    } catch {
-      // WebGL not supported, fall back to xterm's default renderer.
-      return false;
-    }
-  };
-
-  const fitWhenStable = (force = false) => {
-    const container = containerRef.current;
-    const fitAddon = fitAddonRef.current;
-    const terminal = terminalRef.current;
-    if (!container || !fitAddon || !terminal) return;
-    if (!force && (!isVisibleRef.current || isComposingRef.current)) return;
-    if (container.offsetWidth <= 0 || container.offsetHeight <= 0) return;
-
-    const dims = fitAddon.proposeDimensions();
-    if (!dims || dims.cols < MIN_TERMINAL_COLS || dims.rows < MIN_TERMINAL_ROWS) return;
-    const beforeCols = terminal.cols;
-    const beforeRows = terminal.rows;
-    fitAddon.fit();
-    const terminalSizeChanged = terminal.cols !== beforeCols || terminal.rows !== beforeRows;
-    if (force || terminalSizeChanged || needsViewportRefreshRef.current) {
-      refreshTerminalViewport(terminal);
-      needsViewportRefreshRef.current = false;
-    }
-  };
-
-  const scheduleFit = (force = false) => {
-    if (fitRafRef.current !== null) {
-      cancelAnimationFrame(fitRafRef.current);
-    }
-    fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = requestAnimationFrame(() => {
-        fitRafRef.current = null;
-        fitWhenStable(force);
-      });
-    });
-  };
-
-  const scheduleViewportRefresh = () => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const terminal = terminalRef.current;
-        if (!terminal) return;
-        refreshTerminalViewport(terminal);
-        scheduleFit(true);
-      });
-    });
-  };
+  const {
+    syncWebglRenderer,
+    scheduleHiddenWebglDispose,
+    clearHiddenWebglDisposeTimer,
+    clearWebglTextureAtlas,
+    disposeWebglRenderer,
+    scheduleFit,
+    scheduleViewportRefresh,
+    markViewportRefreshNeeded,
+    getOutputRestorePlanState,
+    flushInactiveBufferForReplay,
+    resumeActiveWriteQueue,
+    getPendingOutputSnapshot,
+    attachPtyOutput,
+    resetOutputState,
+    cancelScheduledFit,
+    resetViewportRefreshState,
+  } = useTerminalDisplay({
+    sessionId,
+    containerRef,
+    terminalRef,
+    fitAddonRef,
+    isVisibleRef,
+    isComposingRef,
+    lowMemoryMode,
+    terminalScrollbackRows: effectiveTerminalScrollbackRows,
+    disableHardwareAcceleration,
+    linuxGraphicsDisableWebgl,
+    isTransparentRef,
+    normalizeOutputRef: displayNormalizeOutputRef,
+    transformOutputRef: displayTransformOutputRef,
+    afterTerminalWriteRef: displayAfterWriteRef,
+    onInactiveReplayPendingChange: setInactiveReplayPending,
+    onPtyOutputListenError: (err) => logError("Failed to listen PTY output", { sessionId, err }),
+  });
 
   useEffect(() => {
     const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -702,18 +588,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     }, 80);
   };
 
-  const emitShellRuntimeEvent = (event: ShellRuntimeEventName, exitCode: number | null) => {
-    useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event, exitCode, origin: "osc" });
-  };
-
-  const updateSessionCwdIfChanged = (cwd: string | null) => {
-    const value = cwd?.trim();
-    if (!value) return;
-    const store = useTerminalStore.getState();
-    const session = store.sessions.find((item) => item.id === sessionId);
-    if (!session || session.cwd === value) return;
-    store.updateSessionCwd(sessionId, value);
-  };
+  const {
+    normalizeTerminalOutput,
+    updateSessionCwdIfChanged,
+    updateTerminalColorReplies,
+  } = useTerminalOsc({
+    sessionId,
+    osPlatformRef,
+    onPtyWriteError: reportPtyWriteError,
+  });
+  displayNormalizeOutputRef.current = normalizeTerminalOutput;
 
   const getSessionToolContext = () => {
     const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -753,168 +637,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       || CLAUDE_COMMAND_PATTERN.test(context.startupCmd)
     );
   };
-
   const shouldNormalizeTuiComposerBackground = (context = getSessionToolContext()) => (
     isTransparentRef.current || (isClaudeOrCodexSession(context) && isLightTerminalRef.current)
   );
-
-  // 私有 OSC 777：session=<id>;event=<name>[;exit=<code>]
-  const handleLegacyRuntimeOsc = (body: string) => {
-    const fields = Object.fromEntries(body.split(";").map((part) => {
-      const separator = part.indexOf("=");
-      return separator < 0 ? [part, ""] : [part.slice(0, separator), part.slice(separator + 1)];
-    }));
-    if (fields.session !== sessionId) return;
-    const eventName = fields.event;
-    if (eventName !== "command_started" && eventName !== "command_finished" && eventName !== "prompt_shown") return;
-    const exitCode = fields.exit !== undefined && fields.exit !== "" ? Number(fields.exit) : null;
-    emitShellRuntimeEvent(eventName as ShellRuntimeEventName, Number.isFinite(exitCode) ? exitCode : null);
-  };
-
-  // 标准 OSC 7/133/633：OSC 7 与 633;P;Cwd 同步 cwd；A=prompt 开始，C=命令开始执行，D[;exit]=命令结束。
-  // D 不带 exit code 表示没跑命令（空回车 / prompt 处 Ctrl+C），不改变状态。
-  const handleStandardIntegrationOsc = (body: string) => {
-    const osc7Cwd = parseOsc7Cwd(body, osPlatformRef.current);
-    if (osc7Cwd) {
-      updateSessionCwdIfChanged(osc7Cwd);
-      return;
-    }
-
-    const separator = body.indexOf(";");
-    const command = separator < 0 ? body : body.slice(0, separator);
-    const rest = separator < 0 ? "" : body.slice(separator + 1);
-    const cwd = parseStandardIntegrationCwd(command, rest);
-    if (cwd) {
-      updateSessionCwdIfChanged(cwd);
-      return;
-    }
-
-    if (command === "A") {
-      emitShellRuntimeEvent("prompt_shown", null);
-    } else if (command === "C") {
-      emitShellRuntimeEvent("command_started", null);
-    } else if (command === "D") {
-      const exitField = rest.split(";")[0] ?? "";
-      const exitCode = exitField === "" ? null : Number(exitField);
-      emitShellRuntimeEvent("command_finished", Number.isFinite(exitCode) ? exitCode : null);
-    }
-  };
-
-  const processShellIntegrationOsc = (text: string) => {
-    const combined = runtimeOscBufferRef.current + text;
-    runtimeOscBufferRef.current = "";
-    let output = "";
-    let cursor = 0;
-
-    while (cursor < combined.length) {
-      const start = combined.indexOf("\x1b]", cursor);
-      if (start < 0) {
-        // 尾部孤立 ESC 可能是下个 chunk 里 "\x1b]" 的前半，留待拼接；
-        // 扣下的字符不会渲染出任何可见内容，显示安全。
-        if (combined.charCodeAt(combined.length - 1) === 0x1b) {
-          output += combined.slice(cursor, combined.length - 1);
-          runtimeOscBufferRef.current = "\x1b";
-        } else {
-          output += combined.slice(cursor);
-        }
-        break;
-      }
-
-      const matched = matchIntegrationOscPrefix(combined, start);
-      if (matched.kind === "none") {
-        output += combined.slice(cursor, start + 2);
-        cursor = start + 2;
-        continue;
-      }
-      if (matched.kind === "partial") {
-        output += combined.slice(cursor, start);
-        runtimeOscBufferRef.current = combined.slice(start);
-        break;
-      }
-
-      const terminator = findOscTerminator(combined, start + matched.prefix.length);
-      if (terminator === null) {
-        output += combined.slice(cursor, start);
-        runtimeOscBufferRef.current = combined.slice(start);
-        break;
-      }
-      if ("abortAt" in terminator) {
-        output += combined.slice(cursor, terminator.abortAt);
-        cursor = terminator.abortAt;
-        continue;
-      }
-
-      const body = combined.slice(start + matched.prefix.length, terminator.index);
-      const sequenceEnd = terminator.index + terminator.length;
-      if (matched.prefix === LEGACY_RUNTIME_OSC_PREFIX) {
-        handleLegacyRuntimeOsc(body);
-      } else {
-        handleStandardIntegrationOsc(body);
-        output += combined.slice(start, sequenceEnd);
-      }
-      cursor = sequenceEnd;
-    }
-
-    if (runtimeOscBufferRef.current.length > OSC_CARRY_BUFFER_MAX) {
-      runtimeOscBufferRef.current = "";
-    }
-
-    return output;
-  };
-
-  const processSpecialOscQueries = (text: string) => {
-    const combined = specialOscBufferRef.current + text;
-    specialOscBufferRef.current = "";
-    let output = "";
-    let cursor = 0;
-
-    while (cursor < combined.length) {
-      const start = combined.indexOf(OSC_PREFIX, cursor);
-      if (start < 0) {
-        if (combined.charCodeAt(combined.length - 1) === 0x1b) {
-          output += combined.slice(cursor, combined.length - 1);
-          specialOscBufferRef.current = "\x1b";
-        } else {
-          output += combined.slice(cursor);
-        }
-        break;
-      }
-
-      output += combined.slice(cursor, start);
-      const terminator = findOscTerminator(combined, start + OSC_PREFIX.length);
-      if (terminator === null) {
-        specialOscBufferRef.current = combined.slice(start);
-        break;
-      }
-      if ("abortAt" in terminator) {
-        output += combined.slice(start, terminator.abortAt);
-        cursor = terminator.abortAt;
-        continue;
-      }
-
-      const body = combined.slice(start + OSC_PREFIX.length, terminator.index);
-      const queryId = parseSpecialColorQuery(body);
-      if (queryId === 10 || queryId === 11) {
-        // Codex only waits briefly for OSC 10/11 terminal color replies during
-        // startup. Reply directly from the raw PTY stream path so theme
-        // detection is not delayed by xterm's render/write scheduling.
-        const reply =
-          queryId === 10
-            ? terminalColorRepliesRef.current.foreground
-            : terminalColorRepliesRef.current.background;
-        invoke("pty_write", { sessionId, data: reply }).catch((err) => reportPtyWriteError("osc_color_reply", err));
-      } else {
-        output += combined.slice(start, terminator.index + terminator.length);
-      }
-      cursor = terminator.index + terminator.length;
-    }
-
-    if (specialOscBufferRef.current.length > OSC_CARRY_BUFFER_MAX) {
-      specialOscBufferRef.current = "";
-    }
-
-    return output;
-  };
 
   const normalizeTuiComposerBackground = (terminal: Terminal) => {
     const toolContext = getSessionToolContext();
@@ -1143,6 +868,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       normalizeTuiComposerBackground(terminal);
     });
   };
+  displayAfterWriteRef.current = (terminal) => {
+    normalizeTuiComposerBackground(terminal);
+    scheduleTuiComposerBackgroundNormalization(terminal);
+  };
 
   const processCursorVisibility = (text: string) => {
     const cursorPattern = /\x1b\[\?25[hl]/g;
@@ -1164,12 +893,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     return processed + text.slice(lastIndex);
   };
-
-  const setInactiveReplayPendingVisible = (pending: boolean) => {
-    if (inactiveReplayPendingRef.current === pending) return;
-    inactiveReplayPendingRef.current = pending;
-    setInactiveReplayPending(pending);
-  };
+  displayTransformOutputRef.current = processCursorVisibility;
 
   const clearVisibilityRestoreRevealSchedule = () => {
     if (visibilityRestoreRevealTimerRef.current !== null) {
@@ -1221,120 +945,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     });
   };
 
-  const hasQueuedInactiveReplay = () => activeWriteQueueRef.current.some((item) => item.inactiveReplay);
-
-  const finishInactiveReplayIfReady = (terminal: Terminal) => {
-    if (!inactiveReplayStickToBottomRef.current) return;
-    if (
-      hasQueuedInactiveReplay()
-      || inactiveReplayPendingWritesRef.current > 0
-    ) {
-      return;
-    }
-    inactiveReplayStickToBottomRef.current = false;
-    terminal.scrollToBottom();
-    setInactiveReplayPendingVisible(false);
-  };
-
-  const flushActiveWriteQueue = () => {
-    activeWriteRafRef.current = null;
-    if (!isVisibleRef.current || activeWriteQueueRef.current.length === 0) {
-      if (!isVisibleRef.current && activeWriteQueueRef.current.length > 0 && useSettingsStore.getState().debugMode) {
-        logInfo("[terminal-visibility] active write flush deferred while hidden", {
-          sessionId,
-          queuedChars: activeWriteQueueSizeRef.current,
-          queuedChunks: activeWriteQueueRef.current.length,
-        });
-      }
-      return;
-    }
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-
-    const writeTerminalChunk = (chunk: string, inactiveReplay: boolean) => {
-      if (inactiveReplay) inactiveReplayPendingWritesRef.current += 1;
-      terminal.write(chunk, () => {
-        if (inactiveReplay) {
-          inactiveReplayPendingWritesRef.current = Math.max(0, inactiveReplayPendingWritesRef.current - 1);
-        }
-        if (terminalRef.current !== terminal) return;
-        if (inactiveReplay) terminal.scrollToBottom();
-        normalizeTuiComposerBackground(terminal);
-        scheduleTuiComposerBackgroundNormalization(terminal);
-        if (inactiveReplay) finishInactiveReplayIfReady(terminal);
-      });
-    };
-
-    let budget = ACTIVE_WRITE_FRAME_BUDGET;
-    while (budget > 0 && activeWriteQueueRef.current.length > 0) {
-      const item = activeWriteQueueRef.current[0];
-      const chunk = item.text;
-      if (chunk.length <= budget) {
-        writeTerminalChunk(chunk, item.inactiveReplay);
-        activeWriteQueueRef.current.shift();
-        activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - chunk.length);
-        budget -= chunk.length;
-        continue;
-      }
-      writeTerminalChunk(chunk.slice(0, budget), item.inactiveReplay);
-      activeWriteQueueRef.current[0] = { ...item, text: chunk.slice(budget) };
-      activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - budget);
-      budget = 0;
-    }
-
-    if (activeWriteQueueRef.current.length > 0) {
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-    } else {
-      finishInactiveReplayIfReady(terminal);
-    }
-  };
-
-  const enqueueActiveWrite = (text: string, inactiveReplay = false) => {
-    if (!text) return;
-    let nextText = processCursorVisibility(text);
-    let droppedChars = 0;
-    if (nextText.length >= ACTIVE_WRITE_QUEUE_MAX_CHARS) {
-      droppedChars += activeWriteQueueSizeRef.current + nextText.length - ACTIVE_WRITE_QUEUE_MAX_CHARS;
-      nextText = nextText.slice(-ACTIVE_WRITE_QUEUE_MAX_CHARS);
-      activeWriteQueueRef.current = [];
-      activeWriteQueueSizeRef.current = 0;
-    }
-    activeWriteQueueRef.current.push({ text: nextText, inactiveReplay });
-    activeWriteQueueSizeRef.current += nextText.length;
-    while (activeWriteQueueSizeRef.current > ACTIVE_WRITE_QUEUE_MAX_CHARS && activeWriteQueueRef.current.length > 0) {
-      const overflow = activeWriteQueueSizeRef.current - ACTIVE_WRITE_QUEUE_MAX_CHARS;
-      const head = activeWriteQueueRef.current[0];
-      if (!head || head.text.length <= overflow) {
-        const removed = activeWriteQueueRef.current.shift();
-        const removedLength = removed?.text.length ?? 0;
-        activeWriteQueueSizeRef.current -= removedLength;
-        droppedChars += removedLength;
-        continue;
-      }
-      activeWriteQueueRef.current[0] = { ...head, text: head.text.slice(overflow) };
-      activeWriteQueueSizeRef.current -= overflow;
-      droppedChars += overflow;
-    }
-    if (droppedChars > 0) {
-      const now = Date.now();
-      if (now - activeWriteQueueLastDropLogAtRef.current >= ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS) {
-        activeWriteQueueLastDropLogAtRef.current = now;
-        debugConsoleWarn("[oom-diagnostics:webview]", {
-          area: "xterm",
-          phase: "activeWriteQueueTrim",
-          sessionId,
-          droppedChars,
-          queuedChars: activeWriteQueueSizeRef.current,
-          maxQueuedChars: ACTIVE_WRITE_QUEUE_MAX_CHARS,
-          thresholdExceeded: true,
-        });
-      }
-    }
-    if (activeWriteRafRef.current === null) {
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-    }
-  };
-
   // Hot-update terminal options without recreating the terminal.
   // `isTransparent` is in the dep array so toggling the background image
   // immediately recomputes the theme (otherwise the WebGL clear color stays
@@ -1366,12 +976,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (sizeChanged || weightChanged || rendererChanged) {
       scheduleFit(true);
     }
-    if (terminal.options.scrollback !== terminalScrollbackRows) {
-      terminal.options.scrollback = terminalScrollbackRows;
+    if (terminal.options.scrollback !== effectiveTerminalScrollbackRows) {
+      terminal.options.scrollback = effectiveTerminalScrollbackRows;
     }
     normalizeTuiComposerBackground(terminal);
     scheduleTuiComposerBackgroundNormalization(terminal);
-  }, [fontSize, effectiveFontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen]);
+  }, [fontSize, effectiveFontFamily, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen]);
 
   // Visibility drives live rendering. A pane tab is "visible" when it is the
   // shown tab in its own pane — which, in a split, includes panes that are not
@@ -1384,61 +994,48 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     if (!isVisible) {
       finishVisibilityRestoreReveal();
-      clearHiddenWebglDisposeTimer();
-      if ((lowMemoryMode || linuxGraphicsConstrained) && webglAddonRef.current) {
-        webglDisposeTimerRef.current = window.setTimeout(() => {
-          webglDisposeTimerRef.current = null;
-          if (isVisibleRef.current) return;
-          if (disposeWebglRenderer()) {
-            needsViewportRefreshRef.current = true;
-          }
-        }, HIDDEN_WEBGL_DISPOSE_DELAY_MS);
-      }
+      scheduleHiddenWebglDispose(lowMemoryMode || linuxGraphicsConstrained);
       return;
     }
 
     clearHiddenWebglDisposeTimer();
     const terminal = terminalRef.current;
     const baseTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
-    if (terminal && syncWebglRenderer(terminal, baseTheme)) {
-      needsViewportRefreshRef.current = true;
+    const rendererRestored = terminal ? syncWebglRenderer(terminal, baseTheme) : false;
+    if (rendererRestored) {
+      markViewportRefreshNeeded();
     }
 
     if (!fitAddonRef.current || !containerRef.current) return;
+    const outputRestoreState = getOutputRestorePlanState();
     const restorePlan = planTerminalVisibilityRestore({
       wasVisible,
       isVisible,
-      inactiveBufferLength: inactiveBufferRef.current.length,
-      activeWriteQueueLength: activeWriteQueueRef.current.length,
-      activeWriteRafScheduled: activeWriteRafRef.current !== null,
+      inactiveBufferLength: outputRestoreState.inactiveBufferLength,
+      activeWriteQueueLength: outputRestoreState.activeWriteQueueLength,
+      activeWriteRafScheduled: outputRestoreState.activeWriteRafScheduled,
     });
     // Flush data stashed while this tab was hidden
-    if (restorePlan.shouldFlushInactiveBuffer && terminalRef.current) {
-      const combined = inactiveBufferRef.current.join("");
-      inactiveBufferRef.current = [];
-      inactiveBufferSizeRef.current = 0;
-      inactiveReplayStickToBottomRef.current = true;
-      inactiveReplayPendingWritesRef.current = 0;
-      setInactiveReplayPendingVisible(true);
-      terminalRef.current.scrollToBottom();
-      enqueueActiveWrite(combined, true);
+    if (restorePlan.shouldFlushInactiveBuffer) {
+      flushInactiveBufferForReplay();
     }
-    if (restorePlan.shouldResumeActiveWriteQueue && activeWriteRafRef.current === null) {
+    if (restorePlan.shouldResumeActiveWriteQueue) {
       if (useSettingsStore.getState().debugMode) {
         logInfo("[terminal-visibility] resuming queued active writes after visibility restore", {
           sessionId,
-          queuedChars: activeWriteQueueSizeRef.current,
-          queuedChunks: activeWriteQueueRef.current.length,
+          queuedChunks: outputRestoreState.activeWriteQueueLength,
         });
       }
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
+      resumeActiveWriteQueue();
+    }
+    if (restorePlan.shouldRefreshViewport || rendererRestored) {
+      beginVisibilityRestoreReveal();
     }
     if (restorePlan.shouldRefreshViewport) {
-      beginVisibilityRestoreReveal();
-      needsViewportRefreshRef.current = true;
+      markViewportRefreshNeeded();
     }
     // Wait for display:block to take effect and the layout to stabilize.
-    // scheduleFit(true) already performs the required full viewport refresh.
+    // Display refresh is gated by explicit viewport-refresh state, not by every fit.
     scheduleFit(true);
     if (terminalRef.current) {
       normalizeTuiComposerBackground(terminalRef.current);
@@ -1462,7 +1059,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       backgroundedAt = null;
       if (hiddenFor < WEBGL_ATLAS_REFRESH_MIN_HIDDEN_MS) return;
       try {
-        webglAddonRef.current?.clearTextureAtlas();
+        clearWebglTextureAtlas();
       } catch {
         // Addon may be mid-disposal; the DOM renderer fallback needs no atlas.
       }
@@ -1509,7 +1106,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       fontFamily: effectiveFontFamily,
       fontWeight: "normal",
       fontWeightBold: "bold",
-      scrollback: terminalScrollbackRows,
+      scrollback: effectiveTerminalScrollbackRows,
       scrollOnEraseInDisplay: true,
       allowProposedApi: true,
       windowsPty: { backend: "conpty" },
@@ -1525,8 +1122,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         activate: (_event, uri) => openHttpUrl(sessionId, uri),
       },
     });
+    const baseDisposables: TerminalSubsystemDisposable[] = [];
+    const displayDisposables: TerminalSubsystemDisposable[] = [];
+    const inputDisposables: TerminalSubsystemDisposable[] = [];
     // Keep Claude Code / other TUIs from overriding the app-wide thin cursor via DECSCUSR.
-    const cursorStyleDisposable = terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true);
+    baseDisposables.push(terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true));
 
     const fitAddon = new FitAddon();
     const imageAddon = new ImageAddon({
@@ -1540,7 +1140,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const serializeAddon = new SerializeAddon();
     const unicode11Addon = new Unicode11Addon();
     const webLinksAddon = new WebLinksAddon((_event, uri) => openHttpUrl(sessionId, uri));
-    const fileLinkDisposable = terminal.registerLinkProvider({
+    baseDisposables.push(terminal.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
         const line = terminal.buffer.active.getLine(bufferLineNumber - 1)?.translateToString(true) ?? "";
         const links: ILink[] = findTerminalFileLinks(line).map((match) => ({
@@ -1554,7 +1154,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }));
         callback(links.length > 0 ? links : undefined);
       },
-    });
+    }));
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(imageAddon);
     terminal.loadAddon(searchAddon);
@@ -1565,18 +1165,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     terminal.open(containerRef.current);
     // 注册定时节流落盘的快照来源：让崩溃/强杀也能恢复到最近一次落盘的画面。
     const unregisterSnapshotSource = registerTerminalSnapshotSource(sessionId, () => serializeAddon.serialize());
-    const searchResultDisposable = searchAddon.onDidChangeResults(handleSearchResults);
+    baseDisposables.push(searchAddon.onDidChangeResults(handleSearchResults));
 
-    let webglAddon: WebglAddon | null = null;
-    if (!(lowMemoryMode && !isVisibleRef.current) && canUseWebglRenderer(baseTheme)) {
-      try {
-        webglAddon = createWebglAddon();
-        terminal.loadAddon(webglAddon);
-        webglAddonRef.current = webglAddon;
-      } catch {
-        // WebGL not supported, fall back to canvas
-      }
-    }
+    syncWebglRenderer(terminal, baseTheme);
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -1613,140 +1204,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     const markAttentionInputHandled = () => useTerminalStore.getState().markAttentionInputHandled(sessionId);
 
-    const pasteIntoTerminal = (text: string) => {
-      const normalizedText = trimTerminalPasteBoundaryLineBreaks(text);
-      if (!normalizedText) return;
-      markAttentionInputHandled();
-      terminal.paste(normalizedText);
-    };
-
-    const pasteTarget = containerRef.current;
-    const pasteListenerOptions = { capture: true } as const;
-    const isPointInsidePasteTarget = (x: number, y: number) => {
-      const rect = pasteTarget.getBoundingClientRect();
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-    };
-
-    const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
-      Boolean(getTerminalFileDragText()) || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
-    );
-    const unregisterTerminalDropZone = registerTerminalDropZone({
-      id: sessionId,
-      getRect: () => {
-        if (!isVisibleRef.current) return null;
-        return pasteTarget.getBoundingClientRect();
-      },
-      paste: pasteIntoTerminal,
-      focus: () => terminal.focus(),
-    });
-    const getShellForPathQuoting = async () => {
-      const os = await getOsPlatformForPathQuoting();
-      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
-      const sessionShell = normalizeShellForKnownOs(session?.shell, os);
-      if (sessionShell) return sessionShell;
-      const defaultShell = normalizeShellForKnownOs(useSettingsStore.getState().defaultShell, os);
-      return defaultShell ?? defaultShellForOs(os);
-    };
-    const getCurrentDropContext = () => {
-      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
-      const project = session?.projectId
-        ? useProjectStore.getState().projects.find((item) => item.id === session.projectId)
-        : null;
-      return { session, project };
-    };
-    const savePastedImageForTerminal = async (
-      file: File,
-      context: ReturnType<typeof getCurrentDropContext>
-    ): Promise<string | null> => {
-      const { session, project } = context;
-      const attachRootPath = project?.path || session?.cwd || null;
-      if (!attachRootPath) return null;
-
-      try {
-        const fileName = createClipboardImageFileName(file);
-        const dataBase64 = arrayBufferToBase64(await file.arrayBuffer());
-        const attachedRelativePath = await attachClipboardImageData(attachRootPath, fileName, dataBase64);
-        cleanupExpiredAttachmentsOnce(attachRootPath);
-        return joinLocalPath(attachRootPath, attachedRelativePath);
-      } catch (err) {
-        logError("Failed to attach pasted terminal image", { sessionId, err });
-        toast.error("截图粘贴失败", { description: String(err) });
-        return null;
-      }
-    };
-
-    const onPaste = (e: ClipboardEvent) => {
-      const imageFile = getClipboardImageFile(e.clipboardData);
-      const context = getCurrentDropContext();
-      if (imageFile) {
-        e.preventDefault();
-        e.stopPropagation();
-        void savePastedImageForTerminal(imageFile, context).then(async (path) => {
-          if (!path) return;
-          pasteIntoTerminal(formatShellPathList([path], await getShellForPathQuoting()));
-          terminal.focus();
-        });
-        return;
-      }
-
-      const text = e.clipboardData?.getData("text/plain");
-      if (text === undefined) return;
-      e.preventDefault();
-      e.stopPropagation();
-      pasteIntoTerminal(text);
-    };
-
-    pasteTarget.addEventListener("paste", onPaste, pasteListenerOptions);
-
-    const onDragOver = (e: DragEvent) => {
-      const isActiveTerminalFileDrag = Boolean(getTerminalFileDragText());
-      if (isActiveTerminalFileDrag) updateTerminalFileDragPointFromEvent(e);
-      if (!isPointInsidePasteTarget(e.clientX, e.clientY) || !hasTerminalFileDragData(e.dataTransfer)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    };
-    const onDrop = (e: DragEvent) => {
-      if (!isPointInsidePasteTarget(e.clientX, e.clientY) || !hasTerminalFileDragData(e.dataTransfer)) return;
-      const text = getTerminalFileDragText()
-        || e.dataTransfer?.getData(TERMINAL_FILE_PATH_MIME)
-        || e.dataTransfer?.getData("text/plain")
-        || "";
-      e.preventDefault();
-      e.stopPropagation();
-      if (!text) return;
-      pasteIntoTerminal(text);
-      endTerminalFileDrag();
-      terminal.focus();
-    };
-    window.addEventListener("dragover", onDragOver, true);
-    window.addEventListener("drop", onDrop, true);
-
-    let unlistenFileDrop: UnlistenFn | null = null;
-    let fileDropCancelled = false;
-    getCurrentWebview().onDragDropEvent(async (event) => {
-      const payload = event.payload;
-      if (payload.type !== "drop" || payload.paths.length === 0) return;
-      if (!isVisibleRef.current) return;
-      const scaleFactor = await getCurrentWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
-      if (fileDropCancelled) return;
-      const position = payload.position.toLogical(scaleFactor);
-      const dropZoneId = getTerminalFileDropZoneIdAtPoint(position.x, position.y);
-      if (dropZoneId && dropZoneId !== sessionId) return;
-      if (!dropZoneId && (!isActiveRef.current || !isVisibleRef.current)) return;
-
-      pasteIntoTerminal(formatShellPathList(payload.paths, await getShellForPathQuoting()));
-      terminal.focus();
-    }).then((fn) => {
-      if (fileDropCancelled) {
-        fn();
-      } else {
-        unlistenFileDrop = fn;
-      }
-    }).catch((err) => {
-      logError("Failed to listen terminal file drop", { sessionId, err });
-    });
-
+    const detachPasteAndDrop = attachPasteAndDrop(terminal);
     const contextMenuTarget = containerRef.current;
     const onContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -2286,7 +1744,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey
       ) {
-        if (acceptSuggestionRef.current()) {
+        if (acceptSuggestion()) {
           e.preventDefault();
           return false;
         }
@@ -2300,7 +1758,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey
       ) {
-        if (acceptSuggestionRef.current()) {
+        if (acceptSuggestion()) {
           e.preventDefault();
           return false;
         }
@@ -2314,7 +1772,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.metaKey &&
         (e.code === "Space" || e.key === " ")
       ) {
-        if (acceptSuggestionRef.current()) {
+        if (acceptSuggestion()) {
           e.preventDefault();
           return false;
         }
@@ -2332,7 +1790,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (e.type === "keydown" && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "v") {
         e.preventDefault();
         readClipboardText().then((text) => {
-          pasteIntoTerminal(wrapTerminalPasteTextForCtrlShiftV(text));
+          pasteText(terminal, wrapTerminalPasteTextForCtrlShiftV(text));
         }).catch((err) => {
           logError("Failed to read clipboard text", { sessionId, err });
         });
@@ -2379,7 +1837,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (key === "v") {
         e.preventDefault();
         readClipboardText().then((text) => {
-          pasteIntoTerminal(text);
+          pasteText(terminal, text);
         }).catch((err) => {
           logError("Failed to read clipboard text", { sessionId, err });
         });
@@ -2391,277 +1849,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     // Forward keyboard input to PTY and record command history
     const addCommand = useCommandHistoryStore.getState().addCommand;
     const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
-    let suggestionRequestId = 0;
-    let suggestionRefreshTimerId: number | null = null;
-    let aiSuggestionTimerId: number | null = null;
-    let aiSuggestionInFlight = false;
-    let aiSuggestionQueued = false;
-    let pendingAiSuggestionContext: TerminalInputSuggestionContext | null = null;
-    let pendingAiSuggestionRequestId = 0;
-    let suggestionDisposed = false;
-    let suggestionTemplatesLoaded = false;
-    let lastSubmittedCommand: string | null = null;
-    let suggestionContextCache: {
-      loadedAt: number;
-      projectId: string | null;
-      history: CommandHistoryEntry[];
-      templates: CommandTemplate[];
-    } | null = null;
-
-    const clearSuggestionGhost = () => {
-      suggestionRef.current = null;
-      setSuggestionGhost(null);
-    };
-
-    const cancelAiSuggestionRefresh = () => {
-      if (aiSuggestionTimerId !== null) {
-        window.clearTimeout(aiSuggestionTimerId);
-        aiSuggestionTimerId = null;
-      }
-      pendingAiSuggestionContext = null;
-      aiSuggestionQueued = false;
-    };
-
-    const updateSuggestionGhostPosition = (suggestion: TerminalInputSuggestion | null) => {
-      if (!suggestion || suggestionDisposed || !isActiveRef.current || !isVisibleRef.current || isComposingRef.current) {
-        clearSuggestionGhost();
-        return;
-      }
-      if (!canShowSuggestionAtCurrentInputEnd(terminal, inputBuffer.current)) {
-        clearSuggestionGhost();
-        return;
-      }
-      const wrapper = wrapperRef.current;
-      const terminalContainer = containerRef.current;
-      if (!wrapper || !terminalContainer) {
-        clearSuggestionGhost();
-        return;
-      }
-
-      const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
-      const wrapperRect = wrapper.getBoundingClientRect();
-      const screenRect = (screen ?? terminalContainer).getBoundingClientRect();
-      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
-      const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fallbackFontSize);
-      const buffer = terminal.buffer.active;
-      const left = screenRect.left - wrapperRect.left + Math.max(0, buffer.cursorX) * cell.width;
-      const top = screenRect.top - wrapperRect.top + Math.max(0, buffer.cursorY) * cell.height;
-      const maxWidth = Math.max(0, wrapperRect.right - wrapperRect.left - left - 8);
-      if (maxWidth < cell.width || top < 0 || top > wrapperRect.height) {
-        clearSuggestionGhost();
-        return;
-      }
-
-      const nextGhost = {
-        suffix: suggestion.suffix,
-        left,
-        top,
-        height: Math.max(1, cell.height),
-        maxWidth,
-      };
-      setSuggestionGhost((current) => {
-        if (
-          current &&
-          current.suffix === nextGhost.suffix &&
-          current.left === nextGhost.left &&
-          current.top === nextGhost.top &&
-          current.height === nextGhost.height &&
-          current.maxWidth === nextGhost.maxWidth
-        ) {
-          return current;
-        }
-        return nextGhost;
-      });
-    };
-
-    const loadSuggestionContext = async (projectId: string | null) => {
-      const now = Date.now();
-      if (
-        suggestionContextCache &&
-        suggestionContextCache.projectId === projectId &&
-        now - suggestionContextCache.loadedAt <= SUGGESTION_CONTEXT_CACHE_TTL_MS
-      ) {
-        return suggestionContextCache;
-      }
-
-      const templateStore = useTemplateStore.getState();
-      if (!suggestionTemplatesLoaded && templateStore.templates.length === 0) {
-        suggestionTemplatesLoaded = true;
-        await templateStore.fetchTemplates().catch(() => {});
-      }
-      const [history, templates] = await Promise.all([
-        useCommandHistoryStore.getState().getRecent(null, 120),
-        Promise.resolve(useTemplateStore.getState().getForContext(projectId, sessionId)),
-      ]);
-      suggestionContextCache = {
-        loadedAt: Date.now(),
-        projectId,
-        history,
-        templates,
-      };
-      return suggestionContextCache;
-    };
-
-    const buildSuggestionContext = (
-      input: string,
-      session: TerminalSession | undefined,
-      history: CommandHistoryEntry[],
-      templates: CommandTemplate[]
-    ): TerminalInputSuggestionContext => {
-      const currentSettings = useSettingsStore.getState();
-      const projectId = session?.projectId ?? null;
-      return {
-        input,
-        projectId,
-        cwd: session?.cwd ?? null,
-        shell: session?.shell ?? null,
-        sessionId,
-        previousCommand: lastSubmittedCommand,
-        history,
-        templates,
-        provider: currentSettings.terminalInputSuggestionProvider,
-        model: TERMINAL_INPUT_SUGGESTION_AI_MODEL,
-        debugLogging: currentSettings.debugMode,
-        aiConfig: {
-          enabled: currentSettings.terminalInputSuggestionLlmEnabled,
-          baseUrl: currentSettings.terminalInputSuggestionBaseUrl,
-          apiKey: currentSettings.terminalInputSuggestionApiKey,
-          model: currentSettings.terminalInputSuggestionModel,
-          prompt: currentSettings.terminalInputSuggestionUseBuiltinPrompt
-            ? TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT
-            : currentSettings.terminalInputSuggestionCustomPrompt,
-        },
-      };
-    };
-
-    const suggestionContextHasUsableAiConfig = (context: TerminalInputSuggestionContext) => Boolean(
-      context.aiConfig?.enabled &&
-      context.aiConfig.baseUrl.trim() &&
-      context.aiConfig.apiKey.trim() &&
-      context.aiConfig.model.trim() &&
-      context.aiConfig.prompt.trim()
-    );
-
-    const runPendingAiSuggestion = async () => {
-      if (aiSuggestionInFlight) {
-        aiSuggestionQueued = true;
-        return;
-      }
-      const context = pendingAiSuggestionContext;
-      const requestId = pendingAiSuggestionRequestId;
-      if (!context) return;
-      pendingAiSuggestionContext = null;
-      aiSuggestionQueued = false;
-      aiSuggestionInFlight = true;
-      const suggestionResult = await getTerminalInputSuggestionAiResult(context);
-      aiSuggestionInFlight = false;
-      if (suggestionResult.aiAttempt) {
-        useSettingsStore.getState().recordTerminalInputSuggestionUsage(suggestionResult.aiAttempt);
-      }
-      if (
-        !suggestionDisposed &&
-        requestId === suggestionRequestId &&
-        useSettingsStore.getState().terminalInputSuggestionsEnabled &&
-        context.input === inputBuffer.current &&
-        suggestionResult.suggestions.length > 0
-      ) {
-        const suggestion = suggestionResult.suggestions[0];
-        suggestionRef.current = suggestion;
-        updateSuggestionGhostPosition(suggestion);
-      }
-      if (aiSuggestionQueued && pendingAiSuggestionContext) {
-        void runPendingAiSuggestion();
-      }
-    };
-
-    const scheduleAiSuggestionRefresh = (context: TerminalInputSuggestionContext, requestId: number) => {
-      if (!suggestionContextHasUsableAiConfig(context)) {
-        cancelAiSuggestionRefresh();
-        return;
-      }
-      pendingAiSuggestionContext = context;
-      pendingAiSuggestionRequestId = requestId;
-      if (aiSuggestionTimerId !== null) {
-        window.clearTimeout(aiSuggestionTimerId);
-      }
-      aiSuggestionTimerId = window.setTimeout(() => {
-        aiSuggestionTimerId = null;
-        void runPendingAiSuggestion();
-      }, SUGGESTION_AI_DEBOUNCE_MS);
-    };
-
-    const refreshSuggestionGhost = async () => {
-      const requestId = ++suggestionRequestId;
-      const settings = useSettingsStore.getState();
-      const input = inputBuffer.current;
-      if (
-        suggestionDisposed ||
-        !settings.terminalInputSuggestionsEnabled ||
-        !input ||
-        input.includes("\n") ||
-        input.includes("\r") ||
-        isComposingRef.current
-      ) {
-        cancelAiSuggestionRefresh();
-        clearSuggestionGhost();
-        return;
-      }
-
-      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
-      const projectId = session?.projectId ?? null;
-      const { history, templates } = await loadSuggestionContext(projectId);
-      if (suggestionDisposed || requestId !== suggestionRequestId || input !== inputBuffer.current) return;
-      if (!useSettingsStore.getState().terminalInputSuggestionsEnabled) {
-        cancelAiSuggestionRefresh();
-        clearSuggestionGhost();
-        return;
-      }
-
-      const context = buildSuggestionContext(input, session, history, templates);
-      const localSuggestions = getLocalTerminalInputSuggestions(context, { limit: 1 });
-      const suggestion = localSuggestions[0] ?? null;
-      suggestionRef.current = suggestion;
-      updateSuggestionGhostPosition(suggestion);
-      scheduleAiSuggestionRefresh(context, requestId);
-
-      void getTerminalPathInputSuggestions(context, { limit: 1 })
-        .then((pathSuggestions) => {
-          if (
-            suggestionDisposed ||
-            requestId !== suggestionRequestId ||
-            input !== inputBuffer.current ||
-            !useSettingsStore.getState().terminalInputSuggestionsEnabled ||
-            suggestionRef.current?.source === "ai"
-          ) {
-            return;
-          }
-          const mergedSuggestion = mergeTerminalInputSuggestions([...localSuggestions, ...pathSuggestions], { limit: 1 })[0] ?? null;
-          suggestionRef.current = mergedSuggestion;
-          updateSuggestionGhostPosition(mergedSuggestion);
-        })
-        .catch(() => {});
-    };
-
-    const scheduleSuggestionRefresh = () => {
-      if (suggestionRefreshTimerId !== null) {
-        window.clearTimeout(suggestionRefreshTimerId);
-      }
-      suggestionRefreshTimerId = window.setTimeout(() => {
-        suggestionRefreshTimerId = null;
-        void refreshSuggestionGhost();
-      }, SUGGESTION_LOCAL_DEBOUNCE_MS);
-    };
-
-    acceptSuggestionRef.current = () => {
-      const suggestion = suggestionRef.current;
-      const settings = useSettingsStore.getState();
-      if (!settings.terminalInputSuggestionsEnabled || !suggestion?.suffix) return false;
-      clearSuggestionGhost();
-      forwardTerminalInput(suggestion.suffix, "onData");
-      settings.recordTerminalInputSuggestionUsage({ accepted: true });
-      return true;
-    };
-
     const maybeLogCodexImeDuplicate = (data: string) => {
       if (!isCodexSession()) return;
       const debugState = codexImeDebugRef.current;
@@ -2702,8 +1889,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (data === "\r") {
         const cmd = inputBuffer.current;
         if (cmd.trim()) {
-          lastSubmittedCommand = cmd.trim();
-          suggestionContextCache = null;
+          onCommandSubmitted(cmd.trim());
           const submittedCwd = useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.cwd ?? null;
           void resolveSubmittedDirectoryChange(cmd, submittedCwd)
             .then((cwd) => updateSessionCwdIfChanged(cwd))
@@ -2802,94 +1988,25 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       updateInputBufferFromTerminalData(data);
     }
 
-    terminal.onData((data) => {
+    const detachInputSuggestions = attachSuggestions(terminal, (data) => {
       forwardTerminalInput(data, "onData");
     });
 
+    // Contract: terminal.onData is input direction and belongs to the input subsystem.
+    inputDisposables.push(terminal.onData((data) => {
+      forwardTerminalInput(data, "onData");
+    }));
+
     // Sync resize to PTY
-    terminal.onResize(({ cols, rows }) => {
+    displayDisposables.push(terminal.onResize(({ cols, rows }) => {
       if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
       invoke("pty_resize", { sessionId, cols, rows }).catch((err) => {
         logError("PTY resize failed in XTermTerminal", { sessionId, cols, rows, err });
       });
-    });
+    }));
 
-    // Per-session TextDecoder with stream mode：
-    // 跨 chunk 的多字节 UTF-8 必须使用 streaming decode，否则截断的 head/tail
-    // 字节会被解码为 U+FFFD + 残字节，残字节进入 xterm 后会污染 SGR 解析状态
-    // （表现为背景色串列、左侧异常红色竖条）。后端虽已保证字节边界对齐
-    // （src-tauri/src/pty/boundary.rs），前端 stream 模式作为双重防御。
-    // 不使用模块级共享 decoder：stream 模式会保留状态，跨会话共享会导致污染。
-    const textDecoder = new TextDecoder("utf-8");
-
-    // Listen for PTY output (Base64 encoded to preserve control characters)
-    // Batch chunks per animation frame to keep main thread responsive on high-throughput output.
-    let unlisten: UnlistenFn | null = null;
+    const detachPtyOutput = attachPtyOutput();
     let cancelled = false;
-    let pendingChunks: string[] = [];
-    let writeRafId: number | null = null;
-    const stashInactiveText = (text: string) => {
-      if (!text) return;
-      const maxBufferChars = inactiveBufferLimitRef.current;
-      if (text.length >= maxBufferChars) {
-        const suffix = text.slice(-maxBufferChars);
-        inactiveBufferRef.current = [suffix];
-        inactiveBufferSizeRef.current = suffix.length;
-        return;
-      }
-
-      inactiveBufferRef.current.push(text);
-      inactiveBufferSizeRef.current += text.length;
-      while (inactiveBufferSizeRef.current > maxBufferChars && inactiveBufferRef.current.length > 0) {
-        const overflow = inactiveBufferSizeRef.current - maxBufferChars;
-        const head = inactiveBufferRef.current[0];
-        if (!head || head.length <= overflow) {
-          const removed = inactiveBufferRef.current.shift();
-          if (removed) inactiveBufferSizeRef.current -= removed.length;
-          continue;
-        }
-        inactiveBufferRef.current[0] = head.slice(overflow);
-        inactiveBufferSizeRef.current -= overflow;
-      }
-    };
-    const flushPendingWrites = () => {
-      writeRafId = null;
-      if (cancelled || pendingChunks.length === 0) return;
-      const combined = pendingChunks.length === 1 ? pendingChunks[0] : pendingChunks.join("");
-      pendingChunks = [];
-      if (isVisibleRef.current) {
-        enqueueActiveWrite(combined);
-      } else {
-        stashInactiveText(combined);
-      }
-    };
-    listen<string>(`pty-output-${sessionId}`, (event) => {
-      if (cancelled) return;
-      const binaryString = atob(event.payload);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i += 1) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const text = processShellIntegrationOsc(processSpecialOscQueries(textDecoder.decode(bytes, { stream: true })));
-      if (!text) return;
-      // 标记脏，供定时节流落盘判断是否需要重新序列化该终端。
-      markTerminalSnapshotDirty(sessionId);
-      if (isVisibleRef.current) {
-        pendingChunks.push(text);
-        if (writeRafId === null) {
-          writeRafId = requestAnimationFrame(flushPendingWrites);
-        }
-      } else {
-        // Tab hidden — stash to a bounded ring buffer; flush when reactivated
-        stashInactiveText(text);
-      }
-    }).then((fn) => {
-      if (cancelled) {
-        fn();
-      } else {
-        unlisten = fn;
-      }
-    });
 
     const terminalContainer = containerRef.current;
     const textarea = terminalContainer.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
@@ -3179,7 +2296,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     scheduleHelperTextareaAnchorPin();
     terminalContainer.addEventListener("scroll", scheduleTerminalContainerScrollReset, { passive: true });
-    const cursorMoveDisposable = terminal.onCursorMove(() => {
+    inputDisposables.push(terminal.onCursorMove(() => {
       if (!isActiveRef.current) return;
       if (isComposingRef.current) {
         clearSuggestionGhost();
@@ -3187,22 +2304,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         scheduleCompositionAnchorFix();
         return;
       }
-      updateSuggestionGhostPosition(suggestionRef.current);
+      updateSuggestionGhostPosition();
       if (!textarea || document.activeElement !== textarea) return;
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
-    });
-    const renderDisposable = terminal.onRender((range) => {
+    }));
+    displayDisposables.push(terminal.onRender((range) => {
       handleVisibilityRestoreRender(terminal, range);
       scheduleTuiComposerBackgroundNormalization(terminal);
       if (!isComposingRef.current) {
-        updateSuggestionGhostPosition(suggestionRef.current);
+        updateSuggestionGhostPosition();
         return;
       }
       clearSuggestionGhost();
       scheduleCompositionScrollRestore();
       scheduleCompositionAnchorFix();
-    });
+    }));
 
     // 中文 IME 的直出标点可能不会稳定进入 xterm 的 textarea diff：
     // Windows 常见信号是 keyCode 229；macOS 中文输入法的全角标点（如 "（"）
@@ -3330,26 +2447,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     return () => {
       cancelled = true;
-      suggestionDisposed = true;
-      if (suggestionRefreshTimerId !== null) {
-        window.clearTimeout(suggestionRefreshTimerId);
-        suggestionRefreshTimerId = null;
-      }
-      if (aiSuggestionTimerId !== null) {
-        window.clearTimeout(aiSuggestionTimerId);
-        aiSuggestionTimerId = null;
-      }
-      pendingAiSuggestionContext = null;
-      aiSuggestionQueued = false;
-      acceptSuggestionRef.current = () => false;
-      clearSuggestionGhost();
+      detachInputSuggestions();
       cancelPendingCursorShow();
-      pasteTarget.removeEventListener("paste", onPaste, pasteListenerOptions);
-      unregisterTerminalDropZone();
-      window.removeEventListener("dragover", onDragOver, true);
-      window.removeEventListener("drop", onDrop, true);
-      fileDropCancelled = true;
-      unlistenFileDrop?.();
+      detachPasteAndDrop();
       contextMenuTarget.removeEventListener("contextmenu", onContextMenu);
       if (ENABLE_CLICK_CURSOR_POSITIONING) {
         contextMenuTarget.removeEventListener("click", moveInputCursorToClick);
@@ -3362,14 +2462,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       textarea?.removeEventListener("compositionupdate", onCompositionUpdate);
       textarea?.removeEventListener("compositionend", onCompositionEnd);
       terminalContainer.removeEventListener("scroll", scheduleTerminalContainerScrollReset);
-      cursorMoveDisposable.dispose();
-      renderDisposable.dispose();
+      disposeTerminalSubsystem(inputDisposables);
+      disposeTerminalSubsystem(displayDisposables);
       wheelTarget.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
       resizeObserver.disconnect();
-      if (fitRafRef.current !== null) {
-        cancelAnimationFrame(fitRafRef.current);
-        fitRafRef.current = null;
-      }
+      cancelScheduledFit();
       if (compositionScrollRafId !== null) {
         cancelAnimationFrame(compositionScrollRafId);
         compositionScrollRafId = null;
@@ -3390,49 +2487,26 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         window.clearTimeout(compositionAnchorTimeoutId);
         compositionAnchorTimeoutId = null;
       }
-      if (writeRafId !== null) {
-        cancelAnimationFrame(writeRafId);
-        writeRafId = null;
-      }
       try {
         const serializedOutput = serializeAddon.serialize();
-        const pendingOutput = [
-          ...activeWriteQueueRef.current,
-          ...pendingChunks,
-          ...inactiveBufferRef.current,
-        ].join("");
+        const pendingOutput = getPendingOutputSnapshot();
         useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, `${serializedOutput}${pendingOutput}`);
       } catch (err) {
         logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
-      }
-      if (activeWriteRafRef.current !== null) {
-        cancelAnimationFrame(activeWriteRafRef.current);
-        activeWriteRafRef.current = null;
       }
       if (tuiComposerNormalizeRafRef.current !== null) {
         cancelAnimationFrame(tuiComposerNormalizeRafRef.current);
         tuiComposerNormalizeRafRef.current = null;
       }
-      pendingChunks = [];
+      detachPtyOutput();
+      resetOutputState();
       clearHiddenWebglDisposeTimer();
       clearVisibilityRestoreRevealSchedule();
       visibilityRestorePendingRef.current = false;
-      activeWriteQueueRef.current = [];
-      activeWriteQueueSizeRef.current = 0;
-      inactiveReplayStickToBottomRef.current = false;
-      inactiveReplayPendingWritesRef.current = 0;
-      inactiveReplayPendingRef.current = false;
-      inactiveBufferRef.current = [];
-      inactiveBufferSizeRef.current = 0;
-      needsViewportRefreshRef.current = false;
+      resetViewportRefreshState();
       unregisterSnapshotSource();
-      unlisten?.();
-      searchResultDisposable.dispose();
-      fileLinkDisposable.dispose();
-      cursorStyleDisposable.dispose();
-      webglAddonRef.current?.dispose();
-      webglAddonRef.current = null;
-      webglAddon = null;
+      disposeTerminalSubsystem(baseDisposables);
+      disposeWebglRenderer();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -3442,10 +2516,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   const backgroundOverlayColor = getTerminalBackgroundOverlayColor(terminalTheme);
   const showBackgroundImage = isTransparent && assetUrl !== null;
-  terminalColorRepliesRef.current = {
-    foreground: formatSpecialColorReply(10, normalizeHexColor(terminalTheme.foreground, "#d8dee9")),
-    background: formatSpecialColorReply(11, normalizeHexColor(terminalTheme.background, backgroundColor)),
-  };
+  updateTerminalColorReplies({
+    foreground: normalizeHexColor(terminalTheme.foreground, "#d8dee9"),
+    background: normalizeHexColor(terminalTheme.background, backgroundColor),
+  });
   const searchForeground = normalizeHexColor(terminalTheme.foreground, "#d8dee9");
   const searchBackground = normalizeHexColor(terminalTheme.background, backgroundColor);
   const searchAccent = normalizeHexColor(terminalTheme.cursor, searchForeground);
@@ -3493,10 +2567,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     closeContextMenu();
     if (!terminal) return;
     readClipboardText().then((text) => {
-      const normalizedText = trimTerminalPasteBoundaryLineBreaks(text);
-      if (!normalizedText) return;
-      useTerminalStore.getState().markAttentionInputHandled(sessionId);
-      terminal.paste(normalizedText);
+      pasteText(terminal, text);
       terminal.focus();
     }).catch((err) => {
       logError("Failed to read clipboard text", { sessionId, err });

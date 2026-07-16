@@ -55,6 +55,16 @@
 
 **修法**：全屏 TUI 会话（判定：`isCodexSession` 或 alt-screen 激活）不累积 inactive buffer，切回时让 TUI 自己重绘当前帧。或：重放时不逐帧 scrollToBottom，只在重放完成后一次性定位。
 
+### 验证新增发现：右侧面板打开触发 Codex 滚动条跳顶
+
+**现象**：恢复/打开 Codex 会话并对话一段时间后，打开右侧工具栏任意面板（历史、时间轴、Git、文件、统计、系统资源等）会触发终端滚动条跳到最上方。正式版本也会短暂跳顶，但随后会自动滚回底部；当前重构分支需要确认是否丢失了这段回到底部的补偿。
+
+**初判根因**：右侧面板改变终端容器宽度，`ResizeObserver -> scheduleFit() -> fitAddon.fit()` 触发 xterm reflow。Codex TUI 的滚动位置在 reflow 期间可能被 xterm 保留/重算到顶部。
+
+**Display 阶段修复要求**：在 `fitWhenStable` / Display resize 路径里，fit 前记录终端是否本来贴底；fit 后只在“fit 前贴底”时 `scrollToBottom()`。如果用户正在查看 scrollback，禁止强制滚到底部。
+
+**验证**：Codex 会话处于底部时打开/关闭任意右侧面板，最终仍回到底部；用户手动滚到历史位置后打开右侧面板，不应被强制拉回底部。
+
 ## Non-Goals
 
 - 不改 JSX 渲染结构（背景层/绘制层/搜索框/右键菜单保持原样）
