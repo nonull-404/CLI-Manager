@@ -1,4 +1,5 @@
-# Source changes trigger Windows package build.\nname: Build Latest Windows Administrator Package
+# Source changes trigger Windows package build.
+name: Build Latest Windows Administrator Package
 
 on:
   workflow_dispatch:
