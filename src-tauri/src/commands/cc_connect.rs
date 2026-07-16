@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::env;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
@@ -22,6 +23,8 @@ const MAX_LOG_PAGE_SIZE: usize = 500;
 const MAX_CAPTURED_LOG_LINE_BYTES: usize = 8 * 1024;
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const CONFIG_FORMAT_TIMEOUT: Duration = Duration::from_secs(8);
+const LOCAL_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
+const LOCAL_PROXY_PORTS: [u16; 2] = [7890, 10808];
 const TELEGRAM_TOKEN_ACCOUNT: &str = "cc-connect-telegram-token";
 const FEISHU_APP_ID_ACCOUNT: &str = "cc-connect-feishu-app-id";
 const FEISHU_APP_SECRET_ACCOUNT: &str = "cc-connect-feishu-app-secret";
@@ -86,6 +89,7 @@ pub struct CcConnectProfile {
     pub agent: CcConnectAgent,
     pub platform: CcConnectPlatform,
     pub allow_from: String,
+    pub proxy_url: Option<String>,
     pub language: CcConnectLanguage,
 }
 
@@ -870,6 +874,7 @@ fn normalize_profile(
     );
     validate_registered_project(&profile)?;
     profile.allow_from = normalize_allow_from(profile.platform, &profile.allow_from)?;
+    profile.proxy_url = normalize_proxy_url(profile.proxy_url.as_deref())?;
     profile.executable_path = profile
         .executable_path
         .as_deref()
@@ -881,6 +886,23 @@ fn normalize_profile(
         profile.executable_path = Some(path_string(&binary.path));
     }
     Ok(profile)
+}
+
+fn normalize_proxy_url(raw: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let url = reqwest::Url::parse(raw).map_err(|_| "proxy URL is invalid".to_string())?;
+    if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err("proxy URL must use http, https, socks5, or socks5h".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("proxy URL host is required".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("proxy URL credentials are not allowed".to_string());
+    }
+    Ok(Some(url.to_string()))
 }
 
 fn normalize_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String, String> {
@@ -929,6 +951,9 @@ fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
     }
     if normalize_allow_from(profile.platform, &profile.allow_from).is_err() {
         issues.push("allowlist_invalid".to_string());
+    }
+    if normalize_proxy_url(profile.proxy_url.as_deref()).is_err() {
+        issues.push("proxy_invalid".to_string());
     }
     issues
 }
@@ -1084,6 +1109,69 @@ fn credential_environment(
             ))
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProxySource {
+    Configured,
+    AutoDetected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedProxy {
+    url: String,
+    source: ProxySource,
+}
+
+fn resolve_proxy_url(
+    configured: Option<&str>,
+    local_ports: &[u16],
+) -> Result<Option<ResolvedProxy>, String> {
+    if let Some(url) = normalize_proxy_url(configured)? {
+        return Ok(Some(ResolvedProxy {
+            url,
+            source: ProxySource::Configured,
+        }));
+    }
+    Ok(
+        detect_local_proxy_on_ports(local_ports).map(|url| ResolvedProxy {
+            url,
+            source: ProxySource::AutoDetected,
+        }),
+    )
+}
+
+fn detect_local_proxy_on_ports(ports: &[u16]) -> Option<String> {
+    ports.iter().find_map(|port| {
+        let address = SocketAddr::from(([127, 0, 0, 1], *port));
+        TcpStream::connect_timeout(&address, LOCAL_PROXY_CONNECT_TIMEOUT)
+            .ok()
+            .map(|_| format!("http://127.0.0.1:{port}/"))
+    })
+}
+
+fn proxy_environment(proxy_url: &str) -> Vec<(String, String)> {
+    [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ]
+    .into_iter()
+    .map(|key| (key.to_string(), proxy_url.to_string()))
+    .chain([
+        (
+            "NO_PROXY".to_string(),
+            "localhost,127.0.0.1,[::1]".to_string(),
+        ),
+        (
+            "no_proxy".to_string(),
+            "localhost,127.0.0.1,[::1]".to_string(),
+        ),
+    ])
+    .collect()
 }
 
 struct CredentialSnapshot {
@@ -1440,8 +1528,23 @@ impl CcConnectManager {
         }
         let config_path = write_managed_config(&profile)?;
         format_and_check_config_syntax(&binary.path, &config_path)?;
-        let (environment, secrets) = credential_environment(profile.platform)?;
+        let (mut environment, secrets) = credential_environment(profile.platform)?;
+        let proxy = resolve_proxy_url(profile.proxy_url.as_deref(), &LOCAL_PROXY_PORTS)?;
+        if let Some(proxy) = proxy.as_ref() {
+            environment.extend(proxy_environment(&proxy.url));
+        }
         self.ensure_log_writer()?;
+        match proxy.as_ref() {
+            Some(proxy) if proxy.source == ProxySource::Configured => self
+                .append_system_log(format!("cc-connect proxy: using configured {}", proxy.url)),
+            Some(proxy) => self.append_system_log(format!(
+                "cc-connect proxy: auto-detected local proxy {}",
+                proxy.url
+            )),
+            None => self.append_system_log(
+                "cc-connect proxy: no configured local proxy detected; preserving inherited proxy environment",
+            ),
+        }
         let mut command = silent_command(&path_string(&binary.path));
         command
             .arg("--config")
@@ -1882,6 +1985,7 @@ mod tests {
             agent: CcConnectAgent::Claude,
             platform: CcConnectPlatform::Telegram,
             allow_from: "123456789".to_string(),
+            proxy_url: None,
             language: CcConnectLanguage::Zh,
         }
     }
@@ -1923,6 +2027,80 @@ mod tests {
         assert_eq!(
             normalize_allow_from(CcConnectPlatform::Feishu, "ou_owner").unwrap(),
             "ou_owner"
+        );
+    }
+    #[test]
+    fn proxy_url_is_normalized_and_rejects_unsafe_values() {
+        assert_eq!(
+            normalize_proxy_url(Some(" http://127.0.0.1:10808 ")).unwrap(),
+            Some("http://127.0.0.1:10808/".to_string())
+        );
+        assert_eq!(
+            normalize_proxy_url(Some("socks5h://proxy.example.com:7890")).unwrap(),
+            Some("socks5h://proxy.example.com:7890".to_string())
+        );
+        assert_eq!(normalize_proxy_url(Some("   ")).unwrap(), None);
+        assert!(normalize_proxy_url(Some("ftp://proxy.example.com:21")).is_err());
+        assert!(normalize_proxy_url(Some("http://user:secret@proxy.example.com:8080")).is_err());
+        assert!(normalize_proxy_url(Some("http://")).is_err());
+    }
+    #[test]
+    fn local_proxy_detection_uses_the_first_reachable_port() {
+        let first = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let second = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let first_port = first.local_addr().unwrap().port();
+        let second_port = second.local_addr().unwrap().port();
+        assert_eq!(
+            detect_local_proxy_on_ports(&[first_port, second_port]),
+            Some(format!("http://127.0.0.1:{first_port}/"))
+        );
+        assert_eq!(
+            detect_local_proxy_on_ports(&[0, second_port]),
+            Some(format!("http://127.0.0.1:{second_port}/"))
+        );
+        assert_eq!(detect_local_proxy_on_ports(&[]), None);
+    }
+    #[test]
+    fn configured_proxy_takes_priority_over_local_detection() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let local_port = listener.local_addr().unwrap().port();
+        assert_eq!(
+            resolve_proxy_url(Some("https://proxy.example.com:8443"), &[local_port]).unwrap(),
+            Some(ResolvedProxy {
+                url: "https://proxy.example.com:8443/".to_string(),
+                source: ProxySource::Configured,
+            })
+        );
+    }
+    #[test]
+    fn legacy_profile_without_proxy_field_remains_compatible() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let mut value = serde_json::to_value(sample_profile(project_dir.path())).unwrap();
+        value.as_object_mut().unwrap().remove("proxyUrl");
+        let profile: CcConnectProfile = serde_json::from_value(value).unwrap();
+        assert_eq!(profile.proxy_url, None);
+    }
+    #[test]
+    fn proxy_environment_covers_common_case_variants() {
+        let environment = proxy_environment("http://127.0.0.1:7890/")
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        for key in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        ] {
+            assert_eq!(
+                environment.get(key).map(String::as_str),
+                Some("http://127.0.0.1:7890/")
+            );
+        }
+        assert_eq!(
+            environment.get("NO_PROXY").map(String::as_str),
+            Some("localhost,127.0.0.1,[::1]")
         );
     }
     #[cfg(target_os = "windows")]

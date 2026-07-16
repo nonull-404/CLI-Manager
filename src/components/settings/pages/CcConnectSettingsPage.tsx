@@ -47,6 +47,7 @@ interface CcConnectProfile {
   agent: AgentKind;
   platform: PlatformKind;
   allowFrom: string;
+  proxyUrl: string | null;
   language: ReplyLanguage;
 }
 
@@ -96,6 +97,7 @@ const EMPTY_PROFILE: CcConnectProfile = {
   agent: "claude",
   platform: "telegram",
   allowFrom: "",
+  proxyUrl: null,
   language: "zh",
 };
 
@@ -104,6 +106,7 @@ const BLOCKER_KEYS: Record<string, TranslationKey> = {
   project_missing: "settings.ccConnect.blocker.projectMissing",
   project_path_missing: "settings.ccConnect.blocker.projectPathMissing",
   allowlist_invalid: "settings.ccConnect.blocker.allowlistInvalid",
+  proxy_invalid: "settings.ccConnect.blocker.proxyInvalid",
   credentials_missing: "settings.ccConnect.blocker.credentialsMissing",
   credential_store_error: "settings.ccConnect.blocker.credentialStoreError",
   config_missing: "settings.ccConnect.blocker.configMissing",
@@ -473,6 +476,14 @@ export function CcConnectSettingsPage() {
           description={profile.platform === "telegram" ? t("settings.ccConnect.allowFromTelegramHelp") : t("settings.ccConnect.allowFromFeishuHelp")}
           value={profile.allowFrom}
           onChange={(event) => updateProfile("allowFrom", event.currentTarget.value)}
+        />
+        <TextInput
+          mt="sm"
+          label={t("settings.ccConnect.proxyUrl")}
+          placeholder={t("settings.ccConnect.proxyPlaceholder")}
+          description={t("settings.ccConnect.proxyDescription")}
+          value={profile.proxyUrl ?? ""}
+          onChange={(event) => updateProfile("proxyUrl", event.currentTarget.value || null)}
         />
         <Checkbox
           mt="md"
