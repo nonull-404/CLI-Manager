@@ -1,0 +1,163 @@
+:root[data-window="desktop-pet"],
+:root[data-window="desktop-pet"] body,
+:root[data-window="desktop-pet"] #root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent !important;
+  color: #e5f9ef;
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif;
+  user-select: none;
+}
+
+.desktop-pet-root {
+  --pet-accent: #3dd68c;
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 10px 12px;
+  cursor: grab;
+}
+
+.desktop-pet-root:active { cursor: grabbing; }
+.desktop-pet-root[data-mood="waiting"] { --pet-accent: #facc15; }
+.desktop-pet-root[data-mood="error"] { --pet-accent: #fb7185; }
+.desktop-pet-root[data-mood="success"] { --pet-accent: #5ac8e0; }
+.desktop-pet-root[data-mood="sleeping"] { --pet-accent: #94a3b8; }
+
+.desktop-pet-status {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  width: min(164px, calc(100% - 20px));
+  min-height: 38px;
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--pet-accent) 48%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, #071018 86%, transparent);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 28%);
+  padding: 5px 8px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.desktop-pet-status strong { color: var(--pet-accent); font-size: 12px; line-height: 1.2; }
+.desktop-pet-status span { width: 100%; overflow: hidden; color: #dbe7e1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-pet-status small { color: #9fb1a8; font-size: 9px; }
+
+.desktop-pet-stage {
+  position: relative;
+  display: grid;
+  width: 138px;
+  height: 138px;
+  place-items: center;
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 8px 8px rgb(0 0 0 / 28%));
+}
+
+.desktop-pet-image {
+  display: block;
+  width: 132px;
+  height: 132px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.desktop-pet-cat {
+  width: 132px;
+  height: 96px;
+  overflow: visible;
+  color: var(--pet-accent);
+}
+
+.desktop-pet-cat .ui-cpu-cat-body,
+.desktop-pet-cat .ui-cpu-cat-head { fill: color-mix(in srgb, var(--pet-accent) 78%, #f8fafc 22%); }
+.desktop-pet-cat .ui-cpu-cat-tail,
+.desktop-pet-cat .ui-cpu-cat-leg { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.desktop-pet-cat .ui-cpu-cat-eye { fill: #071018; }
+.desktop-pet-cat .ui-cpu-cat-run { transform-origin: 24px 18px; animation: desktop-pet-breathe 1.8s ease-in-out infinite; }
+.desktop-pet-cat .ui-cpu-cat-tail { animation: desktop-pet-tail 1.4s ease-in-out infinite; }
+
+.desktop-pet-root[data-mood="working"] .desktop-pet-stage { animation: desktop-pet-work .52s steps(2, end) infinite; }
+.desktop-pet-root[data-mood="waiting"] .desktop-pet-stage { animation: desktop-pet-wait 1s ease-in-out infinite; }
+.desktop-pet-root[data-mood="success"] .desktop-pet-stage { animation: desktop-pet-success .75s ease-out 2; }
+.desktop-pet-root[data-mood="error"] .desktop-pet-stage { animation: desktop-pet-error .42s ease-in-out 3; }
+.desktop-pet-root[data-mood="sleeping"] .desktop-pet-stage { opacity: .78; animation: desktop-pet-sleep 2.6s ease-in-out infinite; }
+
+.desktop-pet-badge {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 3px solid #071018;
+  border-radius: 999px;
+  color: #071018;
+  background: #facc15;
+  font-weight: 900;
+  font-size: 15px;
+  animation: desktop-pet-badge 1s ease-in-out infinite;
+}
+
+.desktop-pet-menu {
+  position: absolute;
+  right: 8px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  width: 145px;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid rgb(148 163 184 / 32%);
+  border-radius: 12px;
+  background: rgb(7 16 24 / 96%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 38%);
+  padding: 6px;
+  cursor: default;
+}
+
+.desktop-pet-menu button {
+  border: 0;
+  border-radius: 8px;
+  color: #e5f9ef;
+  background: transparent;
+  padding: 7px 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.desktop-pet-menu button:hover,
+.desktop-pet-menu button:focus-visible { outline: none; background: rgb(61 214 140 / 16%); }
+
+@keyframes desktop-pet-breathe { 0%, 100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-2px) scaleY(1.02); } }
+@keyframes desktop-pet-tail { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-12deg); } }
+@keyframes desktop-pet-work { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-5px) rotate(1deg); } }
+@keyframes desktop-pet-wait { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
+@keyframes desktop-pet-success { 0% { transform: translateY(0) scale(1); } 42% { transform: translateY(-23px) scale(1.05); } 100% { transform: translateY(0) scale(1); } }
+@keyframes desktop-pet-error { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px) rotate(-2deg); } 75% { transform: translateX(7px) rotate(2deg); } }
+@keyframes desktop-pet-sleep { 0%, 100% { transform: scale(.98); } 50% { transform: scale(1.02); } }
+@keyframes desktop-pet-badge { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-pet-stage,
+  .desktop-pet-badge,
+  .desktop-pet-cat .ui-cpu-cat-run,
+  .desktop-pet-cat .ui-cpu-cat-tail { animation: none !important; }
+}

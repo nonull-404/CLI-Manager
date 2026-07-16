@@ -63,6 +63,13 @@ pub fn providers_dir() -> Result<PathBuf, String> {
     Ok(cli_manager_data_dir()?.join("providers"))
 }
 
+/// Downloaded desktop pet packages are durable user data. Keep them beside
+/// settings, sessions and the SQLite database so repair installs and app
+/// reinstalls do not remove them.
+pub fn pets_dir() -> Result<PathBuf, String> {
+    Ok(cli_manager_data_dir()?.join("pets"))
+}
+
 pub fn codex_providers_dir() -> Result<PathBuf, String> {
     Ok(providers_dir()?.join("codex"))
 }

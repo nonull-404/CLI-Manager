@@ -35,6 +35,7 @@ import { useSyncStore } from "./stores/syncStore";
 import { useHistoryStore } from "./stores/historyStore";
 import { useExternalSessionSyncStore } from "./stores/externalSessionSyncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useDesktopPetCoordinator } from "./hooks/useDesktopPetCoordinator";
 import { useUpdateStore } from "./stores/updateStore";
 import { useReplayStore } from "./stores/replayStore";
 import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
@@ -699,6 +700,12 @@ function App() {
     }
     terminalStore.setActive(tabId);
   }, []);
+
+  useDesktopPetCoordinator({
+    terminalFullscreen,
+    onOpenSettings: () => handleOpenSettings("desktop-pet"),
+    onActivateSession: handleActivateHookNotificationTarget,
+  });
 
   useKeyboardShortcuts({ onToggleTerminalFullscreen: handleToggleTerminalFullscreen });
 

@@ -54,6 +54,7 @@ export const LINUX_GRAPHICS_MODES = ["auto", "system", "disable-dmabuf", "disabl
 export type LinuxGraphicsMode = (typeof LINUX_GRAPHICS_MODES)[number];
 type LastSettingsTab =
   | "general"
+  | "desktop-pet"
   | "developer"
   | "sidebar"
   | "terminal-theme"
@@ -149,6 +150,26 @@ export type UnsplitBehavior = "merge" | "close";
 export type FileExplorerIgnoredPaths = Record<string, string[]>;
 export type LanguagePreference = "auto" | "zh-CN" | "en-US";
 export type BatchLaunchPaneDirection = "vertical" | "horizontal";
+export type DesktopPetSize = "small" | "medium" | "large";
+
+export interface DesktopPetPosition {
+  x: number;
+  y: number;
+}
+
+export interface DesktopPetSettings {
+  enabled: boolean;
+  petId: string;
+  alwaysOnTop: boolean;
+  size: DesktopPetSize;
+  showStatus: boolean;
+  showSessionName: boolean;
+  autoHideFullscreen: boolean;
+  lockPosition: boolean;
+  position: DesktopPetPosition | null;
+}
+
+export const BUILTIN_DESKTOP_PET_ID = "builtin.cli-cat";
 
 export type HookEventType =
   | "SessionStart"
@@ -365,6 +386,7 @@ interface Settings {
   batchLaunchPaneDirection: BatchLaunchPaneDirection;
   projectScopedTerminalViewEnabled: boolean;
   workspanEnabled: boolean;
+  desktopPet: DesktopPetSettings;
 }
 
 interface SettingsStore extends Settings {
@@ -518,6 +540,17 @@ const DEFAULTS: Settings = {
   batchLaunchPaneDirection: "horizontal",
   projectScopedTerminalViewEnabled: false,
   workspanEnabled: true,
+  desktopPet: {
+    enabled: false,
+    petId: BUILTIN_DESKTOP_PET_ID,
+    alwaysOnTop: true,
+    size: "medium",
+    showStatus: true,
+    showSessionName: false,
+    autoHideFullscreen: true,
+    lockPosition: false,
+    position: null,
+  },
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -536,6 +569,7 @@ const LEGACY_TERMINAL_THEME_MAP: Partial<Record<string, string>> = {
 
 const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "general",
+  "desktop-pet",
   "developer",
   "sidebar",
   "terminal-theme",
@@ -918,6 +952,50 @@ export function migrateTerminalBackground(value: unknown): TerminalBackgroundSet
   return { enabled, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken };
 }
 
+export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {
+  const defaults = DEFAULTS.desktopPet;
+  if (!value || typeof value !== "object") {
+    return { ...defaults, position: null };
+  }
+  const raw = value as Record<string, unknown>;
+  const rawPosition = raw.position;
+  const position = rawPosition && typeof rawPosition === "object"
+    ? (() => {
+        const candidate = rawPosition as Record<string, unknown>;
+        if (
+          typeof candidate.x !== "number" ||
+          !Number.isFinite(candidate.x) ||
+          typeof candidate.y !== "number" ||
+          !Number.isFinite(candidate.y)
+        ) {
+          return null;
+        }
+        return {
+          x: Math.round(clampNumber(candidate.x, -100_000, 100_000, 0)),
+          y: Math.round(clampNumber(candidate.y, -100_000, 100_000, 0)),
+        };
+      })()
+    : null;
+  const petId = typeof raw.petId === "string" && raw.petId.trim() && raw.petId.length <= 80
+    ? raw.petId.trim()
+    : defaults.petId;
+  const size: DesktopPetSize = raw.size === "small" || raw.size === "medium" || raw.size === "large"
+    ? raw.size
+    : defaults.size;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : defaults.enabled,
+    petId,
+    alwaysOnTop: typeof raw.alwaysOnTop === "boolean" ? raw.alwaysOnTop : defaults.alwaysOnTop,
+    size,
+    showStatus: typeof raw.showStatus === "boolean" ? raw.showStatus : defaults.showStatus,
+    showSessionName: typeof raw.showSessionName === "boolean" ? raw.showSessionName : defaults.showSessionName,
+    autoHideFullscreen:
+      typeof raw.autoHideFullscreen === "boolean" ? raw.autoHideFullscreen : defaults.autoHideFullscreen,
+    lockPosition: typeof raw.lockPosition === "boolean" ? raw.lockPosition : defaults.lockPosition,
+    position,
+  };
+}
+
 let store: Store | null = null;
 const TERMINAL_INPUT_SUGGESTION_USAGE_SAVE_DELAY_MS = 800;
 let terminalInputSuggestionUsageSaveTimer: number | null = null;
@@ -1066,6 +1144,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.systemResourceCardVisibility = migrateSystemResourceCardVisibility(entries.systemResourceCardVisibility);
     entries.systemResourceCardOrder = migrateSystemResourceCardOrder(entries.systemResourceCardOrder);
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+    entries.desktopPet = migrateDesktopPetSettings(entries.desktopPet);
     entries.terminalShellProfiles = migrateTerminalShellProfiles(entries.terminalShellProfiles);
     entries.terminalSettingsSectionsExpanded = migrateTerminalSettingsSectionsExpanded(
       entries.terminalSettingsSectionsExpanded
