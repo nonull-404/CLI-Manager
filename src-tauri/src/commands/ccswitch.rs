@@ -737,16 +737,29 @@ async fn post_claude_model_test(
 /// 前置条件：base_url、token、model 已通过配置解析且非空，wire_api 可为空。
 /// 后置结果：按 wire_api 选择 Responses 或 Chat Completions 端点，并返回原始 HTTP 结果。
 /// 副作用：会消耗一次极小的模型请求；不做端点自动降级，避免把模型错误误判成协议 fallback。
+fn codex_model_test_uses_chat(wire_api: Option<&str>, provider_name: &str) -> bool {
+    let provider_hint = provider_name.trim().to_ascii_lowercase();
+    wire_api
+        .map(|value| value.to_ascii_lowercase())
+        .is_some_and(|value| value.contains("chat"))
+        || provider_hint.contains("sub2api")
+        || provider_hint == "any"
+        || provider_hint.starts_with("any ")
+        || provider_hint.starts_with("any-")
+        || provider_hint.starts_with("any_")
+}
+
 async fn post_codex_model_test(
     client: &reqwest::Client,
     base_url: &str,
     token: &str,
     model: &str,
     wire_api: Option<&str>,
+    provider_name: &str,
 ) -> Result<(u16, String), String> {
-    let is_chat = wire_api
-        .map(|value| value.to_ascii_lowercase())
-        .is_some_and(|value| value.contains("chat"));
+    // cc-switch 中的 Any 与 Sub2API 供应商通常是 Chat Completions 兼容代理，
+    // 即使其配置未声明 wire_api，也不能按 Codex Responses 请求探测。
+    let is_chat = codex_model_test_uses_chat(wire_api, provider_name);
     let (url, body) = if is_chat {
         (
             endpoint_url(base_url, "v1/chat/completions"),
@@ -834,6 +847,7 @@ pub async fn ccswitch_test_provider_model(
                 &runtime.secret_value,
                 model,
                 runtime.wire_api.as_deref(),
+                &runtime.provider_name,
             )
             .await
         }
@@ -2669,6 +2683,18 @@ enabled = true"#,
         assert!(runtime.profile_text.contains("model = \"gpt-5.4\""));
         assert!(!runtime.profile_text.contains("sk-codex-secret"));
         assert_eq!(runtime.secret_value, "sk-codex-secret");
+    }
+
+    #[test]
+    fn codex_model_test_uses_chat_for_any_and_sub2api() {
+        assert!(codex_model_test_uses_chat(None, "any"));
+        assert!(codex_model_test_uses_chat(Some("responses"), "Any Proxy"));
+        assert!(codex_model_test_uses_chat(None, "Sub2API"));
+        assert!(!codex_model_test_uses_chat(Some("responses"), "OpenAI"));
+        assert!(codex_model_test_uses_chat(
+            Some("chat_completions"),
+            "OpenAI"
+        ));
     }
 
     #[test]
