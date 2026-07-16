@@ -1,7 +1,6 @@
 import {
   useRef,
   type Dispatch,
-  type MutableRefObject,
   type RefObject,
   type SetStateAction,
 } from "react";
@@ -31,21 +30,27 @@ import {
   getTerminalInputSuggestionAiResult,
   getTerminalPathInputSuggestions,
   mergeTerminalInputSuggestions,
+  resolveSubmittedDirectoryChange,
   type TerminalInputSuggestion,
   type TerminalInputSuggestionContext,
 } from "../lib/terminalInputSuggestions";
-import { buildFastCursorMoveSequence } from "../lib/terminalCursorMovement";
+import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import { trimTerminalPasteBoundaryLineBreaks } from "../lib/terminalKeyboard";
+import { attachTerminalIme } from "../lib/terminalIme";
 import {
   clampTextCursorIndex,
   getTextCursorLength,
+  insertTextAtCursor,
+  removeTextAtCursor,
+  removeTextBeforeCursor,
   repeatControlSequence,
   sliceTextByCursor,
 } from "../lib/terminalTextEditing";
 import { TUI_BORDER_CHAR_PATTERN, TUI_COMPOSER_PROMPT_PATTERN } from "../lib/terminalTui";
 import { logError } from "../lib/logger";
 import { defaultShellForOs } from "../lib/shell";
+import type { OsPlatform } from "../lib/shell";
 import { formatShellPathList, joinLocalPath, normalizeShellForKnownOs } from "../lib/terminalShellPath";
 import type { CommandHistoryEntry, CommandTemplate, TerminalSession } from "../lib/types";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
@@ -57,6 +62,7 @@ import { useTerminalStore } from "../stores/terminalStore";
 const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
 const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
+const IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS = 80;
 
 export interface TerminalSuggestionGhostState {
   suffix: string;
@@ -77,9 +83,7 @@ interface UseTerminalInputOptions {
   containerRef: RefObject<HTMLDivElement | null>;
   isActiveRef: RefObject<boolean>;
   isVisibleRef: RefObject<boolean>;
-  isComposingRef: RefObject<boolean>;
   fontSize: number;
-  getInput: () => string;
   canShowSuggestionAtCurrentInputEnd: (terminal: Terminal, input: string) => boolean;
   getTerminalRenderedCellSize: (terminal: Terminal, container: HTMLElement, fallbackFontSize: number) => TerminalCellSize;
   setSuggestionGhost: Dispatch<SetStateAction<TerminalSuggestionGhostState | null>>;
@@ -95,11 +99,31 @@ interface SuggestionContextCache {
 }
 
 interface TerminalInputSelectionOptions {
-  inputBuffer: MutableRefObject<string>;
-  inputCursorIndexRef: MutableRefObject<number>;
   markAttentionInputHandled: () => void;
   reportPtyWriteError: (stage: string, err: unknown) => void;
-  enableClickCursorPositioning: boolean;
+}
+
+export type TerminalInputSource = "onData" | "nativeTextInput";
+
+interface TerminalInputForwardingOptions {
+  selection: TerminalInputSelectionController;
+  osPlatformRef: RefObject<OsPlatform>;
+  markAttentionInputHandled: () => void;
+  reportPtyWriteError: (stage: string, err: unknown) => void;
+  updateSessionCwdIfChanged: (cwd: string | null) => void;
+  onInputForwarded: (data: string) => void;
+}
+
+export interface TerminalInputForwardingController {
+  dispose: () => void;
+  forwardTerminalInput: (data: string, source: TerminalInputSource) => void;
+}
+
+interface TerminalInputImeOptions {
+  forwarding: TerminalInputForwardingController;
+  osPlatformRef: RefObject<OsPlatform>;
+  scheduleFit: (force?: boolean) => void;
+  onCompositionCommitted: (textareaValue: string) => void;
 }
 
 export interface TerminalInputSelectionController {
@@ -115,7 +139,12 @@ export interface TerminalInputSelectionController {
 }
 
 export interface UseTerminalInputResult {
-  attachSuggestions: (terminal: Terminal, forwardSuggestionInput: (data: string) => void) => () => void;
+  isComposingRef: RefObject<boolean>;
+  attachInputForwarding: (
+    terminal: Terminal,
+    options: TerminalInputForwardingOptions,
+  ) => TerminalInputForwardingController;
+  attachIme: (terminal: Terminal, options: TerminalInputImeOptions) => () => void;
   clearSuggestion: () => void;
   cancelAiSuggestionRefresh: () => void;
   scheduleSuggestionRefresh: () => void;
@@ -136,15 +165,17 @@ export function useTerminalInput({
   containerRef,
   isActiveRef,
   isVisibleRef,
-  isComposingRef,
   fontSize,
-  getInput,
   canShowSuggestionAtCurrentInputEnd,
   getTerminalRenderedCellSize,
   setSuggestionGhost,
   getOsPlatformForPathQuoting,
   cleanupExpiredAttachmentsOnce,
 }: UseTerminalInputOptions): UseTerminalInputResult {
+  const inputBufferRef = useRef("");
+  const inputCursorIndexRef = useRef(0);
+  // Input owns this ref. Display reads it only to suppress fit during composition.
+  const isComposingRef = useRef(false);
   const suggestionRef = useRef<TerminalInputSuggestion | null>(null);
   const suggestionRequestIdRef = useRef(0);
   const suggestionRefreshTimerIdRef = useRef<number | null>(null);
@@ -163,6 +194,7 @@ export function useTerminalInput({
   const scheduleSuggestionRefreshRef = useRef<() => void>(() => {});
   const updateSuggestionGhostPositionRef = useRef<() => void>(() => {});
   const acceptSuggestionRef = useRef<() => boolean>(() => false);
+  const getInput = () => inputBufferRef.current;
 
   const resetSuggestionState = () => {
     const generation = attachmentGenerationRef.current + 1;
@@ -189,14 +221,86 @@ export function useTerminalInput({
     return generation;
   };
 
+  const updateInputBufferFromTerminalData = (
+    data: string,
+    updateSessionCwdIfChanged: (cwd: string | null) => void,
+  ) => {
+    if (data === "\r") {
+      const command = inputBufferRef.current;
+      if (command.trim()) {
+        const submittedCwd = useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.cwd ?? null;
+        void resolveSubmittedDirectoryChange(command, submittedCwd)
+          .then((cwd) => updateSessionCwdIfChanged(cwd))
+          .catch(() => {});
+        useTerminalStore.getState().handleShellRuntimeEvent({
+          sessionId,
+          event: "command_started",
+          origin: "input",
+        });
+      }
+      inputBufferRef.current = "";
+      inputCursorIndexRef.current = 0;
+      cancelAiSuggestionRefreshRef.current();
+      clearSuggestionRef.current();
+      return;
+    }
+
+    if (data === "\x7f" || data === "\b") {
+      const next = removeTextBeforeCursor(inputBufferRef.current, inputCursorIndexRef.current);
+      inputBufferRef.current = next.text;
+      inputCursorIndexRef.current = next.cursorIndex;
+      scheduleSuggestionRefreshRef.current();
+      return;
+    }
+
+    if (data.length === 1 && data.charCodeAt(0) >= 32) {
+      const cursorIndex = clampTextCursorIndex(inputBufferRef.current, inputCursorIndexRef.current);
+      inputBufferRef.current = insertTextAtCursor(inputBufferRef.current, cursorIndex, data);
+      inputCursorIndexRef.current = cursorIndex + getTextCursorLength(data);
+      scheduleSuggestionRefreshRef.current();
+      return;
+    }
+
+    if (data.length > 1) {
+      const pastedText = data.replace(/^\x1b\[200~/, "").replace(/\x1b\[201~$/, "");
+      if (!pastedText.startsWith("\x1b")) {
+        const normalizedPaste = pastedText.replace(/\r\n?/g, "\n");
+        const cursorIndex = clampTextCursorIndex(inputBufferRef.current, inputCursorIndexRef.current);
+        inputBufferRef.current = insertTextAtCursor(inputBufferRef.current, cursorIndex, normalizedPaste);
+        inputCursorIndexRef.current = cursorIndex + getTextCursorLength(normalizedPaste);
+        scheduleSuggestionRefreshRef.current();
+        return;
+      }
+      if (data === "\x1b[D" || data === "\x1bOD") {
+        inputCursorIndexRef.current = clampTextCursorIndex(inputBufferRef.current, inputCursorIndexRef.current - 1);
+        cancelAiSuggestionRefreshRef.current();
+        clearSuggestionRef.current();
+        return;
+      }
+      if (data === "\x1b[C" || data === "\x1bOC") {
+        inputCursorIndexRef.current = clampTextCursorIndex(inputBufferRef.current, inputCursorIndexRef.current + 1);
+        cancelAiSuggestionRefreshRef.current();
+        clearSuggestionRef.current();
+        return;
+      }
+      if (data === "\x1b[3~") {
+        const next = removeTextAtCursor(inputBufferRef.current, inputCursorIndexRef.current);
+        inputBufferRef.current = next.text;
+        inputCursorIndexRef.current = next.cursorIndex;
+        scheduleSuggestionRefreshRef.current();
+        return;
+      }
+    }
+
+    cancelAiSuggestionRefreshRef.current();
+    clearSuggestionRef.current();
+  };
+
   const attachSelection = (
     terminal: Terminal,
     {
-      inputBuffer,
-      inputCursorIndexRef,
       markAttentionInputHandled,
       reportPtyWriteError,
-      enableClickCursorPositioning,
     }: TerminalInputSelectionOptions,
   ): TerminalInputSelectionController => {
     let selectedInputSnapshot: string | null = null;
@@ -221,7 +325,7 @@ export function useTerminalInput({
 
     // Ctrl+U only deletes before the cursor, so move to the tracked input end first.
     const buildKillCurrentInputSequence = () => {
-      const currentInput = inputBuffer.current;
+      const currentInput = inputBufferRef.current;
       const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
       const moveToEnd = repeatControlSequence(
         "\x1b[C",
@@ -241,7 +345,7 @@ export function useTerminalInput({
         "\x1b[D",
         getTextCursorLength(nextInput) - nextCursorIndex,
       );
-      inputBuffer.current = nextInput;
+      inputBufferRef.current = nextInput;
       inputCursorIndexRef.current = nextCursorIndex;
       terminal.clearSelection();
       clearInputSelectionState();
@@ -261,7 +365,7 @@ export function useTerminalInput({
     const consumeSelectedInputForReplacement = (data: string) => {
       if (
         !selectedInputSnapshot
-        || selectedInputSnapshot !== inputBuffer.current
+        || selectedInputSnapshot !== inputBufferRef.current
         || !terminal.hasSelection()
         || !isReplaceableInputData(data)
       ) {
@@ -269,7 +373,7 @@ export function useTerminalInput({
       }
 
       const killCurrentInput = buildKillCurrentInputSequence();
-      inputBuffer.current = "";
+      inputBufferRef.current = "";
       inputCursorIndexRef.current = 0;
       clearSelectedInputSnapshot();
       terminal.clearSelection();
@@ -345,7 +449,7 @@ export function useTerminalInput({
     };
 
     const selectCurrentInputText = () => {
-      const currentInput = inputBuffer.current;
+      const currentInput = inputBufferRef.current;
       clearKeyboardInputSelection();
       selectedInputSnapshot = currentInput || null;
       terminal.clearSelection();
@@ -400,7 +504,7 @@ export function useTerminalInput({
     };
 
     const extendKeyboardInputSelection = (direction: -1 | 1) => {
-      const currentInput = inputBuffer.current;
+      const currentInput = inputBufferRef.current;
       const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
       const targetCursorIndex = clampTextCursorIndex(currentInput, currentCursorIndex + direction);
       if (!currentInput || targetCursorIndex === currentCursorIndex) {
@@ -441,7 +545,7 @@ export function useTerminalInput({
         return false;
       }
 
-      const currentCursorIndex = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current);
+      const currentCursorIndex = clampTextCursorIndex(inputBufferRef.current, inputCursorIndexRef.current);
       const targetCursorIndex = direction < 0 ? startIndex : endIndex;
       const delta = targetCursorIndex - currentCursorIndex;
       const data = delta > 0
@@ -463,7 +567,7 @@ export function useTerminalInput({
 
     const removeSelectedInputText = () => {
       const selectedText = terminal.getSelection();
-      const currentInput = inputBuffer.current;
+      const currentInput = inputBufferRef.current;
       const findSelectedTextRange = (preferredStartIndex?: number) => {
         if (!selectedText || !currentInput) return null;
         const candidates = [
@@ -579,96 +683,11 @@ export function useTerminalInput({
     };
     contextMenuTarget?.addEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
 
-    const moveInputCursorToClick = (event: MouseEvent) => {
-      if (
-        event.defaultPrevented
-        || event.button !== 0
-        || event.detail !== 1
-        || event.shiftKey
-        || event.ctrlKey
-        || event.altKey
-        || event.metaKey
-        || isComposingRef.current
-        || terminal.hasSelection()
-      ) {
-        return;
-      }
 
-      const currentInput = inputBuffer.current;
-      if (!currentInput) return;
-
-      const terminalContainer = containerRef.current;
-      const screen = terminalContainer?.querySelector(".xterm-screen") as HTMLElement | null;
-      if (!terminalContainer || !screen) return;
-
-      const screenRect = screen.getBoundingClientRect();
-      if (
-        event.clientX < screenRect.left
-        || event.clientX > screenRect.right
-        || event.clientY < screenRect.top
-        || event.clientY > screenRect.bottom
-      ) {
-        return;
-      }
-
-      const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fontSize);
-      const clickColumn = Math.min(
-        Math.max(0, Math.floor((event.clientX - screenRect.left) / Math.max(1, cell.width))),
-        Math.max(0, terminal.cols),
-      );
-      const clickRow = Math.min(
-        Math.max(0, Math.floor((event.clientY - screenRect.top) / Math.max(1, cell.height))),
-        Math.max(0, terminal.rows - 1),
-      );
-
-      const buffer = terminal.buffer.active;
-      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      const cursorPrefixWidth = getTerminalCellWidth(sliceTextByCursor(currentInput, 0, currentCursorIndex));
-      const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      const inputStartCellIndex = cursorCellIndex - cursorPrefixWidth;
-      const inputEndCellIndex = inputStartCellIndex + getTerminalCellWidth(currentInput);
-      const clickCellIndex = ((buffer.viewportY + clickRow) * terminal.cols) + clickColumn;
-      const inputStartRow = Math.floor(inputStartCellIndex / terminal.cols);
-      const inputEndRow = Math.floor(inputEndCellIndex / terminal.cols);
-      const clickRowAbsolute = buffer.viewportY + clickRow;
-      if (clickRowAbsolute < inputStartRow || clickRowAbsolute > inputEndRow) return;
-
-      const targetCellOffset = Math.min(
-        Math.max(0, clickCellIndex - inputStartCellIndex),
-        Math.max(0, inputEndCellIndex - inputStartCellIndex),
-      );
-      const targetCursorIndex = resolveCursorIndexFromCellOffset(currentInput, targetCellOffset);
-      const data = buildFastCursorMoveSequence(
-        currentCursorIndex,
-        targetCursorIndex,
-        getTextCursorLength(currentInput),
-        !/[\r\n]/.test(currentInput),
-        terminal.modes.applicationCursorKeysMode,
-      );
-      if (!data) {
-        terminal.focus();
-        return;
-      }
-
-      inputCursorIndexRef.current = targetCursorIndex;
-      clearInputSelectionState();
-      clearSuggestion();
-      cancelAiSuggestionRefresh();
-      markAttentionInputHandled();
-      invoke("pty_write", { sessionId, data })
-        .catch((err) => reportPtyWriteError("click_cursor", err));
-      terminal.focus();
-    };
-    if (enableClickCursorPositioning) {
-      contextMenuTarget?.addEventListener("click", moveInputCursorToClick);
-    }
 
     return {
       dispose: () => {
         contextMenuTarget?.removeEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
-        if (enableClickCursorPositioning) {
-          contextMenuTarget?.removeEventListener("click", moveInputCursorToClick);
-        }
         clearInputSelectionState();
       },
       clearInputSelectionState,
@@ -680,6 +699,102 @@ export function useTerminalInput({
       removeSelectedInputText,
       consumeSelectedInputForReplacement,
     };
+  };
+
+  const attachInputForwarding = (
+    terminal: Terminal,
+    {
+      selection,
+      osPlatformRef,
+      markAttentionInputHandled,
+      reportPtyWriteError,
+      updateSessionCwdIfChanged,
+      onInputForwarded,
+    }: TerminalInputForwardingOptions,
+  ): TerminalInputForwardingController => {
+    let lastForwardedTerminalInput: { data: string; source: TerminalInputSource; at: number } | null = null;
+    const isImeDuplicateCandidate = (data: string) => {
+      if (!data || data === "\r" || data === "\x7f" || data === "\b" || data.startsWith("\x1b")) return false;
+      const normalized = data.replace(/\r\n?/g, "\n");
+      return Boolean(normalized.trim()) && /[^\x00-\x7f]/.test(normalized);
+    };
+    const shouldDropCrossSourceImeDuplicate = (data: string, source: TerminalInputSource, now: number) => {
+      if (!isImeDuplicateCandidate(data) || !lastForwardedTerminalInput) return false;
+      const deltaMs = now - lastForwardedTerminalInput.at;
+      return (
+        lastForwardedTerminalInput.source !== source
+        && lastForwardedTerminalInput.data === data
+        && deltaMs >= 0
+        && deltaMs <= IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS
+      );
+    };
+    const forwardTerminalInput = (data: string, source: TerminalInputSource) => {
+      const now = performance.now();
+      if (shouldDropCrossSourceImeDuplicate(data, source, now)) return;
+
+      markAttentionInputHandled();
+      const replacingSelectedInput = selection.consumeSelectedInputForReplacement(data);
+      if (!replacingSelectedInput) {
+        selection.clearSelectedInputSnapshot();
+      }
+      selection.clearKeyboardInputSelection();
+      const inputBufferBefore = getInput();
+      const manualDirectCodexOverride = resolveManualDirectCodexEnterData({
+        data,
+        inputBuffer: inputBufferBefore,
+        os: osPlatformRef.current,
+      });
+      const ptyData = manualDirectCodexOverride ?? data;
+      lastForwardedTerminalInput = { data, source, at: now };
+      invoke("pty_write", {
+        sessionId,
+        data: replacingSelectedInput ? replacingSelectedInput + ptyData : ptyData,
+      }).catch((err) => reportPtyWriteError(source, err));
+      onInputForwarded(data);
+      updateInputBufferFromTerminalData(data, updateSessionCwdIfChanged);
+    };
+
+    const detachInputSuggestions = attachSuggestions(terminal, (data) => {
+      forwardTerminalInput(data, "onData");
+    });
+    const onDataDisposable = terminal.onData((data) => {
+      forwardTerminalInput(data, "onData");
+    });
+
+    return {
+      dispose: () => {
+        detachInputSuggestions();
+        onDataDisposable.dispose();
+      },
+      forwardTerminalInput,
+    };
+  };
+
+  const attachIme = (
+    terminal: Terminal,
+    {
+      forwarding,
+      osPlatformRef,
+      scheduleFit,
+      onCompositionCommitted,
+    }: TerminalInputImeOptions,
+  ) => {
+    const container = containerRef.current;
+    if (!container) return () => {};
+    return attachTerminalIme({
+      terminal,
+      container,
+      isActiveRef,
+      isComposingRef,
+      osPlatformRef,
+      fontSize,
+      getTerminalRenderedCellSize,
+      forwardNativeInput: (data) => forwarding.forwardTerminalInput(data, "nativeTextInput"),
+      clearSuggestion: () => clearSuggestionRef.current(),
+      updateSuggestionPosition: () => updateSuggestionGhostPositionRef.current(),
+      scheduleFit,
+      onCompositionCommitted,
+    });
   };
 
   const attachSuggestions = (terminal: Terminal, forwardSuggestionInput: (data: string) => void) => {
@@ -775,14 +890,14 @@ export function useTerminalInput({
         suggestionTemplatesLoadedRef.current = true;
         await templateStore.fetchTemplates().catch(() => {});
       }
-      const [history, templates] = await Promise.all([
-        useCommandHistoryStore.getState().getRecent(null, 120),
-        Promise.resolve(useTemplateStore.getState().getForContext(projectId, sessionId)),
-      ]);
+        const [history, templates] = await Promise.all([
+          useCommandHistoryStore.getState().getRecent(null, 120),
+          Promise.resolve(useTemplateStore.getState().getForContext(projectId, sessionId)),
+        ]);
       const context = {
         loadedAt: Date.now(),
-        projectId,
-        history,
+          projectId,
+          history,
         templates,
       };
       suggestionContextCacheRef.current = context;
@@ -801,9 +916,9 @@ export function useTerminalInput({
         projectId: session?.projectId ?? null,
         cwd: session?.cwd ?? null,
         shell: session?.shell ?? null,
-        sessionId,
-        previousCommand: lastSubmittedCommandRef.current,
-        history,
+          sessionId,
+          previousCommand: lastSubmittedCommandRef.current,
+          history,
         templates,
         provider: settings.terminalInputSuggestionProvider,
         model: TERMINAL_INPUT_SUGGESTION_AI_MODEL,
@@ -1118,7 +1233,9 @@ export function useTerminalInput({
   };
 
   return {
-    attachSuggestions,
+    isComposingRef,
+    attachInputForwarding,
+    attachIme,
     clearSuggestion: () => clearSuggestionRef.current(),
     cancelAiSuggestionRefresh: () => cancelAiSuggestionRefreshRef.current(),
     scheduleSuggestionRefresh: () => scheduleSuggestionRefreshRef.current(),
