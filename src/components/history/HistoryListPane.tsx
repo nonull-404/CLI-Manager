@@ -2,11 +2,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, MessageSquare, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistoryIndexStatus, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
-import { useI18n, type TranslationKey } from "../../lib/i18n";
+import { useI18n } from "../../lib/i18n";
+import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
 import { findWorktreeByPath } from "../../lib/terminalProject";
 import { useWorktreeStore } from "../../stores/worktreeStore";
 import { VendorIcon, inferVendor, type VendorKey } from "../VendorIcon";
 import { Portal } from "../ui/Portal";
+import { Select } from "../ui/select";
 import { buildHistorySessionChildMap, formatTime } from "./historyViewUtils";
 
 interface SessionGroup {
@@ -81,6 +83,7 @@ interface HistoryListPaneProps {
   onToggleSessionSelection: (sessionKey: string) => void;
   onOpenSession: (sessionKey: string) => void;
   onResumeSession: (session: HistorySessionView) => void;
+  canConvertSession: (session: HistorySessionView) => boolean;
   onConvertSession: (session: HistorySessionView) => void;
   onDeleteSession: (session: HistorySessionView) => void;
   onDeleteSelected: () => void;
@@ -89,12 +92,6 @@ interface HistoryListPaneProps {
   onSessionListScroll: () => void;
   onStartResize: (e: ReactMouseEvent) => void;
 }
-
-const SOURCE_FILTER_OPTIONS: { value: HistorySourceFilter; labelKey?: TranslationKey; label?: string }[] = [
-  { value: "all", labelKey: "history.filter.all" },
-  { value: "claude", label: "Claude" },
-  { value: "codex", label: "Codex" },
-];
 
 function rowHeight(row: HistoryListRow): number {
   if (row.type === "group" || row.type === "searchHeader" || row.type === "searching") return 32;
@@ -333,6 +330,7 @@ export function HistoryListPane({
   onToggleSessionSelection,
   onOpenSession,
   onResumeSession,
+  canConvertSession,
   onConvertSession,
   onDeleteSession,
   onDeleteSelected,
@@ -385,7 +383,8 @@ export function HistoryListPane({
   }, [projectPathFilter, selectedProject, t]);
 
   const emptySessionCopy = useMemo(() => {
-    const sourceLabel = sourceFilter === "all" ? "Claude/Codex" : sourceFilter === "claude" ? "Claude" : "Codex";
+    const sourceDescriptor = sourceFilter === "all" ? null : HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(sourceFilter);
+    const sourceLabel = sourceDescriptor ? t(sourceDescriptor.labelKey) : t("common.allSources");
     if (normalizedGlobal) {
       return {
         title: t("history.empty.noMatchesTitle"),
@@ -608,27 +607,20 @@ export function HistoryListPane({
     >
       <div className="ui-history-sidebar-top p-3">
         <div className="flex items-center gap-2">
-          <div className="grid min-w-0 flex-1 grid-cols-[0.7fr_1.3fr_1fr] gap-1 rounded-xl border border-border/60 bg-surface-container-lowest p-1">
-            {SOURCE_FILTER_OPTIONS.map((option) => {
-              const active = sourceFilter === option.value;
-              const label = option.labelKey ? t(option.labelKey) : option.label ?? "";
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => onSourceFilterChange(option.value)}
-                  className="ui-focus-ring flex h-8 min-w-0 items-center justify-center rounded-lg px-1 text-[11px] font-semibold leading-none transition-colors"
-                  style={{
-                    backgroundColor: active ? "var(--interactive-selected-bg)" : "transparent",
-                    color: active ? "var(--on-surface)" : "var(--text-muted)",
-                  }}
-                  aria-pressed={active}
-                  title={label}
-                >
-                  <span className="min-w-0 truncate whitespace-nowrap">{label}</span>
-                </button>
-              );
-            })}
+          <div className="min-w-0 flex-1 rounded-xl border border-border/60 bg-surface-container-lowest p-1">
+            <Select
+              value={sourceFilter}
+              onChange={(event) => onSourceFilterChange(event.target.value as HistorySourceFilter)}
+              aria-label={t("history.filter.source")}
+              className="h-8 min-w-0 border-0 bg-transparent px-2 text-[11px] font-semibold shadow-none"
+            >
+              <option value="all">{t("history.filter.all")}</option>
+              {HISTORY_SOURCE_DESCRIPTORS.map((descriptor) => (
+                <option key={descriptor.id} value={descriptor.id}>
+                  {t(descriptor.labelKey)}
+                </option>
+              ))}
+            </Select>
           </div>
 
           <button
@@ -1062,14 +1054,16 @@ export function HistoryListPane({
               <RefreshCw size={13} aria-hidden="true" />
               <span>{t("history.menu.resumeInTerminal")}</span>
             </button>
-            <button className="context-menu-item" role="menuitem" onClick={handleContextMenuConvert}>
-              <ArrowRightLeft size={13} aria-hidden="true" />
-              <span>
-                {contextMenu.session.source === "claude"
-                  ? t("history.menu.convertToCodex")
-                  : t("history.menu.convertToClaude")}
-              </span>
-            </button>
+            {canConvertSession(contextMenu.session) ? (
+              <button className="context-menu-item" role="menuitem" onClick={handleContextMenuConvert}>
+                <ArrowRightLeft size={13} aria-hidden="true" />
+                <span>
+                  {contextMenu.session.source === "claude"
+                    ? t("history.menu.convertToCodex")
+                    : t("history.menu.convertToClaude")}
+                </span>
+              </button>
+            ) : null}
             <button className="context-menu-item danger" role="menuitem" onClick={handleContextMenuDelete}>
               <Trash2 size={13} aria-hidden="true" />
               <span>{t("common.delete")}</span>

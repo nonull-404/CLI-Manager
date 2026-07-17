@@ -63,6 +63,7 @@ type LastSettingsTab =
   | "model-pricing"
   | "cc-connect"
   | "sync"
+  | "history-sources"
   | "hooks"
   | "statusline"
   | "command-suggestions"
@@ -544,6 +545,7 @@ const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "model-pricing",
   "cc-connect",
   "sync",
+  "history-sources",
   "hooks",
   "statusline",
   "command-suggestions",

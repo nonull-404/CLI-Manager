@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDb } from "../lib/db";
 import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
-import { useSettingsStore } from "./settingsStore";
+import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs, getHistoryPathArgsSync } from "../lib/historyPathArgs";
 import type {
   HistoryBackupStatus,
   HistoryEditAuditEntry,
@@ -638,17 +638,9 @@ function normalizeStatsProjectOptions(raw: unknown): string[] {
   return Array.from(projectSet).sort((a, b) => a.localeCompare(b));
 }
 
-function normalizeSourceFilter(filter: HistorySourceFilter): HistorySource | null {
+function normalizeSourceFilter(filter: HistorySourceFilter): Exclude<HistorySourceFilter, "all"> | null {
   if (filter === "all") return null;
   return filter;
-}
-
-function getHistoryPathArgs(): { claudeConfigDir: string | null; codexConfigDir: string | null } {
-  const settings = useSettingsStore.getState();
-  return {
-    claudeConfigDir: settings.claudeHookConfigDir?.trim() || null,
-    codexConfigDir: settings.codexHookConfigDir?.trim() || null,
-  };
 }
 
 export interface TodayProjectStats {
@@ -675,7 +667,7 @@ export interface FetchHistoryStatsOptions {
 export async function fetchHistoryStatsProjectOptions(sourceFilter: HistorySourceFilter): Promise<string[]> {
   const raw = await invoke<unknown>("history_list_stats_projects", {
     source: normalizeSourceFilter(sourceFilter),
-    ...getHistoryPathArgs(),
+    ...(await getHistoryPathArgs()),
   });
   return normalizeStatsProjectOptions(raw);
 }
@@ -689,7 +681,7 @@ export async function fetchHistoryStatsPayload(options: FetchHistoryStatsOptions
   const force = options.force ?? false;
   const raw = await invoke<unknown>("history_get_stats", {
     source: normalizeSourceFilter(options.sourceFilter),
-    ...getHistoryPathArgs(),
+    ...(await getHistoryPathArgs()),
     projectKey,
     projectPath,
     rangeDays,
@@ -721,7 +713,7 @@ export async function fetchLatestProjectSessionDetail(
     const loadSummary = async (query: string | null): Promise<HistorySessionSummary | null> => {
       const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
         source: source ?? null,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         projectPath,
         query,
         limit: 1,
@@ -771,7 +763,7 @@ export async function fetchLatestProjectSessionDetail(
     }
     const detailRaw = await invoke<unknown>("history_get_session", {
       filePath: summary.file_path,
-      ...getHistoryPathArgs(),
+      ...(await getHistoryPathArgs()),
       source: summary.source,
       projectKey: summary.project_key,
       aggregateSubtasks: true,
@@ -803,7 +795,7 @@ export async function fetchLatestProjectSessionDetail(
 export async function fetchDiscoveredModels(): Promise<string[]> {
   const raw = await invoke<unknown>("history_get_stats", {
     source: null,
-    ...getHistoryPathArgs(),
+    ...(await getHistoryPathArgs()),
     projectKey: null,
     rangeDays: null,
     startAt: null,
@@ -826,7 +818,7 @@ export async function fetchTodayProjectStats(
   try {
     const raw = await invoke<unknown>("history_get_stats", {
       source: source ?? null,
-      ...getHistoryPathArgs(),
+      ...(await getHistoryPathArgs()),
       projectKey: projectPath ? null : projectKey,
       projectPath: projectPath ?? null,
       rangeDays: null,
@@ -855,7 +847,7 @@ export async function fetchTodayProjectStats(
 }
 
 function getHistoryPathCacheKey(): string {
-  const { claudeConfigDir, codexConfigDir } = getHistoryPathArgs();
+  const { claudeConfigDir, codexConfigDir } = getHistoryPathArgsSync();
   return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}`;
 }
 
@@ -1293,7 +1285,7 @@ async function loadDetailForSnapshot(sessionKey: string, session: HistorySession
   }
   const detailRaw = await invoke<unknown>("history_get_session", {
     filePath: session.file_path,
-    ...getHistoryPathArgs(),
+    ...(await getHistoryPathArgs()),
     source: session.source,
     projectKey: session.project_key,
   });
@@ -1538,7 +1530,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       await get().ensureMetaTable();
       const source = normalizeSourceFilter(get().sourceFilter);
-      const historyPathArgs = getHistoryPathArgs();
+      const historyPathArgs = await getHistoryPathArgs();
       const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
         source,
         ...historyPathArgs,
@@ -1591,7 +1583,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       await get().ensureMetaTable();
       const source = normalizeSourceFilter(get().sourceFilter);
-      const historyPathArgs = getHistoryPathArgs();
+      const historyPathArgs = await getHistoryPathArgs();
       const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
         source,
         ...historyPathArgs,
@@ -1633,7 +1625,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
   loadIndexStatus: async () => {
     try {
-      const raw = await invoke<unknown>("history_get_index_status", getHistoryPathArgs());
+      const raw = await invoke<unknown>("history_get_index_status", await getHistoryPathArgs());
       set({ indexStatus: normalizeIndexStatus(raw) });
     } catch (error) {
       logWarn("history.index.statusFailed", { error: String(error) });
@@ -1651,7 +1643,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   refreshIndex: async () => {
     await ensureHistoryIndexListener();
     const raw = await invoke<unknown>("history_refresh_index", {
-      ...getHistoryPathArgs(),
+      ...(await getHistoryPathArgs()),
       wait: true,
     });
     if (historyIndexReadyRefreshTimer !== null) {
@@ -1701,7 +1693,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       try {
         const detailRaw = await invoke<unknown>("history_get_session", {
           filePath: target.file_path,
-          ...getHistoryPathArgs(),
+          ...(await getHistoryPathArgs()),
           source: target.source,
           projectKey: target.project_key,
         });
@@ -1728,7 +1720,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       const detailRaw = await invoke<unknown>("history_get_session", {
         filePath: hit.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: hit.source,
         projectKey: hit.project_key,
       });
@@ -1771,7 +1763,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     if (!target.favoriteSnapshot) {
       await invoke("history_delete_session", {
         filePath: target.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: target.source,
         projectKey: target.project_key,
       });
@@ -1823,7 +1815,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const hitsRaw = await invoke<unknown[]>("history_search", {
         query: normalized,
         source,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         projectPath: effectiveProjectPathFilter(get()),
         limit: DEFAULT_SEARCH_LIMIT,
       });
@@ -1866,7 +1858,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const promptsRaw = await invoke<unknown[]>("history_list_prompts", {
         scope,
         source,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         query: query?.trim() || null,
         projectKey: projectKey?.trim() || null,
         filePath: session?.file_path ?? null,
@@ -1882,6 +1874,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   loadStatsProjectOptions: async (options) => {
     const force = options?.force ?? false;
     const sourceFilter = get().sourceFilter;
+    await ensureHistorySourceSettingsLoaded();
     const historyPathKey = getHistoryPathCacheKey();
     const cacheKey = makeStatsProjectOptionsCacheKey(sourceFilter, historyPathKey);
     const now = Date.now();
@@ -1923,6 +1916,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     const endAt = typeof options?.endAt === "number" && Number.isFinite(options.endAt) ? options.endAt : null;
     const force = options?.force ?? false;
     const sourceFilter = get().sourceFilter;
+    await ensureHistorySourceSettingsLoaded();
     const historyPathKey = getHistoryPathCacheKey();
     const timeKey = makeStatsTimeKey(rangeDays, startAt, endAt);
     const cacheKey = makeStatsCacheKey(sourceFilter, projectKey, projectPath, timeKey, historyPathKey);
@@ -2134,7 +2128,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       const raw = await invoke<unknown>("history_update_message", {
         filePath: active.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: active.source,
         projectKey: active.project_key,
         lineIndex,
@@ -2162,7 +2156,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       const raw = await invoke<unknown>("history_delete_message", {
         filePath: active.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: active.source,
         projectKey: active.project_key,
         lineIndex,
@@ -2193,7 +2187,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       const raw = await invoke<unknown>("history_delete_messages", {
         filePath: active.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: active.source,
         projectKey: active.project_key,
         targets,
@@ -2230,7 +2224,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       const raw = await invoke<unknown>("history_insert_message", {
         filePath: active.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: active.source,
         projectKey: active.project_key,
         afterLineIndex: lineIndex,
@@ -2256,7 +2250,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     try {
       const raw = await invoke<unknown>("history_reinsert_message", {
         filePath: active.file_path,
-        ...getHistoryPathArgs(),
+        ...(await getHistoryPathArgs()),
         source: active.source,
         projectKey: active.project_key,
         lineIndexHint,
@@ -2281,7 +2275,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     const { target, active } = requireActiveEditContext(sessionKey);
     const raw = await invoke<unknown>("history_restore_session_backup", {
       filePath: active.file_path,
-      ...getHistoryPathArgs(),
+      ...(await getHistoryPathArgs()),
       source: active.source,
       projectKey: active.project_key,
     });
@@ -2299,7 +2293,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     const { active } = requireActiveEditContext(sessionKey);
     const raw = await invoke<unknown>("history_get_backup_status", {
       filePath: active.file_path,
-      ...getHistoryPathArgs(),
+      ...(await getHistoryPathArgs()),
       source: active.source,
       projectKey: active.project_key,
     });

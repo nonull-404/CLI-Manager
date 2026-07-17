@@ -1,3 +1,5 @@
+import type { HistorySourceId } from "./historySources";
+
 export interface Group {
   id: string;
   name: string;
@@ -235,8 +237,8 @@ export interface CommandHistoryEntry {
   executed_at: string;
 }
 
-export type HistorySource = "claude" | "codex";
-export type HistorySourceFilter = "all" | HistorySource;
+export type HistorySource = HistorySourceId;
+export type HistorySourceFilter = "all" | HistorySourceId;
 export type CcusageSource = "all" | "claude" | "codex";
 
 export interface HistorySessionSummary {

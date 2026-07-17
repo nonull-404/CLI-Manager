@@ -72,6 +72,7 @@ interface SessionDetailPaneProps {
   onOpenPrompt: () => void;
   onOpenDiff: (fileChanges?: HistoryFileChangeSummary[]) => void;
   onResumeSession: () => void;
+  canConvertSession: boolean;
   onConvertSession: () => void;
   onJumpToMessage: (messageIndex: number) => void;
   onToggleStar: () => void;
@@ -570,6 +571,7 @@ export function SessionDetailPane({
   onOpenPrompt,
   onOpenDiff,
   onResumeSession,
+  canConvertSession,
   onConvertSession,
   onJumpToMessage,
   onToggleStar,
@@ -794,17 +796,19 @@ export function SessionDetailPane({
               <Terminal size={12} />
               {t("history.detail.resume")}
             </button>
-            <button
-              onClick={onConvertSession}
-              disabled={loadingSessionDetail || !activeSession}
-              aria-label={activeView?.source === "claude" ? t("history.detail.convertToCodex") : t("history.detail.convertToClaude")}
-              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
-              style={{ color: "var(--accent)" }}
-              title={activeView?.source === "claude" ? t("history.detail.convertToCodexTitle") : t("history.detail.convertToClaudeTitle")}
-            >
-              <ArrowRightLeft size={12} />
-              {activeView?.source === "claude" ? t("history.detail.convertToCodexShort") : t("history.detail.convertToClaudeShort")}
-            </button>
+            {canConvertSession ? (
+              <button
+                onClick={onConvertSession}
+                disabled={loadingSessionDetail || !activeSession}
+                aria-label={activeView?.source === "claude" ? t("history.detail.convertToCodex") : t("history.detail.convertToClaude")}
+                className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+                style={{ color: "var(--accent)" }}
+                title={activeView?.source === "claude" ? t("history.detail.convertToCodexTitle") : t("history.detail.convertToClaudeTitle")}
+              >
+                <ArrowRightLeft size={12} />
+                {activeView?.source === "claude" ? t("history.detail.convertToCodexShort") : t("history.detail.convertToClaudeShort")}
+              </button>
+            ) : null}
             <button
               onClick={onOpenPrompt}
               aria-label={t("history.detail.openPrompt")}
