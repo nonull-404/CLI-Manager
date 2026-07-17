@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "07-14-history-backup-restore",
-    "07-17-history-parsers-implementation"
+    "07-17-history-parsers-implementation",
+    "07-17-history-v2-read-path"
   ],
   "parent": null,
   "relatedFiles": [],

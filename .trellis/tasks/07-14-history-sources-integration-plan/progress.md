@@ -13,6 +13,7 @@
 - [x] H2：shadow build 写入 v2 sessions/messages，并与旧链路对比。
 - [x] H2：删除检测、parser/model version 失效、失败记录。
 - [x] H3：登记 parser 分批 roadmap 和晋级门槛。
-- [ ] H3：Gemini、Kiro、OpenCode、Antigravity、Copilot、Grok、Pi、Cline、Cursor 真实 parser（迁移到新任务）。
+- [x] H3：Gemini、Kiro、OpenCode、Antigravity、Copilot、Grok、Pi、Cline、Cursor 真实 parser（已由 `07-17-history-parsers-implementation` 完成）。
+- [x] H6：v2 read path 分片迁移（已由 `07-17-history-v2-read-path` 完成）。
 - [ ] H4（部分完成）：备份恢复基础能力和部分 subagent 约束已落地；完整 mutation plan 尚未完成。
 - [ ] H5（部分完成）：转换矩阵已落地；除 Claude/Codex 外的目标 writer 尚未实现。

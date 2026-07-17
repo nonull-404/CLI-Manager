@@ -1,6 +1,6 @@
 use super::*;
 use log::{info, warn};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteRow, SqliteSynchronous};
 use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -985,7 +985,58 @@ fn push_project_filter(builder: &mut QueryBuilder<'_, Sqlite>, project_path: &st
     builder.push(")");
 }
 
-pub(super) async fn list_sessions(
+fn merge_fetch_limit(limit: Option<usize>, offset: Option<usize>) -> Option<usize> {
+    limit.map(|value| value.saturating_add(offset.unwrap_or(0)))
+}
+
+fn session_summary_from_row(row: SqliteRow) -> Result<HistorySessionSummary, String> {
+    Ok(HistorySessionSummary {
+        session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
+        source: row.try_get("source").map_err(|err| err.to_string())?,
+        project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
+        title: row.try_get("title").map_err(|err| err.to_string())?,
+        file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
+        cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
+        created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
+        updated_at: row.try_get("updated_at").map_err(|err| err.to_string())?,
+        message_count: row
+            .try_get::<i64, _>("message_count")
+            .map_err(|err| err.to_string())?
+            .max(0) as usize,
+        branch: row.try_get("branch").map_err(|err| err.to_string())?,
+    })
+}
+
+fn merge_session_summaries(
+    primary: Vec<HistorySessionSummary>,
+    fallback: Vec<HistorySessionSummary>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Vec<HistorySessionSummary> {
+    let mut seen = HashSet::new();
+    let mut sessions = Vec::new();
+    for session in primary.into_iter().chain(fallback) {
+        if seen.insert((session.source.clone(), session.file_path.clone())) {
+            sessions.push(session);
+        }
+    }
+    sessions.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.file_path.cmp(&right.file_path))
+    });
+    let offset = offset.unwrap_or(0);
+    let iter = sessions.into_iter().skip(offset);
+    if let Some(limit) = limit {
+        iter.take(limit).collect()
+    } else {
+        iter.collect()
+    }
+}
+
+async fn list_sessions_from_v2(
+    conn: &mut SqliteConnection,
     roots: &HistoryRoots,
     source: Option<String>,
     project_path: Option<String>,
@@ -993,8 +1044,78 @@ pub(super) async fn list_sessions(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<HistorySessionSummary>, String> {
-    let mut conn = open_catalog().await?;
-    seed_from_legacy_if_empty(&mut conn, roots).await?;
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path, s.cwd,
+                s.created_at, s.updated_at, s.message_count, s.branch
+         FROM (
+            SELECT hs.source_session_id AS session_id, i.source_id AS source,
+                   hs.project_key, hs.title,
+                   COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
+                   hs.cwd, hs.cwd_normalized, hs.created_at, hs.updated_at,
+                   hs.message_count, hs.branch
+            FROM history_sessions hs
+            JOIN history_source_instances i ON i.id = hs.source_instance_id
+            WHERE i.activation_state = 'active' AND hs.parse_status = 'ok'
+         ) s WHERE 1 = 1",
+    );
+    if let Some(source) = source
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        builder.push(" AND s.source = ");
+        builder.push_bind(source);
+    }
+    if let Some(project_path) = project_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        push_project_filter(&mut builder, &project_path);
+    }
+    if let Some(query) = query
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        builder.push(" AND (instr(lower(s.title), ");
+        builder.push_bind(query.clone());
+        builder.push(") > 0 OR instr(lower(s.session_id), ");
+        builder.push_bind(query.clone());
+        builder.push(") > 0 OR instr(lower(s.project_key), ");
+        builder.push_bind(query.clone());
+        builder.push(") > 0 OR instr(lower(s.source), ");
+        builder.push_bind(query.clone());
+        builder.push(") > 0 OR instr(lower(COALESCE(s.branch, '')), ");
+        builder.push_bind(query);
+        builder.push(") > 0)");
+    }
+    builder.push(" ORDER BY s.updated_at DESC, s.file_path ASC LIMIT ");
+    builder.push_bind(limit.unwrap_or(usize::MAX).min(i64::MAX as usize) as i64);
+    builder.push(" OFFSET ");
+    builder.push_bind(offset.unwrap_or(0).min(i64::MAX as usize) as i64);
+
+    let rows = builder
+        .build()
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    let sessions = rows
+        .into_iter()
+        .map(session_summary_from_row)
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(sessions
+        .into_iter()
+        .filter(|session| catalog_path_within_roots(&session.source, &session.file_path, roots))
+        .collect())
+}
+
+async fn list_sessions_from_legacy_catalog(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    source: Option<String>,
+    project_path: Option<String>,
+    query: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<HistorySessionSummary>, String> {
     let roots_key = roots.cache_key();
     let mut builder = QueryBuilder::<Sqlite>::new(
         "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path, s.cwd,
@@ -1038,28 +1159,12 @@ pub(super) async fn list_sessions(
 
     let rows = builder
         .build()
-        .fetch_all(&mut conn)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|err| err.to_string())?;
     let sessions = rows
         .into_iter()
-        .map(|row| {
-            Ok(HistorySessionSummary {
-                session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
-                source: row.try_get("source").map_err(|err| err.to_string())?,
-                project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
-                title: row.try_get("title").map_err(|err| err.to_string())?,
-                file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
-                cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
-                created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
-                updated_at: row.try_get("updated_at").map_err(|err| err.to_string())?,
-                message_count: row
-                    .try_get::<i64, _>("message_count")
-                    .map_err(|err| err.to_string())?
-                    .max(0) as usize,
-                branch: row.try_get("branch").map_err(|err| err.to_string())?,
-            })
-        })
+        .map(session_summary_from_row)
         .collect::<Result<Vec<_>, String>>()?;
     Ok(sessions
         .into_iter()
@@ -1067,31 +1172,112 @@ pub(super) async fn list_sessions(
         .collect())
 }
 
+pub(super) async fn list_sessions(
+    roots: &HistoryRoots,
+    source: Option<String>,
+    project_path: Option<String>,
+    query: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<HistorySessionSummary>, String> {
+    let mut conn = open_catalog().await?;
+    seed_from_legacy_if_empty(&mut conn, roots).await?;
+    let fetch_limit = merge_fetch_limit(limit, offset);
+    let v2 = list_sessions_from_v2(
+        &mut conn,
+        roots,
+        source.clone(),
+        project_path.clone(),
+        query.clone(),
+        fetch_limit,
+        Some(0),
+    )
+    .await
+    .map_err(|err| {
+        warn!("history v2 list fallback: {err}");
+        err
+    })
+    .unwrap_or_default();
+    let legacy = list_sessions_from_legacy_catalog(
+        &mut conn,
+        roots,
+        source,
+        project_path,
+        query,
+        fetch_limit,
+        Some(0),
+    )
+    .await?;
+    Ok(merge_session_summaries(v2, legacy, limit, offset))
+}
+
 fn fts_literal(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
 }
 
-pub(super) async fn search_sessions(
-    roots: &HistoryRoots,
-    query: &str,
-    source: Option<String>,
-    project_path: Option<String>,
-    limit: Option<usize>,
-) -> Result<Vec<HistorySearchResult>, String> {
-    let normalized = query.trim();
-    if normalized.chars().count() < CATALOG_SEARCH_MIN_CHARS {
-        return Ok(Vec::new());
+fn merge_search_results(
+    primary: Vec<HistorySearchResult>,
+    fallback: Vec<HistorySearchResult>,
+    max_hits: usize,
+) -> Vec<HistorySearchResult> {
+    let mut seen = HashSet::new();
+    let mut hits = Vec::new();
+    for hit in primary.into_iter().chain(fallback) {
+        let key = (
+            hit.source.clone(),
+            hit.file_path.clone(),
+            hit.role.clone(),
+            hit.snippet.clone(),
+            hit.timestamp.clone(),
+        );
+        if seen.insert(key) {
+            hits.push(hit);
+        }
+        if hits.len() >= max_hits {
+            break;
+        }
     }
-    let mut conn = open_catalog().await?;
-    seed_from_legacy_if_empty(&mut conn, roots).await?;
+    hits
+}
+
+fn search_result_from_legacy_row(row: SqliteRow) -> Result<HistorySearchResult, String> {
+    Ok(HistorySearchResult {
+        session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
+        source: row.try_get("source").map_err(|err| err.to_string())?,
+        project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
+        title: row.try_get("title").map_err(|err| err.to_string())?,
+        file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
+        role: row.try_get("role").map_err(|err| err.to_string())?,
+        snippet: row.try_get("snippet").map_err(|err| err.to_string())?,
+        timestamp: row.try_get("timestamp").map_err(|err| err.to_string())?,
+    })
+}
+
+fn search_result_from_v2_row(row: SqliteRow) -> Result<HistorySearchResult, String> {
+    let timestamp_ms = row
+        .try_get::<Option<i64>, _>("timestamp_ms")
+        .map_err(|err| err.to_string())?;
+    Ok(HistorySearchResult {
+        session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
+        source: row.try_get("source").map_err(|err| err.to_string())?,
+        project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
+        title: row.try_get("title").map_err(|err| err.to_string())?,
+        file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
+        role: row.try_get("role").map_err(|err| err.to_string())?,
+        snippet: row.try_get("snippet").map_err(|err| err.to_string())?,
+        timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
+    })
+}
+
+async fn search_sessions_from_legacy_catalog(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    normalized: &str,
+    source_filter: Option<&str>,
+    project_filter: Option<&str>,
+    max_hits: usize,
+) -> Result<Vec<HistorySearchResult>, String> {
     let roots_key = roots.cache_key();
-    let max_hits = limit.unwrap_or(100).max(1).min(i64::MAX as usize);
-    let source_filter = source
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty());
-    let project_filter = project_path
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
 
     let mut session_builder = QueryBuilder::<Sqlite>::new(
         "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path,
@@ -1103,33 +1289,22 @@ pub(super) async fn search_sessions(
     session_builder.push(" AND instr(lower(s.session_id), ");
     session_builder.push_bind(normalized.to_lowercase());
     session_builder.push(") > 0");
-    if let Some(source) = &source_filter {
+    if let Some(source) = source_filter {
         session_builder.push(" AND s.source = ");
         session_builder.push_bind(source);
     }
-    if let Some(project_path) = &project_filter {
+    if let Some(project_path) = project_filter {
         push_project_filter(&mut session_builder, project_path);
     }
     session_builder.push(" ORDER BY s.updated_at DESC LIMIT ");
     session_builder.push_bind(max_hits as i64);
     let mut hits: Vec<HistorySearchResult> = session_builder
         .build()
-        .fetch_all(&mut conn)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|err| err.to_string())?
         .into_iter()
-        .map(|row| {
-            Ok(HistorySearchResult {
-                session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
-                source: row.try_get("source").map_err(|err| err.to_string())?,
-                project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
-                title: row.try_get("title").map_err(|err| err.to_string())?,
-                file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
-                role: row.try_get("role").map_err(|err| err.to_string())?,
-                snippet: row.try_get("snippet").map_err(|err| err.to_string())?,
-                timestamp: row.try_get("timestamp").map_err(|err| err.to_string())?,
-            })
-        })
+        .map(search_result_from_legacy_row)
         .collect::<Result<Vec<_>, String>>()?;
     hits.retain(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots));
     if hits.len() >= max_hits {
@@ -1149,11 +1324,11 @@ pub(super) async fn search_sessions(
     builder.push_bind(fts_literal(normalized));
     builder.push(" AND s.roots_key = ");
     builder.push_bind(&roots_key);
-    if let Some(source) = &source_filter {
+    if let Some(source) = source_filter {
         builder.push(" AND s.source = ");
         builder.push_bind(source);
     }
-    if let Some(project_path) = &project_filter {
+    if let Some(project_path) = project_filter {
         push_project_filter(&mut builder, project_path);
     }
     builder.push(" ORDER BY s.updated_at DESC, m.message_index ASC LIMIT ");
@@ -1161,23 +1336,12 @@ pub(super) async fn search_sessions(
 
     let rows = builder
         .build()
-        .fetch_all(&mut conn)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|err| err.to_string())?;
     let message_hits = rows
         .into_iter()
-        .map(|row| {
-            Ok(HistorySearchResult {
-                session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
-                source: row.try_get("source").map_err(|err| err.to_string())?,
-                project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
-                title: row.try_get("title").map_err(|err| err.to_string())?,
-                file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
-                role: row.try_get("role").map_err(|err| err.to_string())?,
-                snippet: row.try_get("snippet").map_err(|err| err.to_string())?,
-                timestamp: row.try_get("timestamp").map_err(|err| err.to_string())?,
-            })
-        })
+        .map(search_result_from_legacy_row)
         .collect::<Result<Vec<_>, String>>()?;
     hits.extend(
         message_hits
@@ -1185,6 +1349,659 @@ pub(super) async fn search_sessions(
             .filter(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots)),
     );
     Ok(hits)
+}
+
+async fn search_sessions_from_v2(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    normalized: &str,
+    source_filter: Option<&str>,
+    project_filter: Option<&str>,
+    max_hits: usize,
+) -> Result<Vec<HistorySearchResult>, String> {
+    let mut session_builder = QueryBuilder::<Sqlite>::new(
+        "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path,
+                'sessionId' AS role, s.session_id AS snippet, NULL AS timestamp_ms
+         FROM (
+            SELECT hs.id, hs.source_session_id AS session_id, i.source_id AS source,
+                   hs.project_key, hs.title,
+                   COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
+                   hs.cwd_normalized, hs.updated_at
+            FROM history_sessions hs
+            JOIN history_source_instances i ON i.id = hs.source_instance_id
+            WHERE i.activation_state = 'active' AND hs.parse_status = 'ok'
+         ) s
+         WHERE instr(lower(s.session_id), ",
+    );
+    session_builder.push_bind(normalized.to_lowercase());
+    session_builder.push(") > 0");
+    if let Some(source) = source_filter {
+        session_builder.push(" AND s.source = ");
+        session_builder.push_bind(source);
+    }
+    if let Some(project_path) = project_filter {
+        push_project_filter(&mut session_builder, project_path);
+    }
+    session_builder.push(" ORDER BY s.updated_at DESC LIMIT ");
+    session_builder.push_bind(max_hits as i64);
+
+    let mut hits: Vec<HistorySearchResult> = session_builder
+        .build()
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?
+        .into_iter()
+        .map(search_result_from_v2_row)
+        .collect::<Result<Vec<_>, String>>()?;
+    hits.retain(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots));
+    if hits.len() >= max_hits {
+        return Ok(hits);
+    }
+
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path,
+                m.role, snippet(history_messages_fts, 0, '', '', '…', 24) AS snippet,
+                m.timestamp_ms
+         FROM history_messages_fts
+         JOIN history_messages m ON m.id = history_messages_fts.rowid
+         JOIN (
+            SELECT hs.id, hs.source_session_id AS session_id, i.source_id AS source,
+                   hs.project_key, hs.title,
+                   COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
+                   hs.cwd_normalized, hs.updated_at
+            FROM history_sessions hs
+            JOIN history_source_instances i ON i.id = hs.source_instance_id
+            WHERE i.activation_state = 'active' AND hs.parse_status = 'ok'
+         ) s ON s.id = m.session_id
+         WHERE history_messages_fts MATCH ",
+    );
+    builder.push_bind(fts_literal(normalized));
+    if let Some(source) = source_filter {
+        builder.push(" AND s.source = ");
+        builder.push_bind(source);
+    }
+    if let Some(project_path) = project_filter {
+        push_project_filter(&mut builder, project_path);
+    }
+    builder.push(" ORDER BY s.updated_at DESC, m.message_index ASC LIMIT ");
+    builder.push_bind((max_hits - hits.len()) as i64);
+
+    let rows = builder
+        .build()
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    let message_hits = rows
+        .into_iter()
+        .map(search_result_from_v2_row)
+        .collect::<Result<Vec<_>, String>>()?;
+    hits.extend(
+        message_hits
+            .into_iter()
+            .filter(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots)),
+    );
+    Ok(hits)
+}
+
+pub(super) async fn search_sessions(
+    roots: &HistoryRoots,
+    query: &str,
+    source: Option<String>,
+    project_path: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<HistorySearchResult>, String> {
+    let normalized = query.trim();
+    if normalized.chars().count() < CATALOG_SEARCH_MIN_CHARS {
+        return Ok(Vec::new());
+    }
+    let mut conn = open_catalog().await?;
+    seed_from_legacy_if_empty(&mut conn, roots).await?;
+    let max_hits = limit.unwrap_or(100).max(1).min(i64::MAX as usize);
+    let source_filter = source
+        .as_deref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
+    let project_filter = project_path
+        .as_deref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let v2 = search_sessions_from_v2(
+        &mut conn,
+        roots,
+        normalized,
+        source_filter.as_deref(),
+        project_filter.as_deref(),
+        max_hits,
+    )
+    .await
+    .map_err(|err| {
+        warn!("history v2 search fallback: {err}");
+        err
+    })
+    .unwrap_or_default();
+    let legacy = search_sessions_from_legacy_catalog(
+        &mut conn,
+        roots,
+        normalized,
+        source_filter.as_deref(),
+        project_filter.as_deref(),
+        max_hits,
+    )
+    .await?;
+    Ok(merge_search_results(v2, legacy, max_hits))
+}
+
+fn stats_summary_matches_project_path(
+    summary: &HistorySessionSummary,
+    target_project_path: &str,
+) -> bool {
+    let file_ref = SessionFileRef {
+        source: summary.source.clone(),
+        project_key: summary.project_key.clone(),
+        path: PathBuf::from(&summary.file_path),
+    };
+    session_matches_project_path(&file_ref, target_project_path)
+        || summary
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| opencode_cwd_matches_project_path(cwd, target_project_path))
+}
+
+pub(super) async fn stats_session_facts(
+    roots: &HistoryRoots,
+    source_filter: Option<&str>,
+    target_project: Option<&str>,
+    target_project_path: Option<&str>,
+) -> Result<Vec<HistoryStatsSessionFact>, String> {
+    let mut conn = open_catalog().await?;
+    stats_session_facts_from_v2(
+        &mut conn,
+        roots,
+        source_filter,
+        target_project,
+        target_project_path,
+    )
+    .await
+}
+
+async fn stats_session_facts_from_v2(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    source_filter: Option<&str>,
+    target_project: Option<&str>,
+    target_project_path: Option<&str>,
+) -> Result<Vec<HistoryStatsSessionFact>, String> {
+    let rows = sqlx::query(
+        "SELECT hs.id, i.source_id AS source, hs.source_session_id AS session_id,
+                hs.project_key, hs.title,
+                COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
+                hs.cwd, hs.created_at, hs.updated_at, hs.message_count, hs.branch,
+                hs.input_tokens AS session_input_tokens,
+                hs.output_tokens AS session_output_tokens,
+                hs.cache_read_tokens AS session_cache_read_tokens,
+                hs.cache_creation_tokens AS session_cache_creation_tokens,
+                hs.total_cost_usd AS session_total_cost_usd,
+                hs.dominant_model AS session_model,
+                ue.event_index, ue.timestamp_ms, ue.model AS event_model,
+                ue.input_tokens AS event_input_tokens,
+                ue.output_tokens AS event_output_tokens,
+                ue.cache_read_tokens AS event_cache_read_tokens,
+                ue.cache_creation_tokens AS event_cache_creation_tokens,
+                ue.cost_usd AS event_cost_usd
+         FROM history_sessions hs
+         JOIN history_source_instances i ON i.id = hs.source_instance_id
+         LEFT JOIN history_usage_events ue ON ue.session_id = hs.id
+         WHERE i.activation_state = 'active' AND hs.parse_status = 'ok'
+         ORDER BY hs.updated_at DESC, hs.id ASC, ue.event_index ASC",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let mut facts = Vec::new();
+    for row in rows {
+        let summary = HistorySessionSummary {
+            session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
+            source: row.try_get("source").map_err(|err| err.to_string())?,
+            project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
+            title: row.try_get("title").map_err(|err| err.to_string())?,
+            file_path: row.try_get("file_path").map_err(|err| err.to_string())?,
+            cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
+            created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
+            updated_at: row.try_get("updated_at").map_err(|err| err.to_string())?,
+            message_count: row
+                .try_get::<i64, _>("message_count")
+                .map_err(|err| err.to_string())?
+                .max(0) as usize,
+            branch: row.try_get("branch").map_err(|err| err.to_string())?,
+        };
+        if let Some(filter) = source_filter {
+            if summary.source != filter {
+                continue;
+            }
+        }
+        if let Some(project) = target_project {
+            if summary.project_key != project {
+                continue;
+            }
+        }
+        if let Some(project_path) = target_project_path {
+            if !stats_summary_matches_project_path(&summary, project_path) {
+                continue;
+            }
+        }
+        if !catalog_path_within_roots(&summary.source, &summary.file_path, roots) {
+            continue;
+        }
+
+        let event_index = row
+            .try_get::<Option<i64>, _>("event_index")
+            .map_err(|err| err.to_string())?;
+        let (occurred_at, model, usage) = if event_index.is_some() {
+            let timestamp_ms = row
+                .try_get::<Option<i64>, _>("timestamp_ms")
+                .map_err(|err| err.to_string())?;
+            let model = row
+                .try_get::<Option<String>, _>("event_model")
+                .map_err(|err| err.to_string())?;
+            let usage = UsageStatsScan {
+                input_tokens: row
+                    .try_get::<Option<i64>, _>("event_input_tokens")
+                    .map_err(|err| err.to_string())?
+                    .unwrap_or(0)
+                    .max(0) as u64,
+                output_tokens: row
+                    .try_get::<Option<i64>, _>("event_output_tokens")
+                    .map_err(|err| err.to_string())?
+                    .unwrap_or(0)
+                    .max(0) as u64,
+                cache_read_tokens: row
+                    .try_get::<Option<i64>, _>("event_cache_read_tokens")
+                    .map_err(|err| err.to_string())?
+                    .unwrap_or(0)
+                    .max(0) as u64,
+                cache_creation_tokens: row
+                    .try_get::<Option<i64>, _>("event_cache_creation_tokens")
+                    .map_err(|err| err.to_string())?
+                    .unwrap_or(0)
+                    .max(0) as u64,
+                total_cost_usd: row
+                    .try_get::<Option<f64>, _>("event_cost_usd")
+                    .map_err(|err| err.to_string())?
+                    .unwrap_or(0.0),
+                unpriced_tokens: 0,
+            };
+            (timestamp_ms.unwrap_or(summary.updated_at), model, usage)
+        } else {
+            let model = row
+                .try_get::<Option<String>, _>("session_model")
+                .map_err(|err| err.to_string())?;
+            let usage = UsageStatsScan {
+                input_tokens: row
+                    .try_get::<i64, _>("session_input_tokens")
+                    .map_err(|err| err.to_string())?
+                    .max(0) as u64,
+                output_tokens: row
+                    .try_get::<i64, _>("session_output_tokens")
+                    .map_err(|err| err.to_string())?
+                    .max(0) as u64,
+                cache_read_tokens: row
+                    .try_get::<i64, _>("session_cache_read_tokens")
+                    .map_err(|err| err.to_string())?
+                    .max(0) as u64,
+                cache_creation_tokens: row
+                    .try_get::<i64, _>("session_cache_creation_tokens")
+                    .map_err(|err| err.to_string())?
+                    .max(0) as u64,
+                total_cost_usd: row
+                    .try_get::<f64, _>("session_total_cost_usd")
+                    .map_err(|err| err.to_string())?,
+                unpriced_tokens: 0,
+            };
+            (summary.updated_at, model, usage)
+        };
+        if usage_stats_total_tokens(usage) == 0 {
+            continue;
+        }
+        facts.push(HistoryStatsSessionFact {
+            summary,
+            occurred_at,
+            stats: reprice_usage_stats(model.as_deref(), usage),
+            model,
+        });
+    }
+    Ok(facts)
+}
+
+fn v2_raw_pointer_line_index(raw_pointers_json: Option<String>) -> Option<usize> {
+    let raw = raw_pointers_json?;
+    let pointers = serde_json::from_str::<Vec<Value>>(&raw).ok()?;
+    pointers
+        .iter()
+        .find_map(|pointer| pointer.get("lineIndex").and_then(Value::as_u64))
+        .map(|value| value as usize)
+}
+
+pub(super) async fn get_session_detail_from_v2(
+    roots: &HistoryRoots,
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+) -> Result<Option<HistorySessionDetail>, String> {
+    let mut conn = open_catalog().await?;
+    get_session_detail_from_v2_with_conn(&mut conn, roots, file_path, source, project_key).await
+}
+
+async fn get_session_detail_from_v2_with_conn(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+) -> Result<Option<HistorySessionDetail>, String> {
+    let row = sqlx::query(
+        "SELECT hs.id, i.source_id AS source, hs.source_session_id AS session_id,
+                hs.project_key, hs.title,
+                COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
+                hs.cwd, hs.created_at, hs.updated_at, hs.message_count, hs.branch,
+                hs.input_tokens, hs.output_tokens, hs.cache_read_tokens,
+                hs.cache_creation_tokens, hs.total_cost_usd, hs.dominant_model,
+                hs.current_model, hs.context_window, hs.last_context_tokens,
+                hs.reasoning_effort, hs.tool_call_count
+         FROM history_sessions hs
+         JOIN history_source_instances i ON i.id = hs.source_instance_id
+         WHERE i.activation_state = 'active'
+           AND hs.parse_status = 'ok'
+           AND i.source_id = ?1
+           AND hs.project_key = ?2
+           AND COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) = ?3
+         LIMIT 1",
+    )
+    .bind(source)
+    .bind(project_key)
+    .bind(file_path)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let session_row_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
+    let source: String = row.try_get("source").map_err(|err| err.to_string())?;
+    let file_path: String = row.try_get("file_path").map_err(|err| err.to_string())?;
+    if !catalog_path_within_roots(&source, &file_path, roots) {
+        return Ok(None);
+    }
+    let input_tokens = row
+        .try_get::<i64, _>("input_tokens")
+        .map_err(|err| err.to_string())?
+        .max(0) as u64;
+    let output_tokens = row
+        .try_get::<i64, _>("output_tokens")
+        .map_err(|err| err.to_string())?
+        .max(0) as u64;
+    let cache_read_tokens = row
+        .try_get::<i64, _>("cache_read_tokens")
+        .map_err(|err| err.to_string())?
+        .max(0) as u64;
+    let cache_creation_tokens = row
+        .try_get::<i64, _>("cache_creation_tokens")
+        .map_err(|err| err.to_string())?
+        .max(0) as u64;
+    let dominant_model: Option<String> =
+        row.try_get("dominant_model").map_err(|err| err.to_string())?;
+    let mut token_trend = Vec::new();
+    let usage_rows = sqlx::query(
+        "SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+         FROM history_usage_events
+         WHERE session_id = ?1
+         ORDER BY event_index ASC",
+    )
+    .bind(session_row_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    for usage_row in usage_rows {
+        let usage = UsageTokenScan {
+            input_tokens: usage_row
+                .try_get::<i64, _>("input_tokens")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            output_tokens: usage_row
+                .try_get::<i64, _>("output_tokens")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            cache_read_tokens: usage_row
+                .try_get::<i64, _>("cache_read_tokens")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            cache_creation_tokens: usage_row
+                .try_get::<i64, _>("cache_creation_tokens")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            explicit_cost_usd: None,
+        };
+        if usage_total_tokens(usage) > 0 {
+            token_trend.push(usage_trend_point(
+                usage,
+                usage_row.try_get("model").map_err(|err| err.to_string())?,
+            ));
+        }
+    }
+    if token_trend.is_empty()
+        && input_tokens
+            .saturating_add(output_tokens)
+            .saturating_add(cache_read_tokens)
+            .saturating_add(cache_creation_tokens)
+            > 0
+    {
+        token_trend.push(usage_trend_point(
+            UsageTokenScan {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                explicit_cost_usd: None,
+            },
+            dominant_model.clone(),
+        ));
+    }
+
+    let message_rows = sqlx::query(
+        "SELECT message_index, role, display_content, timestamp_ms, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                editable, raw_pointers_json
+         FROM history_messages
+         WHERE session_id = ?1
+         ORDER BY message_index ASC",
+    )
+    .bind(session_row_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    let messages = message_rows
+        .into_iter()
+        .map(|message_row| {
+            let timestamp_ms = message_row
+                .try_get::<Option<i64>, _>("timestamp_ms")
+                .map_err(|err| err.to_string())?;
+            Ok(HistoryMessage {
+                role: message_row.try_get("role").map_err(|err| err.to_string())?,
+                content: message_row
+                    .try_get("display_content")
+                    .map_err(|err| err.to_string())?,
+                timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
+                model: message_row.try_get("model").map_err(|err| err.to_string())?,
+                input_tokens: message_row
+                    .try_get::<Option<i64>, _>("input_tokens")
+                    .map_err(|err| err.to_string())?
+                    .map(|value| value.max(0) as u64),
+                output_tokens: message_row
+                    .try_get::<Option<i64>, _>("output_tokens")
+                    .map_err(|err| err.to_string())?
+                    .map(|value| value.max(0) as u64),
+                cache_read_tokens: message_row
+                    .try_get::<Option<i64>, _>("cache_read_tokens")
+                    .map_err(|err| err.to_string())?
+                    .map(|value| value.max(0) as u64),
+                cache_creation_tokens: message_row
+                    .try_get::<Option<i64>, _>("cache_creation_tokens")
+                    .map_err(|err| err.to_string())?
+                    .map(|value| value.max(0) as u64),
+                line_index: v2_raw_pointer_line_index(
+                    message_row
+                        .try_get("raw_pointers_json")
+                        .map_err(|err| err.to_string())?,
+                ),
+                editable: message_row
+                    .try_get::<i64, _>("editable")
+                    .map_err(|err| err.to_string())?
+                    != 0,
+                editable_text: None,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let tool_rows = sqlx::query(
+        "SELECT te.call_id, te.name, te.category, hm.message_index, te.timestamp_ms,
+                te.status, te.duration_ms, te.input_summary, te.output_summary
+         FROM history_tool_events te
+         LEFT JOIN history_messages hm ON hm.id = te.message_id
+         WHERE te.session_id = ?1
+         ORDER BY te.event_index ASC",
+    )
+    .bind(session_row_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    let mut mcp_calls = HashMap::new();
+    let mut skill_calls = HashMap::new();
+    let mut builtin_calls = HashMap::new();
+    let mut tool_events = Vec::new();
+    for tool_row in tool_rows {
+        let name: String = tool_row.try_get("name").map_err(|err| err.to_string())?;
+        let category: String = tool_row.try_get("category").map_err(|err| err.to_string())?;
+        match category.as_str() {
+            "mcp" => *mcp_calls.entry(name.clone()).or_insert(0) += 1,
+            "skill" => *skill_calls.entry(name.clone()).or_insert(0) += 1,
+            _ => *builtin_calls.entry(name.clone()).or_insert(0) += 1,
+        }
+        let timestamp_ms = tool_row
+            .try_get::<Option<i64>, _>("timestamp_ms")
+            .map_err(|err| err.to_string())?;
+        tool_events.push(HistoryToolEvent {
+            call_id: tool_row.try_get("call_id").map_err(|err| err.to_string())?,
+            name,
+            category,
+            message_index: tool_row
+                .try_get::<Option<i64>, _>("message_index")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as usize),
+            timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
+            status: tool_row.try_get("status").map_err(|err| err.to_string())?,
+            duration_ms: tool_row
+                .try_get::<Option<i64>, _>("duration_ms")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            input_summary: tool_row
+                .try_get("input_summary")
+                .map_err(|err| err.to_string())?,
+            output_summary: tool_row
+                .try_get("output_summary")
+                .map_err(|err| err.to_string())?,
+        });
+    }
+
+    let change_rows = sqlx::query(
+        "SELECT change_index, source_kind, tool_name, file_path, old_text, new_text,
+                patch, additions, deletions, timestamp_ms
+         FROM history_file_changes
+         WHERE session_id = ?1
+         ORDER BY change_index ASC",
+    )
+    .bind(session_row_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    let mut operations = Vec::new();
+    for change_row in change_rows {
+        let timestamp_ms = change_row
+            .try_get::<Option<i64>, _>("timestamp_ms")
+            .map_err(|err| err.to_string())?;
+        operations.push(HistoryFileChangeOperation {
+            source: change_row
+                .try_get("source_kind")
+                .map_err(|err| err.to_string())?,
+            tool_name: change_row.try_get("tool_name").map_err(|err| err.to_string())?,
+            file_path: change_row.try_get("file_path").map_err(|err| err.to_string())?,
+            old_text: change_row.try_get("old_text").map_err(|err| err.to_string())?,
+            new_text: change_row.try_get("new_text").map_err(|err| err.to_string())?,
+            patch: change_row.try_get("patch").map_err(|err| err.to_string())?,
+            additions: change_row
+                .try_get::<i64, _>("additions")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            deletions: change_row
+                .try_get::<i64, _>("deletions")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            message_index: None,
+            operation_group_index: change_row
+                .try_get::<i64, _>("change_index")
+                .map_err(|err| err.to_string())
+                .ok()
+                .map(|value| value.max(0) as usize),
+            timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
+        });
+    }
+
+    Ok(Some(HistorySessionDetail {
+        session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
+        source,
+        project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
+        title: row.try_get("title").map_err(|err| err.to_string())?,
+        file_path,
+        cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
+        created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
+        updated_at: row.try_get("updated_at").map_err(|err| err.to_string())?,
+        message_count: messages.len(),
+        branch: row.try_get("branch").map_err(|err| err.to_string())?,
+        usage: HistorySessionUsage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            total_cost_usd: row
+                .try_get("total_cost_usd")
+                .map_err(|err| err.to_string())?,
+            dominant_model,
+            current_model: row.try_get("current_model").map_err(|err| err.to_string())?,
+            context_window: row
+                .try_get::<Option<i64>, _>("context_window")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            last_context_tokens: row
+                .try_get::<Option<i64>, _>("last_context_tokens")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            reasoning_effort: row
+                .try_get("reasoning_effort")
+                .map_err(|err| err.to_string())?,
+            token_trend,
+            tool_call_count: row
+                .try_get::<i64, _>("tool_call_count")
+                .map_err(|err| err.to_string())?
+                .max(0) as u64,
+            mcp_calls: sorted_tool_counts(&mcp_calls),
+            skill_calls: sorted_tool_counts(&skill_calls),
+            builtin_calls: sorted_tool_counts(&builtin_calls),
+        },
+        tool_events,
+        file_changes: summarize_file_change_operations(operations),
+        messages,
+    }))
 }
 
 fn collect_codex_catalog_files(root: &Path) -> Vec<SessionFileRef> {
@@ -1385,7 +2202,7 @@ async fn active_v2_source_instances(
     let rows = sqlx::query(
         "SELECT id, source_id, settings_hash
          FROM history_source_instances
-         WHERE activation_state = 'active' AND source_id IN ('claude', 'codex')",
+         WHERE activation_state = 'active'",
     )
     .fetch_all(&mut *conn)
     .await
@@ -2384,6 +3201,369 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_sessions_merges_v2_first_and_legacy_gaps() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let claude_root = temp_dir.path().join(".claude");
+        let roots = HistoryRoots {
+            claude_config_dir: Some(claude_root.clone()),
+            codex_config_dir: None,
+        };
+        let roots_key = roots.cache_key();
+        let v2_file = claude_root.join("projects").join("proj").join("session-v2.jsonl");
+        let legacy_file = claude_root
+            .join("projects")
+            .join("proj")
+            .join("session-legacy.jsonl");
+
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'claude-default', 'claude', 'windows', 'windows', 'file',
+                '{}', 'settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind, primary_path,
+                project_key, cwd, cwd_normalized, title, created_at, updated_at,
+                message_count, fingerprint_kind, fingerprint_value, parser_version,
+                model_version, parse_status, last_seen_generation, indexed_at
+             ) VALUES (
+                'claude-default', 'session-v2', 'file', ?1,
+                'proj', 'C:/work/proj', 'c:/work/proj', 'v2 title', 10, 30,
+                2, 'file-stat', 'fp', 1, 1, 'ok', 1, 1
+             )",
+        )
+        .bind(v2_file.to_string_lossy().to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        for (file, session_id, title, updated_at) in [
+            (&v2_file, "session-v2", "legacy duplicate", 20_i64),
+            (&legacy_file, "session-legacy", "legacy only", 25_i64),
+        ] {
+            sqlx::query(
+                "INSERT INTO history_catalog_sessions(
+                    roots_key, file_path, source, project_key, cwd, cwd_normalized,
+                    session_id, title, branch, created_at, updated_at, message_count,
+                    file_created_at, file_updated_at, file_size, parser_version, indexed_at
+                 ) VALUES (?1, ?2, 'claude', 'proj', 'C:/work/proj', 'c:/work/proj',
+                    ?3, ?4, NULL, 10, ?5, 1, 10, ?5, 1, ?6, 30)",
+            )
+            .bind(&roots_key)
+            .bind(file.to_string_lossy().to_string())
+            .bind(session_id)
+            .bind(title)
+            .bind(updated_at)
+            .bind(CATALOG_PARSER_VERSION)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        }
+
+        let v2 = list_sessions_from_v2(&mut conn, &roots, None, None, None, Some(10), Some(0))
+            .await
+            .unwrap();
+        let legacy = list_sessions_from_legacy_catalog(
+            &mut conn,
+            &roots,
+            None,
+            None,
+            None,
+            Some(10),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        let sessions = merge_session_summaries(v2, legacy, Some(10), Some(0));
+
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].title, "v2 title");
+        assert_eq!(sessions[1].title, "legacy only");
+    }
+
+    #[tokio::test]
+    async fn search_sessions_merges_v2_first_and_legacy_gaps() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let claude_root = temp_dir.path().join(".claude");
+        let roots = HistoryRoots {
+            claude_config_dir: Some(claude_root.clone()),
+            codex_config_dir: None,
+        };
+        let roots_key = roots.cache_key();
+        let v2_file = claude_root.join("projects").join("proj").join("search-v2.jsonl");
+        let legacy_file = claude_root
+            .join("projects")
+            .join("proj")
+            .join("search-legacy.jsonl");
+
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'claude-default', 'claude', 'windows', 'windows', 'file',
+                '{}', 'settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        let result = sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind, primary_path,
+                project_key, title, created_at, updated_at, message_count,
+                fingerprint_kind, fingerprint_value, parser_version, model_version,
+                parse_status, last_seen_generation, indexed_at
+             ) VALUES (
+                'claude-default', 'search-v2', 'file', ?1,
+                'proj', 'v2 search', 10, 30, 1,
+                'file-stat', 'fp', 1, 1, 'ok', 1, 1
+             )",
+        )
+        .bind(v2_file.to_string_lossy().to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_messages(
+                session_id, message_index, role, display_content, timestamp_ms
+             ) VALUES (?1, 0, 'user', 'needle from v2', 1000)",
+        )
+        .bind(result.last_insert_rowid())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_catalog_sessions(
+                roots_key, file_path, source, project_key, cwd, cwd_normalized,
+                session_id, title, branch, created_at, updated_at, message_count,
+                file_created_at, file_updated_at, file_size, parser_version, indexed_at
+             ) VALUES (?1, ?2, 'claude', 'proj', NULL, NULL,
+                'search-legacy', 'legacy search', NULL, 10, 20, 1,
+                10, 20, 1, ?3, 30)",
+        )
+        .bind(&roots_key)
+        .bind(legacy_file.to_string_lossy().to_string())
+        .bind(CATALOG_PARSER_VERSION)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_catalog_messages(
+                roots_key, file_path, message_index, role, timestamp, content
+             ) VALUES (?1, ?2, 0, 'user', NULL, 'needle from legacy')",
+        )
+        .bind(&roots_key)
+        .bind(legacy_file.to_string_lossy().to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let v2 = search_sessions_from_v2(&mut conn, &roots, "needle", None, None, 10)
+            .await
+            .unwrap();
+        let legacy =
+            search_sessions_from_legacy_catalog(&mut conn, &roots, "needle", None, None, 10)
+                .await
+                .unwrap();
+        let hits = merge_search_results(v2, legacy, 10);
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].session_id, "search-v2");
+        assert_eq!(hits[1].session_id, "search-legacy");
+    }
+
+    #[tokio::test]
+    async fn stats_session_facts_reads_v2_usage_events() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let claude_root = temp_dir.path().join(".claude");
+        let roots = HistoryRoots {
+            claude_config_dir: Some(claude_root.clone()),
+            codex_config_dir: None,
+        };
+        let file = claude_root.join("projects").join("proj").join("stats-v2.jsonl");
+
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'claude-default', 'claude', 'windows', 'windows', 'file',
+                '{}', 'settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        let result = sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind, primary_path,
+                project_key, cwd, cwd_normalized, title, created_at, updated_at,
+                message_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, fingerprint_kind, fingerprint_value, parser_version,
+                model_version, parse_status, last_seen_generation, indexed_at
+             ) VALUES (
+                'claude-default', 'stats-v2', 'file', ?1,
+                'proj', 'C:/work/proj', 'c:/work/proj', 'v2 stats', 10, 30,
+                2, 10, 5, 3, 2, 'file-stat', 'fp', 1, 1, 'ok', 1, 1
+             )",
+        )
+        .bind(file.to_string_lossy().to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_usage_events(
+                session_id, event_index, timestamp_ms, model, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd
+             ) VALUES (?1, 0, 1000, 'claude-sonnet-4-5', 10, 5, 3, 2, 0)",
+        )
+        .bind(result.last_insert_rowid())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let facts = stats_session_facts_from_v2(&mut conn, &roots, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].summary.session_id, "stats-v2");
+        assert_eq!(facts[0].occurred_at, 1000);
+        assert_eq!(facts[0].stats.input_tokens, 10);
+        assert_eq!(facts[0].stats.output_tokens, 5);
+        assert_eq!(facts[0].stats.cache_read_tokens, 3);
+        assert_eq!(facts[0].stats.cache_creation_tokens, 2);
+    }
+
+    #[tokio::test]
+    async fn get_session_detail_from_v2_rehydrates_messages_tools_and_changes() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let claude_root = temp_dir.path().join(".claude");
+        let roots = HistoryRoots {
+            claude_config_dir: Some(claude_root.clone()),
+            codex_config_dir: None,
+        };
+        let file = claude_root.join("projects").join("proj").join("detail-v2.jsonl");
+        let file_path = file.to_string_lossy().to_string();
+
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'claude-default', 'claude', 'windows', 'windows', 'file',
+                '{}', 'settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        let session_result = sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind, primary_path,
+                project_key, cwd, cwd_normalized, title, created_at, updated_at,
+                message_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, total_cost_usd, dominant_model, current_model,
+                tool_call_count, fingerprint_kind, fingerprint_value, parser_version,
+                model_version, parse_status, last_seen_generation, indexed_at
+             ) VALUES (
+                'claude-default', 'detail-v2', 'file', ?1,
+                'proj', 'C:/work/proj', 'c:/work/proj', 'v2 detail', 10, 30,
+                1, 10, 5, 3, 2, 0, 'claude-sonnet-4-5', 'claude-sonnet-4-5',
+                1, 'file-stat', 'fp', 1, 1, 'ok', 1, 1
+             )",
+        )
+        .bind(&file_path)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        let session_id = session_result.last_insert_rowid();
+        let message_result = sqlx::query(
+            "INSERT INTO history_messages(
+                session_id, message_index, role, display_content, timestamp_ms,
+                model, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, editable, raw_pointers_json
+             ) VALUES (
+                ?1, 0, 'assistant', 'hello detail', 1000,
+                'claude-sonnet-4-5', 10, 5, 3, 2, 1,
+                '[{\"lineIndex\":7}]'
+             )",
+        )
+        .bind(session_id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_usage_events(
+                session_id, event_index, timestamp_ms, model, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd
+             ) VALUES (?1, 0, 1000, 'claude-sonnet-4-5', 10, 5, 3, 2, 0)",
+        )
+        .bind(session_id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_tool_events(
+                session_id, message_id, event_index, call_id, name, category, status,
+                timestamp_ms, duration_ms, input_summary, output_summary
+             ) VALUES (?1, ?2, 0, 'tool-1', 'Edit', 'builtin', 'completed',
+                1000, 12, 'in', 'out')",
+        )
+        .bind(session_id)
+        .bind(message_result.last_insert_rowid())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_file_changes(
+                session_id, change_index, source_kind, tool_name, file_path,
+                old_text, new_text, patch, additions, deletions, timestamp_ms
+             ) VALUES (?1, 0, 'tool', 'Edit', 'src/main.rs',
+                'old', 'new', NULL, 1, 1, 1000)",
+        )
+        .bind(session_id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let detail = get_session_detail_from_v2_with_conn(
+            &mut conn,
+            &roots,
+            &file_path,
+            "claude",
+            "proj",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(detail.session_id, "detail-v2");
+        assert_eq!(detail.messages.len(), 1);
+        assert_eq!(detail.messages[0].line_index, Some(7));
+        assert_eq!(detail.usage.token_trend.len(), 1);
+        assert_eq!(detail.tool_events[0].message_index, Some(0));
+        assert_eq!(detail.usage.builtin_calls[0].name, "Edit");
+        assert_eq!(detail.file_changes[0].file_path, "src/main.rs");
+        assert_eq!(detail.file_changes[0].additions, 1);
+    }
+
+    #[tokio::test]
     async fn shadow_build_v2_populates_sessions_messages_and_sync_run() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         ensure_schema(&mut conn).await.unwrap();
@@ -2637,6 +3817,77 @@ mod tests {
                 .await
                 .unwrap();
         assert!(raw_pointers_json.contains("codex-state-thread-row"));
+    }
+
+    #[tokio::test]
+    async fn shadow_build_v2_includes_active_non_core_sources() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roots = HistoryRoots {
+            claude_config_dir: Some(temp_dir.path().join(".claude")),
+            codex_config_dir: Some(temp_dir.path().join(".codex")),
+        };
+        let roots_key = roots.cache_key();
+        let file = temp_dir.path().join("gemini-session.json");
+        std::fs::write(
+            &file,
+            r#"{
+                "sessionId": "gemini-session",
+                "projectHash": "hash-a",
+                "messages": [
+                    { "role": "user", "content": "hello gemini", "timestamp": "2026-01-01T00:00:00Z" },
+                    { "role": "model", "content": "hi", "timestamp": "2026-01-01T00:00:01Z" }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let fingerprint = session_file_fingerprint(&file);
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'gemini-default', 'gemini', 'windows', 'windows', 'file',
+                '{}', 'settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_catalog_sessions(
+                roots_key, file_path, source, project_key, cwd, cwd_normalized,
+                session_id, title, branch, created_at, updated_at, message_count,
+                file_created_at, file_updated_at, file_size, parser_version, indexed_at
+             ) VALUES (?1, ?2, 'gemini', 'hash-a', NULL, NULL,
+                'gemini-session', 'hello gemini', NULL, 10, 20, 2,
+                ?3, ?4, ?5, ?6, 30)",
+        )
+        .bind(&roots_key)
+        .bind(file.to_string_lossy().to_string())
+        .bind(fingerprint.created_at)
+        .bind(fingerprint.updated_at)
+        .bind(fingerprint.size as i64)
+        .bind(CATALOG_PARSER_VERSION)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        shadow_build_v2(&mut conn, &roots, &roots_key, 7)
+            .await
+            .unwrap();
+
+        let source: String = sqlx::query_scalar(
+            "SELECT i.source_id
+             FROM history_sessions s
+             JOIN history_source_instances i ON i.id = s.source_instance_id
+             WHERE s.source_session_id = 'gemini-session'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(source, "gemini");
     }
 
     #[tokio::test]

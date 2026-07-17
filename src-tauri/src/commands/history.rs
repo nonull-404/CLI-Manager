@@ -1176,6 +1176,30 @@ pub async fn history_get_session(
     aggregate_subtasks: Option<bool>,
 ) -> Result<HistorySessionDetail, String> {
     let source_normalized = source.trim().to_lowercase();
+    let aggregate_subtasks = aggregate_subtasks.unwrap_or(false);
+    if !aggregate_subtasks {
+        let started_at = Instant::now();
+        let roots = history_roots(claude_config_dir.clone(), codex_config_dir.clone());
+        match catalog::get_session_detail_from_v2(
+            &roots,
+            &file_path,
+            &source_normalized,
+            &project_key,
+        )
+        .await
+        {
+            Ok(Some(detail)) => {
+                log_history_detail_oom_diagnostic(
+                    "history_get_session_v2",
+                    &detail,
+                    started_at.elapsed().as_millis(),
+                );
+                return Ok(detail);
+            }
+            Ok(None) => {}
+            Err(err) => warn!("history v2 detail fallback: {err}"),
+        }
+    }
     if source_normalized == "opencode" {
         let started_at = Instant::now();
         let roots = history_roots(claude_config_dir, codex_config_dir);
@@ -1212,9 +1236,9 @@ pub async fn history_get_session(
             file_ref.source,
             file_ref.project_key,
             file_ref.path.to_string_lossy(),
-            aggregate_subtasks.unwrap_or(false)
+            aggregate_subtasks
         );
-        let detail = build_session_detail(&file_ref, aggregate_subtasks.unwrap_or(false))?;
+        let detail = build_session_detail(&file_ref, aggregate_subtasks)?;
         log_history_detail_oom_diagnostic(
             "history_get_session",
             &detail,
@@ -2032,6 +2056,31 @@ pub async fn history_get_stats(
             let day_start = stats_day_start_with_offset(fact.occurred_at, stats_day_start_offset(bounds));
             days.entry(day_start).or_default().push(fact);
         }
+    }
+    match catalog::stats_session_facts(
+        &roots,
+        source_filter.as_deref(),
+        target_project.as_deref(),
+        target_project_path.as_deref(),
+    )
+    .await
+    {
+        Ok(v2_facts) if !v2_facts.is_empty() => {
+            let v2_session_keys: HashSet<String> = v2_facts
+                .iter()
+                .map(|fact| history_stats_session_key(&fact.summary))
+                .collect();
+            for facts in days.values_mut() {
+                facts.retain(|fact| !v2_session_keys.contains(&history_stats_session_key(&fact.summary)));
+            }
+            let day_offset = stats_day_start_offset(bounds);
+            for fact in v2_facts {
+                let day_start = stats_day_start_with_offset(fact.occurred_at, day_offset);
+                days.entry(day_start).or_default().push(fact);
+            }
+        }
+        Ok(_) => {}
+        Err(err) => warn!("history v2 stats fallback: {err}"),
     }
 
     let response = build_history_stats_response(&days, bounds);
