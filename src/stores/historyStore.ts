@@ -854,6 +854,60 @@ export async function fetchTodayProjectStats(
   }
 }
 
+/** 将多路径「今日用量」合并（父项目 + 各 worktree 目录各自查一次再相加）。 */
+export function mergeTodayProjectStats(
+  parts: Array<TodayProjectStats | null | undefined>
+): TodayProjectStats | null {
+  let merged: TodayProjectStats | null = null;
+  for (const part of parts) {
+    if (!part) continue;
+    if (!merged) {
+      merged = { ...part };
+      continue;
+    }
+    merged = {
+      sessions: merged.sessions + part.sessions,
+      totalTokens: merged.totalTokens + part.totalTokens,
+      totalCostUsd: merged.totalCostUsd + part.totalCostUsd,
+      inputTokens: merged.inputTokens + part.inputTokens,
+      outputTokens: merged.outputTokens + part.outputTokens,
+      cacheReadTokens: merged.cacheReadTokens + part.cacheReadTokens,
+      cacheCreationTokens: merged.cacheCreationTokens + part.cacheCreationTokens,
+      unpricedTokens: merged.unpricedTokens + part.unpricedTokens,
+    };
+  }
+  return merged;
+}
+
+/**
+ * 今日项目用量：按多个项目/ worktree 路径聚合。
+ * Issue #137：worktree 与主仓库路径不同，历史按目录拆分；此处把同一项目下
+ * 主路径 + 全部 worktree 路径的今日统计并入一条。
+ */
+export async function fetchTodayProjectStatsMerged(
+  projectKey: string,
+  source: HistorySource | null | undefined,
+  projectPaths: string[]
+): Promise<TodayProjectStats | null> {
+  const uniquePaths = Array.from(
+    new Set(
+      projectPaths
+        .map((path) => path.trim().replace(/\\/g, "/").replace(/\/+$/g, ""))
+        .filter((path) => path.length > 0)
+    )
+  );
+  if (uniquePaths.length === 0) {
+    return fetchTodayProjectStats(projectKey, source, null);
+  }
+  if (uniquePaths.length === 1) {
+    return fetchTodayProjectStats(projectKey, source, uniquePaths[0]);
+  }
+  const results = await Promise.all(
+    uniquePaths.map((path) => fetchTodayProjectStats(projectKey, source, path))
+  );
+  return mergeTodayProjectStats(results);
+}
+
 function getHistoryPathCacheKey(): string {
   const { claudeConfigDir, codexConfigDir } = getHistoryPathArgs();
   return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}`;

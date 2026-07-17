@@ -7,7 +7,7 @@ import { createPatch } from "diff";
 import type { HistoryFileChangeSummary, HistorySessionDetail, HistorySource, WorktreeRecord } from "../../lib/types";
 import {
   fetchLatestProjectSessionDetail,
-  fetchTodayProjectStats,
+  fetchTodayProjectStatsMerged,
   type TodayProjectStats,
 } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
@@ -418,6 +418,23 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   );
   const lookupProjectPath = activeWorktree?.path || terminalProjectPath;
   const displayProjectPath = activeWorktree?.path || terminalProjectPath;
+  // Issue #137：今日项目用量按「主项目路径 + 该项目下全部 worktree」聚合，避免 worktree 被当成独立目录。
+  const todayUsageProjectPaths = useMemo(() => {
+    const paths: string[] = [];
+    if (project?.path?.trim()) paths.push(project.path.trim());
+    if (project?.id) {
+      for (const worktree of worktrees) {
+        if (worktree.project_id !== project.id) continue;
+        if (worktree.status === "missing") continue;
+        if (worktree.path?.trim()) paths.push(worktree.path.trim());
+      }
+    }
+    // 无绑定项目时回退到当前 lookup 路径（与原先单路径行为一致）
+    if (paths.length === 0 && lookupProjectPath) paths.push(lookupProjectPath);
+    return Array.from(
+      new Set(paths.map((path) => path.replace(/\\/g, "/").replace(/\/+$/g, "")).filter(Boolean))
+    );
+  }, [lookupProjectPath, project?.id, project?.path, worktrees]);
 
   // 终端运行的 CLI 工具（claude/codex），来自项目设置；推断不出则不过滤
   const sourceFilter = useMemo(
@@ -501,6 +518,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   }, [activeSessionId, displayProjectPath, lookupProjectPath, panelActive, pollTrigger, project?.path, refreshSeq, sourceFilter, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
+  // Issue #137：聚合主项目 + worktree 路径，主仓库 Tab 与 worktree Tab 看到同一套「今日项目」合计。
   useEffect(() => {
     if (!panelActive || !latestSession) {
       setTodayStats(null);
@@ -508,7 +526,11 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     }
     let cancelled = false;
     setLoadingToday(true);
-    void fetchTodayProjectStats(latestSession.project_key, sourceFilter, lookupProjectPath).then((result) => {
+    void fetchTodayProjectStatsMerged(
+      latestSession.project_key,
+      sourceFilter,
+      todayUsageProjectPaths
+    ).then((result) => {
       if (cancelled) return;
       setTodayStats(result);
       setLoadingToday(false);
@@ -516,7 +538,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     return () => {
       cancelled = true;
     };
-  }, [lookupProjectPath, panelActive, latestSession, sourceFilter]);
+  }, [panelActive, latestSession, sourceFilter, todayUsageProjectPaths]);
 
   // 空闲时数据轮询返回 unchanged 不会触发重渲染，需独立 tick 让头部相对时间文案随时间走字
   useEffect(() => {
