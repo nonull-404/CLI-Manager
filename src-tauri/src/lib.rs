@@ -17,6 +17,7 @@ mod log_rotation;
 pub mod pty;
 mod shell_resolver;
 pub mod ssh_launch;
+pub mod ssh_askpass;
 pub mod statusline;
 pub mod statusline_profiles;
 mod sync;
@@ -300,7 +301,36 @@ const MIGRATION_CREATE_SSH_HOSTS_SQL: &str = "
                 ALTER TABLE projects ADD COLUMN remote_path TEXT NOT NULL DEFAULT '';
                 CREATE INDEX IF NOT EXISTS idx_projects_environment ON projects(environment_type);
                 CREATE INDEX IF NOT EXISTS idx_projects_ssh_host ON projects(ssh_host_id);
-            ";
+              ";
+
+const MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION: i64 = 21;
+const MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION: &str = "create_hierarchical_ssh_host_groups";
+const MIGRATION_CREATE_SSH_HOST_GROUPS_SQL: &str = "
+                CREATE TABLE IF NOT EXISTS ssh_host_groups (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    parent_id  TEXT REFERENCES ssh_host_groups(id) ON DELETE SET NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_ssh_host_groups_parent
+                    ON ssh_host_groups(parent_id, sort_order, name);
+                ALTER TABLE ssh_hosts ADD COLUMN group_id TEXT REFERENCES ssh_host_groups(id) ON DELETE SET NULL;
+                INSERT INTO ssh_host_groups (id, name, parent_id, sort_order, created_at)
+                SELECT lower(hex(randomblob(16))), group_name, NULL, 0, CAST(strftime('%s', 'now') AS TEXT)
+                FROM ssh_hosts
+                WHERE trim(group_name) <> ''
+                GROUP BY group_name;
+                UPDATE ssh_hosts
+                SET group_id = (
+                    SELECT id FROM ssh_host_groups
+                    WHERE parent_id IS NULL AND name = ssh_hosts.group_name
+                    ORDER BY created_at, id LIMIT 1
+                )
+                WHERE trim(group_name) <> '';
+                CREATE INDEX IF NOT EXISTS idx_ssh_hosts_group_id
+                    ON ssh_hosts(group_id, sort_order, name);
+              ";
 
 fn migrations() -> Vec<Migration> {
     vec![
@@ -526,6 +556,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_CREATE_SSH_HOSTS_VERSION,
             description: MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
             sql: MIGRATION_CREATE_SSH_HOSTS_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
+            description: MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
             kind: MigrationKind::Up,
         },
     ]
@@ -786,6 +822,9 @@ pub fn run() {
             commands::terminal_shell::terminal_shell_scan,
             commands::ssh::ssh_client_status,
             commands::ssh::ssh_test_connection,
+            commands::ssh::ssh_save_password,
+            commands::ssh::ssh_password_status,
+            commands::ssh::ssh_delete_password,
             commands::ssh::ssh_check_path,
             commands::ssh::ssh_list_directories,
             commands::third_party_notification::third_party_notification_test_send,
@@ -970,7 +1009,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod ssh_migration_tests {
-    use super::MIGRATION_CREATE_SSH_HOSTS_SQL;
+    use super::{MIGRATION_CREATE_SSH_HOST_GROUPS_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL};
     use sqlx::{Connection, Row, SqliteConnection};
 
     #[tokio::test]
@@ -1034,5 +1073,25 @@ mod ssh_migration_tests {
             .await
             .unwrap();
         assert_eq!(remote.get::<Option<String>, _>("ssh_host_id"), None);
+    }
+
+    #[tokio::test]
+    async fn ssh_group_migration_preserves_flat_groups_as_roots() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&mut conn).await.unwrap();
+        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)")
+            .execute(&mut conn).await.unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO ssh_hosts (id, name, group_name, host, created_at, updated_at) VALUES ('host-1', 'Server', 'Production', 'example.com', '1', '1')")
+            .execute(&mut conn).await.unwrap();
+
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL).execute(&mut conn).await.unwrap();
+
+        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'").fetch_one(&mut conn).await.unwrap();
+        let group_id = host.get::<Option<String>, _>("group_id").unwrap();
+        let group = sqlx::query("SELECT name, parent_id FROM ssh_host_groups WHERE id = ?")
+            .bind(group_id).fetch_one(&mut conn).await.unwrap();
+        assert_eq!(group.get::<String, _>("name"), "Production");
+        assert_eq!(group.get::<Option<String>, _>("parent_id"), None);
     }
 }

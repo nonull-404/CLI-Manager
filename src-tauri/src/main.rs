@@ -2,6 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::var_os("CLI_MANAGER_SSH_ASKPASS").is_some() {
+        cli_manager_lib::ssh_askpass::run_helper_and_exit();
+    }
     // hook 子命令：在初始化 Tauri runtime 之前拦截并退出，避免每次 hook 触发都冷启动 WebView。
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("__hook") {

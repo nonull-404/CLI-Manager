@@ -32,6 +32,7 @@ interface Props {
   project?: Project;
   cloneFrom?: Project;
   defaultGroupId?: string | null;
+  onManageSshHosts?: () => void;
   onClose: () => void;
 }
 
@@ -86,7 +87,7 @@ function initialWslPickerPath(currentPath: string): string {
   return isWslUncPath(normalized) ? parentWslUncPath(normalized) : DEFAULT_WSL_PICKER_PATH;
 }
 
-export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Props) {
+export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHosts, onClose }: Props) {
   const { language, t } = useI18n();
   const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const { createProject, updateProject, groups } = useProjectStore();
@@ -486,7 +487,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
         }}
       >
         <DialogContent
-          className="w-[calc(100vw-2rem)] max-w-[400px] overflow-hidden p-0"
+          className="w-[calc(100vw-2rem)] max-w-[500px] overflow-hidden p-0"
           showCloseButton={false}
           aria-describedby={dialogDescriptionId}
           onEscapeKeyDown={(event) => {
@@ -584,19 +585,26 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                     <label htmlFor={sshHostFieldId} className="mb-1 block text-xs text-text-muted">
                       {t("configModal.ssh.host")} *
                     </label>
-                    <Select
-                      id={sshHostFieldId}
-                      value={sshHostId}
-                      onChange={(event) => setSshHostId(event.target.value)}
-                      className="text-sm"
-                    >
-                      <option value="">{t("configModal.ssh.selectHost")}</option>
-                      {sshHosts.map((host) => (
-                        <option key={host.id} value={host.id}>
-                          {host.name} · {host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}`}
-                        </option>
-                      ))}
-                    </Select>
+                    <div className="flex gap-1">
+                      <Select
+                        id={sshHostFieldId}
+                        value={sshHostId}
+                        onChange={(event) => setSshHostId(event.target.value)}
+                        className="min-w-0 flex-1 text-sm"
+                      >
+                        <option value="">{t("configModal.ssh.selectHost")}</option>
+                        {sshHosts.map((host) => (
+                          <option key={host.id} value={host.id}>
+                            {host.name} · {host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}`}
+                          </option>
+                        ))}
+                      </Select>
+                      {onManageSshHosts && (
+                        <button type="button" onClick={onManageSshHosts} className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary">
+                          {t("configModal.ssh.manageHosts")}
+                        </button>
+                      )}
+                    </div>
                     {sshHosts.length === 0 && (
                       <p className="mt-1 text-[11px] text-warning">{t("configModal.ssh.noHosts")}</p>
                     )}
@@ -614,7 +622,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                           setRemotePathStatus(null);
                         }}
                         placeholder="/home/dev/projects/my-app"
-                        className="flex-1 text-sm"
+                        className="min-w-0 flex-1 text-sm"
                       />
                       <button type="button" onClick={openRemotePicker} className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary">
                         {t("common.browse")}
@@ -633,7 +641,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
               )}
 
               {/* Group selector */}
-              {projectType === "local" && <div>
+              <div>
                 <label className="mb-1 block text-xs text-text-muted">分组</label>
                 <GroupSelector
                   groups={groups}
@@ -641,7 +649,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                   onChange={setGroupId}
                   displayName={selectedGroupName}
                 />
-              </div>}
+              </div>
 
               <div>
                 <label id={cliToolLabelId} htmlFor={cliToolFieldId} className="mb-1 block text-xs text-text-muted">CLI 工具</label>
@@ -665,36 +673,36 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                 />
               )}
 
-              <div>
-                <label htmlFor={shellFieldId} className="mb-1 block text-xs text-text-muted">Shell</label>
-                <Select
-                  id={shellFieldId}
-                  key={shellSelectKey}
-                  value={shellSelectValue}
-                  aria-label={t("configModal.a11y.shell")}
-                  onChange={(e) => {
-                    const nextShell = e.target.value;
-                    logInfo("[config-modal] shell select onChange", {
-                      instanceId: logInstanceIdRef.current,
-                      nextShell,
-                    });
-                    if (!nextShell.trim()) {
-                      logWarn("[config-modal] ignored empty shell select onChange", {
+              {projectType === "local" && <div>
+                  <label htmlFor={shellFieldId} className="mb-1 block text-xs text-text-muted">Shell</label>
+                  <Select
+                    id={shellFieldId}
+                    key={shellSelectKey}
+                    value={shellSelectValue}
+                    aria-label={t("configModal.a11y.shell")}
+                    onChange={(e) => {
+                      const nextShell = e.target.value;
+                      logInfo("[config-modal] shell select onChange", {
                         instanceId: logInstanceIdRef.current,
-                        shell,
+                        nextShell,
                       });
-                      return;
-                    }
-                    setShell(nextShell);
-                  }}
-                  className="text-sm"
-                  placeholder="请选择"
-                >
-                  {shellOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </Select>
-              </div>
+                      if (!nextShell.trim()) {
+                        logWarn("[config-modal] ignored empty shell select onChange", {
+                          instanceId: logInstanceIdRef.current,
+                          shell,
+                        });
+                        return;
+                      }
+                      setShell(nextShell);
+                    }}
+                    className="text-sm"
+                    placeholder="请选择"
+                  >
+                    {shellOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </Select>
+              </div>}
 
               {cliTool.trim() === "" && (
                 <Field label="启动命令" value={startupCmd} onChange={setStartupCmd} placeholder="npm run dev" />

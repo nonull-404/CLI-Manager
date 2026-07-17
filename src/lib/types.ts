@@ -24,10 +24,19 @@ export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
 
+export interface SshHostGroup {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface SshHost {
   id: string;
   name: string;
   group_name: string;
+  group_id: string | null;
   host: string;
   port: number;
   username: string;
@@ -55,6 +64,7 @@ export interface SshHost {
 export interface CreateSshHostInput {
   name: string;
   group_name?: string;
+  group_id?: string | null;
   host?: string;
   port?: number;
   username?: string;

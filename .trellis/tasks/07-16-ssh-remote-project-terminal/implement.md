@@ -8,7 +8,7 @@
 
 - 总体设计已批准。
 - UI 已批准，最终稿见 `ui/project-type-tabs-v3.png` 等页面。
-- Changelog Target 为 `[TEMP]`，最终完成时更新 `CHANGELOG.md`。
+- Changelog Target 为 `V1.3.0`，最终完成时更新 `CHANGELOG.md`。
 - 实现前加载 `trellis-before-dev`，重新读取 frontend/backend spec index。
 - 修改任何函数、类或方法前必须运行 GitNexus `impact`；当前 MCP 不可用时使用项目本地 GitNexus CLI。HIGH/CRITICAL 风险必须先告知用户。
 
@@ -140,8 +140,59 @@
 1. 日志脱敏和远程命令转义测试。
 2. WebDAV/导出排除秘密与机器相关私钥路径，导入后要求重新绑定。
 3. 补齐 zh-CN/en-US 文案和 aria。
-4. 更新 `docs/功能清单.md` 与 `CHANGELOG.md` 的 `[TEMP]`。
+4. 更新 `docs/功能清单.md` 与 `CHANGELOG.md` 的 `V1.3.0`。
 5. 关联 Issue #145 的提交说明。
+
+### Stage 9：SSH 主机配置根因返工
+
+状态：代码实现完成，待人工桌面验收（2026-07-17）。
+
+1. 按已确认的 `ui/hostform.png` 重构 SSH 主机编辑器，使用左侧分区导航、右侧单列配置区和固定底部操作栏。
+2. 修复现有表单“展示了字段但没有写入生效模式”的数据断层：跳板主机必须同步 `jump_mode`，ProxyCommand 必须同步 `proxy_type`。
+3. 根据连接来源、认证方式、跳板和代理模式动态展示有效字段，隐藏无效配置，避免用户保存互相冲突的参数。
+4. 增加保存/测试前前端校验，并让连接诊断、错误状态和交互认证限制可理解。
+5. 对齐新增终端 SSH 表单的视觉层级、选择器行为与中英文文案。
+
+验收：SSH 主机配置不再是无语义的字段堆叠；用户可完成 SSH Config、Agent、私钥、密码/交互认证、跳板主机和 ProxyCommand 配置，测试连接后再保存并用于创建 SSH 远程项目。代码验收已完成：`npx tsc --noEmit`、`git diff --check`、GitNexus 变更审计；仍需人工验证 Windows 桌面视觉、真实 OpenSSH 连接和中英文切换。
+
+### Stage 10：SSH 认证方式契约修复
+
+状态：实施中（2026-07-17）。
+
+1. 将 SSH Config 视为连接来源而非普通认证方式；Config 模式由 `~/.ssh/config` 管理用户、端口、认证、跳板和代理。
+2. 手动连接仅提供 Agent、私钥、密码和 Keyboard-interactive；切换方式时清理不再生效的私钥等字段。
+3. TypeScript 和 Rust 双层按 `auth_mode` 过滤 OpenSSH 参数，禁止旧私钥泄漏到 Agent、密码或交互认证。
+4. 主机列表支持直接打开 SSH 终端，用于密码、MFA 和私钥口令交互。
+5. 为 SSH Config、Agent、私钥、密码和 Keyboard-interactive 增加参数构建回归测试。
+
+验收：UI 选中的认证方式与最终 `ssh` 参数严格一致；切换认证方式不会携带隐藏字段；无需先创建项目即可打开 SSH 主机终端完成交互认证。
+
+补充 UI 约束：SSH 主机编辑器固定弹窗高度，取消左侧分区导航，改用顶部横向标签和纵向滚动联动；所有配置分区同时挂载，标签点击只负责定位，不再卸载字段状态。
+
+### Stage 11：跨平台 SSH 密码凭据与 AskPass
+
+状态：代码实现完成，待真实系统凭据库和 OpenSSH 人工验收（2026-07-17）。
+
+1. 将 WebDAV 独立 keyring 初始化收敛到共享 `credential_store`，统一支持 Windows Credential Manager、macOS Keychain 和 Linux Secret Service。
+2. SSH 密码模式增加系统凭据保存、状态检查、替换和删除 IPC；SQLite 仅保存 `credential_ref`。
+3. 新增一次性 loopback AskPass broker：OpenSSH 子进程只接收随机令牌和本地地址，密码不进入命令行、普通环境变量、日志、数据库或同步数据。
+4. 主程序与 daemon 均支持作为 AskPass helper 启动；未知提示拒绝自动回答，Keyboard-interactive/MFA 保持人工输入。
+5. 新建连接测试使用临时凭据条目，测试结束立即删除；编辑时留空密码保留已有系统凭据。
+
+验收：Windows/macOS/Linux 可保存 SSH 登录密码并由系统 OpenSSH 使用；WSL 原生运行时仅在 Secret Service 可用时支持保存，否则明确失败并保留终端询问模式。
+
+### Stage 12：SSH 主机体验收敛与多级分组
+
+状态：代码实现完成，待人工桌面验收（2026-07-17）。
+
+1. SSH 主机新增/编辑弹框保持固定高度，取消左侧菜单，使用顶部横向标签与滚动联动；所有分区同时挂载，切换连接来源不丢失已输入字段。
+2. 测试结果移动到底部“测试连接”按钮右侧，按测试中、成功、失败使用黄、绿、红区分；详细诊断通过按钮附近浮层查看。
+3. 新建主机默认认证为“用户/密码”；保存密码走系统凭据库，连接测试和远程目录检测通过 AskPass 使用 `credential_ref`。
+4. 新建 SSH 远程项目不再限制为 Agent/私钥；选择“用户/密码”的主机可以进行路径检测和目录浏览。
+5. SSH 主机分组改为 `ssh_host_groups` 多级树，列表支持新增根分组、为任意分组新增子分组、删除分组时提升子分组和主机。
+6. 新建 SSH 主机表单中的分组控件为可输入搜索的下拉框，选择多级分组路径；项目列表中的 SSH 项目不再显示额外 SSH 徽章。
+
+验收：真实服务器上用户/密码测试连接、目录浏览、SSH 终端启动均可用；多级分组树展示和删除提升逻辑正确；弹框内错误与外层列表错误不重复；中英文切换后新增文案完整。
 
 ## 5. 验证顺序
 

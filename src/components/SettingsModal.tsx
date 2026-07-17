@@ -266,7 +266,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "providers") return <ProviderSettingsPage searchValue={searchValue} />;
     if (activeTab === "model-pricing") return <ModelPricingSettingsPage searchValue={searchValue} />;
     if (activeTab === "cc-connect") return <CcConnectSettingsPage />;
-    if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} />;
+    if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} onTerminalOpened={onClose} />;
     if (activeTab === "sync") return <SyncSettingsPage />;
     if (activeTab === "hooks") return <HookSettingsPage />;
     if (activeTab === "statusline") return <StatuslineSettingsPage searchValue={searchValue} />;

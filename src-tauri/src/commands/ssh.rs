@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::time::Duration;
+use uuid::Uuid;
 
 use crate::shell_resolver::{output_with_timeout, silent_command};
 
@@ -21,6 +22,8 @@ pub struct SshConnectionSpec {
     config_alias: String,
     auth_mode: String,
     identity_file: String,
+    #[serde(default)]
+    credential_ref: String,
     jump_target: String,
     proxy_command: String,
     connect_timeout_sec: u64,
@@ -80,7 +83,55 @@ fn validate_spec(spec: &SshConnectionSpec) -> Result<(), String> {
     if spec.server_alive_count_max > 100 {
         return Err("ssh_server_alive_count_invalid".to_string());
     }
+    if !matches!(
+        spec.auth_mode.as_str(),
+        "ssh_config" | "agent" | "identity_file" | "password_prompt" | "interactive" | "credential_ref"
+    ) {
+        return Err("ssh_auth_mode_invalid".to_string());
+    }
+    if spec.auth_mode == "identity_file" && spec.identity_file.trim().is_empty() {
+        return Err("ssh_identity_file_required".to_string());
+    }
+    if spec.auth_mode == "credential_ref" && spec.credential_ref.trim().is_empty() {
+        return Err("ssh_credential_ref_required".to_string());
+    }
     Ok(())
+}
+
+fn ssh_password_account(host_id: &str) -> Result<String, String> {
+    let id = Uuid::parse_str(host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
+    Ok(format!("ssh:{id}:password"))
+}
+
+#[tauri::command]
+pub async fn ssh_save_password(host_id: String, password: String) -> Result<String, String> {
+    if password.is_empty() {
+        return Err("ssh_password_required".to_string());
+    }
+    let account = ssh_password_account(&host_id)?;
+    let account_for_store = account.clone();
+    tokio::task::spawn_blocking(move || crate::credential_store::set(&account_for_store, &password))
+        .await
+        .map_err(|err| format!("ssh credential task failed: {err}"))??;
+    Ok(account)
+}
+
+#[tauri::command]
+pub async fn ssh_password_status(host_id: String) -> Result<bool, String> {
+    let account = ssh_password_account(&host_id)?;
+    tokio::task::spawn_blocking(move || {
+        crate::credential_store::get(&account).map(|value| value.is_some_and(|item| !item.is_empty()))
+    })
+    .await
+    .map_err(|err| format!("ssh credential task failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn ssh_delete_password(host_id: String) -> Result<(), String> {
+    let account = ssh_password_account(&host_id)?;
+    tokio::task::spawn_blocking(move || crate::credential_store::delete(&account))
+        .await
+        .map_err(|err| format!("ssh credential task failed: {err}"))?
 }
 
 fn target(spec: &SshConnectionSpec) -> String {
@@ -116,11 +167,18 @@ fn ensure_non_interactive(spec: &SshConnectionSpec) -> Result<(), String> {
     Ok(())
 }
 
-fn ssh_remote_command(spec: &SshConnectionSpec, remote_command: &str) -> Command {
+fn ssh_remote_command(spec: &SshConnectionSpec, remote_command: &str) -> Result<Command, String> {
     let mut command = silent_command("ssh");
+    command.arg("-T");
+    command.args([
+        "-o",
+        if spec.auth_mode == "credential_ref" {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        },
+    ]);
     command
-        .arg("-T")
-        .args(["-o", "BatchMode=yes"])
         .args([
             "-o",
             &format!("ConnectTimeout={}", spec.connect_timeout_sec),
@@ -136,8 +194,34 @@ fn ssh_remote_command(spec: &SshConnectionSpec, remote_command: &str) -> Command
     if spec.config_alias.trim().is_empty() {
         command.args(["-p", &spec.port.to_string()]);
     }
-    if !spec.identity_file.trim().is_empty() {
+    if spec.auth_mode == "identity_file" && !spec.identity_file.trim().is_empty() {
         command.args(["-i", spec.identity_file.trim()]);
+    }
+    match spec.auth_mode.as_str() {
+        "agent" => {
+            command.args(["-o", "PubkeyAuthentication=yes"]);
+            command.args(["-o", "PreferredAuthentications=publickey"]);
+        }
+        "identity_file" => {
+            command.args(["-o", "IdentitiesOnly=yes"]);
+            command.args(["-o", "PreferredAuthentications=publickey"]);
+        }
+        "password_prompt" | "credential_ref" => {
+            command.args(["-o", "PubkeyAuthentication=no"]);
+            command.args(["-o", "PasswordAuthentication=yes"]);
+            command.args(["-o", "KbdInteractiveAuthentication=no"]);
+            command.args(["-o", "PreferredAuthentications=password"]);
+        }
+        "interactive" => {
+            command.args(["-o", "PubkeyAuthentication=no"]);
+            command.args(["-o", "PasswordAuthentication=no"]);
+            command.args(["-o", "KbdInteractiveAuthentication=yes"]);
+            command.args(["-o", "PreferredAuthentications=keyboard-interactive"]);
+        }
+        _ => {}
+    }
+    if spec.auth_mode == "credential_ref" {
+        command.envs(crate::ssh_askpass::prepare(&spec.credential_ref)?);
     }
     if !spec.jump_target.trim().is_empty() {
         command.args(["-J", spec.jump_target.trim()]);
@@ -146,10 +230,10 @@ fn ssh_remote_command(spec: &SshConnectionSpec, remote_command: &str) -> Command
         command.args(["-o", &format!("ProxyCommand={}", spec.proxy_command.trim())]);
     }
     command.arg(target(spec)).arg(remote_command);
-    command
+    Ok(command)
 }
 
-fn ssh_probe_command(spec: &SshConnectionSpec) -> Command {
+fn ssh_probe_command(spec: &SshConnectionSpec) -> Result<Command, String> {
     ssh_remote_command(spec, "printf CLI_MANAGER_SSH_OK")
 }
 
@@ -218,8 +302,9 @@ pub async fn ssh_test_connection(
     }
 
     let timeout = Duration::from_secs(spec.connect_timeout_sec.saturating_add(5).min(305));
+    let command = ssh_probe_command(&spec)?;
     let output = tauri::async_runtime::spawn_blocking(move || {
-        output_with_timeout(ssh_probe_command(&spec), timeout)
+        output_with_timeout(command, timeout)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -258,9 +343,8 @@ pub async fn ssh_check_path(
          else printf 'ok'; fi"
     );
     let timeout = Duration::from_secs(spec.connect_timeout_sec.saturating_add(5).min(305));
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        output_with_timeout(ssh_remote_command(&spec, &script), timeout)
-    })
+    let command = ssh_remote_command(&spec, &script)?;
+    let output = tauri::async_runtime::spawn_blocking(move || output_with_timeout(command, timeout))
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
@@ -304,9 +388,8 @@ pub async fn ssh_list_directories(
         posix_quote(&path)
     );
     let timeout = Duration::from_secs(spec.connect_timeout_sec.saturating_add(10).min(310));
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        output_with_timeout(ssh_remote_command(&spec, &script), timeout)
-    })
+    let command = ssh_remote_command(&spec, &script)?;
+    let output = tauri::async_runtime::spawn_blocking(move || output_with_timeout(command, timeout))
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
@@ -338,7 +421,7 @@ pub async fn ssh_list_directories(
 #[cfg(test)]
 mod tests {
     use super::{
-        posix_quote, ssh_probe_command, target, validate_remote_path, validate_spec,
+        posix_quote, ssh_password_account, ssh_probe_command, target, validate_remote_path, validate_spec,
         SshConnectionSpec,
     };
 
@@ -350,6 +433,7 @@ mod tests {
             config_alias: String::new(),
             auth_mode: "identity_file".to_string(),
             identity_file: "/home/dev/.ssh/id_ed25519".to_string(),
+            credential_ref: String::new(),
             jump_target: "bastion".to_string(),
             proxy_command: String::new(),
             connect_timeout_sec: 12,
@@ -363,7 +447,8 @@ mod tests {
         let spec = spec();
         validate_spec(&spec).unwrap();
         assert_eq!(target(&spec), "dev@example.com");
-        let args: Vec<String> = ssh_probe_command(&spec)
+        let command = ssh_probe_command(&spec).unwrap();
+        let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
@@ -382,13 +467,16 @@ mod tests {
         spec.config_alias = "gpu-dev".to_string();
         spec.host.clear();
         spec.port = 0;
+        spec.auth_mode = "ssh_config".to_string();
         validate_spec(&spec).unwrap();
         assert_eq!(target(&spec), "gpu-dev");
-        let args: Vec<String> = ssh_probe_command(&spec)
+        let command = ssh_probe_command(&spec).unwrap();
+        let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         assert!(!args.iter().any(|arg| arg == "-p"));
+        assert!(!args.iter().any(|arg| arg == "-i"));
     }
 
     #[test]
@@ -397,5 +485,42 @@ mod tests {
         assert_eq!(validate_remote_path("/srv/app").unwrap(), "/srv/app");
         assert!(validate_remote_path("srv/app").is_err());
         assert!(validate_remote_path("/srv/../etc").is_err());
+    }
+
+    #[test]
+    fn password_probe_does_not_include_stale_identity_file() {
+        let mut spec = spec();
+        spec.auth_mode = "password_prompt".to_string();
+        let command = ssh_probe_command(&spec).unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(!args.iter().any(|arg| arg == "-i"));
+        assert!(args.iter().any(|arg| arg == "PreferredAuthentications=password"));
+    }
+
+    #[test]
+    fn interactive_probe_does_not_include_stale_identity_file() {
+        let mut spec = spec();
+        spec.auth_mode = "interactive".to_string();
+        let command = ssh_probe_command(&spec).unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(!args.iter().any(|arg| arg == "-i"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "PreferredAuthentications=keyboard-interactive"));
+    }
+
+    #[test]
+    fn credential_account_is_scoped_to_valid_host_uuid() {
+        assert_eq!(
+            ssh_password_account("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            "ssh:550e8400-e29b-41d4-a716-446655440000:password"
+        );
+        assert!(ssh_password_account("../webdav").is_err());
     }
 }

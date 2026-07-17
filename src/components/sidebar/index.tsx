@@ -2617,6 +2617,11 @@ export function Sidebar({
       {showAdd && (
         <ConfigModal
           defaultGroupId={addToGroupId}
+          onManageSshHosts={() => {
+            setShowAdd(false);
+            setAddToGroupId(null);
+            onOpenSettings("ssh-hosts");
+          }}
           onClose={() => {
             setShowAdd(false);
             setAddToGroupId(null);
@@ -2626,10 +2631,23 @@ export function Sidebar({
       {cloningProject && (
         <ConfigModal
           cloneFrom={cloningProject}
+          onManageSshHosts={() => {
+            setCloningProject(null);
+            onOpenSettings("ssh-hosts");
+          }}
           onClose={() => setCloningProject(null)}
         />
       )}
-      {editingProject && <ConfigModal project={editingProject} onClose={() => setEditingProject(null)} />}
+      {editingProject && (
+        <ConfigModal
+          project={editingProject}
+          onManageSshHosts={() => {
+            setEditingProject(null);
+            onOpenSettings("ssh-hosts");
+          }}
+          onClose={() => setEditingProject(null)}
+        />
+      )}
       {batchShellPreselected && (
         <BatchShellDialog
           preselectedIds={batchShellPreselected}

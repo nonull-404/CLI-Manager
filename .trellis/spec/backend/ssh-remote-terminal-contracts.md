@@ -12,10 +12,13 @@ The first SSH scope is a remote terminal MVP, not a remote IDE. Local and WSL pr
 
 ```sql
 ssh_hosts(id, name, group_name, host, port, username, config_alias,
-          auth_mode, identity_file, credential_ref, jump_host_id,
-          proxy_command, connect_timeout_sec, server_alive_interval_sec,
-          server_alive_count_max, initialization_command, notes,
-          sort_order, created_at, updated_at)
+          auth_mode, identity_file, credential_ref, jump_mode, jump_host_id,
+          proxy_type, proxy_host, proxy_port, proxy_command,
+          connect_timeout_sec, server_alive_interval_sec,
+          server_alive_count_max, terminal_encoding, startup_script, notes,
+          sort_order, created_at, updated_at, group_id)
+
+ssh_host_groups(id, name, parent_id, sort_order, created_at)
 
 projects.environment_type TEXT NOT NULL DEFAULT 'local'
 projects.ssh_host_id TEXT REFERENCES ssh_hosts(id) ON DELETE SET NULL
@@ -28,6 +31,10 @@ projects.remote_path TEXT NOT NULL DEFAULT ''
 pub async fn ssh_client_status() -> SshClientStatus;
 pub async fn ssh_test_connection(spec: SshConnectionSpec)
     -> Result<SshConnectionTestResult, String>;
+pub async fn ssh_save_password(host_id: String, password: String)
+    -> Result<String, String>;
+pub async fn ssh_password_status(host_id: String) -> Result<bool, String>;
+pub async fn ssh_delete_password(host_id: String) -> Result<(), String>;
 pub async fn ssh_check_path(spec: SshConnectionSpec, path: String)
     -> Result<SshPathCheckResult, String>;
 pub async fn ssh_list_directories(spec: SshConnectionSpec, path: String)
@@ -67,11 +74,15 @@ pub struct SshLaunchPlan {
 - SSH project identity is `(environment_type = "ssh", ssh_host_id, normalized remote_path)`. Never use the local `path` field to identify an SSH project.
 - Deleting a host sets project `ssh_host_id` to `null`; the project remains visible and must require explicit rebinding before launch.
 - Host grouping is independent from the existing manual project grouping.
+- `ssh_host_groups` owns the editable multi-level SSH host tree. `ssh_hosts.group_name` is legacy display/migration data; new UI should bind by `group_id`.
+- Migration 21 must preserve old flat `group_name` values as root groups and backfill each host's `group_id`.
 
 ### Authentication and secrets
 
-- Supported launch modes are `ssh_config`, `agent`, `identity_file`, `password_prompt`, and `interactive`.
-- `credential_ref` is reserved but rejected until a platform credential implementation exists.
+- Supported launch modes are `ssh_config`, `agent`, `identity_file`, `credential_ref`, `password_prompt`, and `interactive`.
+- `credential_ref` means Username / Password: SQLite stores only the credential reference, while the secret lives in the platform credential store.
+- Saved SSH passwords must use the shared credential store: Windows Credential Manager, macOS Keychain, or Linux Secret Service. Native WSL support depends on Secret Service availability.
+- OpenSSH receives saved passwords only through the one-shot loopback AskPass helper. The command line, ordinary logs, WebDAV payloads, exports, session snapshots, and normal environment data must not contain the password.
 - Passwords, private-key contents/passphrases, and proxy credentials must not enter SQLite, Tauri store, session snapshots, logs, WebDAV, or local exports.
 - `identity_file` is machine-local and must not be synchronized.
 - Host key trust and changed-key blocking remain owned by system OpenSSH.
@@ -82,7 +93,9 @@ pub struct SshLaunchPlan {
 - Reject NUL, CR, LF, relative paths, and any `..` path segment at the Rust boundary.
 - Quote every path and environment value with the dedicated POSIX quoting helper.
 - Environment keys must match shell variable syntax.
-- Directory browsing/check commands use non-interactive `BatchMode=yes`; password and interactive/MFA modes degrade to manual entry plus an interactive terminal.
+- Directory browsing/check commands use non-interactive `BatchMode=yes` for SSH Config, Agent, and identity-file modes.
+- `credential_ref` directory browsing/check commands use `BatchMode=no` plus AskPass. Any AskPass/credential error must be returned; do not silently retry without the password.
+- `password_prompt` and `interactive` modes require a real PTY and must return `ssh_interactive_auth_required` for directory browsing/check commands.
 - A successful launch enters `remote_path`, emits OSC 777 `cli-manager-ssh=connected`, applies environment overrides, runs initialization/startup commands, and finally returns to the user's remote login shell.
 
 ### PTY, daemon, and restore
@@ -117,7 +130,9 @@ pub struct SshLaunchPlan {
 | Timeout is zero or greater than 300 seconds | `ssh_connect_timeout_invalid`. |
 | Unknown auth mode | `ssh_auth_mode_invalid`. |
 | Identity-file mode without a path | `ssh_identity_file_required`. |
-| Credential-reference mode in MVP | `ssh_credential_ref_not_supported`. |
+| Credential-reference mode without a saved credential | `ssh_credential_ref_required`. |
+| Empty password when saving a credential | `ssh_password_required`. |
+| Invalid host id for credential account scoping | `ssh_host_id_invalid`. |
 | Host argument contains NUL/CR/LF | `ssh_launch_argument_invalid`. |
 | Proxy URL embeds `user:password@host` | `ssh_proxy_credentials_forbidden`. |
 | Remote path is relative or contains NUL/CR/LF | `ssh_remote_path_invalid`. |
@@ -133,7 +148,8 @@ pub struct SshLaunchPlan {
 - Good: one host profile backs several SSH projects with distinct remote paths and existing manual project groups.
 - Good: a path such as `/srv/project name/开发` is quoted once, opens correctly, and cannot inject shell syntax.
 - Good: application restart attaches a daemon-owned SSH PTY without repeating initialization commands.
-- Base: password/MFA users manually enter a remote path, then authenticate in the real PTY.
+- Good: Username / Password host can test connection and browse/check a remote path through AskPass without exposing the password.
+- Base: password-prompt/MFA users manually enter a remote path, then authenticate in the real PTY.
 - Base: an imported SSH project remains visible with a rebinding warning.
 - Bad: treating `path = ""` as a local project key; on POSIX this can match every local path.
 - Bad: passing a remote POSIX path into local filesystem, Git, Worktree, history, or provider APIs.
@@ -144,7 +160,10 @@ pub struct SshLaunchPlan {
 - Run `npx tsc --noEmit`.
 - Run `cargo check` and `cargo test --lib` from `src-tauri`.
 - Assert migration defaults all existing projects to `local` and host deletion nulls remote bindings.
+- Assert SSH group migration preserves legacy flat groups as root `ssh_host_groups` and backfills `ssh_hosts.group_id`.
 - Assert launch-plan validation, POSIX quoting, environment-key validation, proxy credential rejection, jump targets, and legacy daemon frame compatibility.
+- Assert password/interactive/agent modes do not include stale identity-file arguments after auth-mode switches.
+- Assert AskPass serves a saved password only for the matching one-shot token and rejects reused or unknown prompts.
 - Assert remote path checking accepts spaces/Unicode/single quotes and rejects traversal, relative paths, NUL, CR, and LF.
 - Assert session restore attaches live daemon PTYs and never reruns an exited SSH command.
 - Assert SSH projects are rejected by file and Worktree stores and excluded from local path matching.

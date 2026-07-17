@@ -273,6 +273,7 @@ mod tests {
                 config_alias: String::new(),
                 auth_mode: "agent".into(),
                 identity_file: String::new(),
+                credential_ref: String::new(),
                 jump_target: String::new(),
                 proxy_command: String::new(),
                 connect_timeout_sec: 15,

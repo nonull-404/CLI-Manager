@@ -135,6 +135,9 @@ function formatTerminalCreateError(error: unknown): string {
   if (message.includes("ssh_client_unavailable") || message.includes("executable not found")) {
     return translateCurrent("terminal.ssh.clientUnavailable");
   }
+  if (message.includes("ssh_credential_missing") || message.includes("ssh_credential_ref_required")) {
+    return translateCurrent("terminal.ssh.credentialMissing");
+  }
   return message;
 }
 
@@ -223,7 +226,7 @@ interface TerminalStore {
   /** 仅运行态：XTerm 输出监听就绪后才可执行 daemon attach。 */
   daemonAttachPendingSessionIds: Set<string>;
   subagentTranscripts: Record<string, SubagentTranscriptContent>;
-  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string) => Promise<string>;
+  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string, sshHostId?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
   setWorkspanModeEnabled: (enabled: boolean) => void;
@@ -976,6 +979,7 @@ export function formatManualDirectCodexInputForPty(command: string, shell?: Shel
 
 export interface DetachedPtyLaunchOptions {
   projectId?: string;
+  sshHostId?: string;
   cwd?: string | null;
   startupCmd?: string | null;
   envVars?: Record<string, string> | null;
@@ -1144,9 +1148,15 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
     ? useProjectStore.getState().projects.find((item) => item.id === options.projectId)
     : undefined;
 
-  if (project?.environment_type === "ssh") {
-    const sshHostId = project.ssh_host_id?.trim();
-    const remotePath = project.remote_path.trim();
+  const requestedSshHostId = project?.environment_type === "ssh"
+    ? project.ssh_host_id?.trim()
+    : options.sshHostId?.trim();
+  if (project?.environment_type === "ssh" && !requestedSshHostId) {
+    throw new Error("ssh_project_configuration_invalid");
+  }
+  if (requestedSshHostId) {
+    const sshHostId = requestedSshHostId;
+    const remotePath = project?.environment_type === "ssh" ? project.remote_path.trim() : "/";
     if (!sshHostId || !remotePath) throw new Error("ssh_project_configuration_invalid");
 
     const sshStore = useSshHostStore.getState();
@@ -1268,12 +1278,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     )),
   })),
 
-  createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId) => {
+  createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId, sshHostId) => {
     const os = await getOsPlatform();
     let launch: ResolvedPtyLaunch;
     let sessionId: string;
     try {
-      launch = await resolvePtyLaunch({ projectId, cwd, startupCmd, envVars, shell }, os);
+      launch = await resolvePtyLaunch({ projectId, sshHostId, cwd, startupCmd, envVars, shell }, os);
       sessionId = await invoke<string>("pty_create", launch.invokeArgs);
     } catch (err) {
       const description = formatTerminalCreateError(err);

@@ -607,6 +607,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                 .entry("CHERE_INVOKING".to_string())
                 .or_insert_with(|| "1".to_string());
         }
+        let mut ssh_env = HashMap::new();
         let (exe, args) = if let Some(ssh_launch) = ssh_launch {
             let launch = ssh_launch.build_process_launch().map_err(|e| {
                 error!(
@@ -615,6 +616,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                 );
                 e
             })?;
+            ssh_env = launch.env;
             (launch.executable, launch.args)
         } else {
             Self::build_shell_args(shell_key, env_vars.as_ref()).map_err(|e| {
@@ -650,6 +652,9 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         let mut cmd = CommandBuilder::new(&exe);
         for arg in args {
             cmd.arg(arg);
+        }
+        for (key, value) in ssh_env {
+            cmd.env(&key, &value);
         }
 
         if ssh_launch.is_none() {

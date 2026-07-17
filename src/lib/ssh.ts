@@ -7,6 +7,7 @@ export interface SshConnectionSpecPayload {
   configAlias: string;
   authMode: string;
   identityFile: string;
+  credentialRef: string;
   jumpTarget: string;
   proxyCommand: string;
   connectTimeoutSec: number;
@@ -29,7 +30,7 @@ export function buildSshConnectionSpec(
   host: SshHost,
   allHosts: SshHost[]
 ): SshConnectionSpecPayload {
-  const jumpHost = host.jump_host_id
+  const jumpHost = host.jump_mode !== "none" && host.jump_host_id
     ? allHosts.find((candidate) => candidate.id === host.jump_host_id)
     : null;
   return {
@@ -38,9 +39,10 @@ export function buildSshConnectionSpec(
     username: host.username,
     configAlias: host.config_alias,
     authMode: host.auth_mode,
-    identityFile: host.identity_file,
+    identityFile: host.auth_mode === "identity_file" ? host.identity_file : "",
+    credentialRef: host.auth_mode === "credential_ref" ? host.credential_ref : "",
     jumpTarget: buildJumpTarget(jumpHost),
-    proxyCommand: host.proxy_command,
+    proxyCommand: host.proxy_type === "proxy_command" ? host.proxy_command : "",
     connectTimeoutSec: host.connect_timeout_sec,
     serverAliveIntervalSec: host.server_alive_interval_sec,
     serverAliveCountMax: host.server_alive_count_max,

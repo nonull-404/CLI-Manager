@@ -11,6 +11,8 @@ pub struct SshLaunchPlan {
     pub config_alias: String,
     pub auth_mode: String,
     pub identity_file: String,
+    #[serde(default)]
+    pub credential_ref: String,
     pub jump_target: String,
     pub proxy_command: String,
     pub connect_timeout_sec: u64,
@@ -28,6 +30,7 @@ pub struct SshLaunchPlan {
 pub struct SshProcessLaunch {
     pub executable: String,
     pub args: Vec<String>,
+    pub env: HashMap<String, String>,
 }
 
 impl SshLaunchPlan {
@@ -45,16 +48,41 @@ impl SshLaunchPlan {
         if self.config_alias.trim().is_empty() {
             args.extend(["-p".to_string(), self.port.to_string()]);
         }
-        if !self.identity_file.trim().is_empty() {
+        if self.auth_mode == "identity_file" && !self.identity_file.trim().is_empty() {
             args.extend(["-i".to_string(), self.identity_file.trim().to_string()]);
         }
         match self.auth_mode.as_str() {
-            "identity_file" => args.extend(["-o".to_string(), "IdentitiesOnly=yes".to_string()]),
-            "password_prompt" => args.extend([
+            "agent" => args.extend([
+                "-o".to_string(),
+                "PubkeyAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+            ]),
+            "identity_file" => args.extend([
+                "-o".to_string(),
+                "IdentitiesOnly=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+            ]),
+            "password_prompt" | "credential_ref" => args.extend([
                 "-o".to_string(),
                 "PubkeyAuthentication=no".to_string(),
                 "-o".to_string(),
-                "PreferredAuthentications=password,keyboard-interactive".to_string(),
+                "PasswordAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "KbdInteractiveAuthentication=no".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=password".to_string(),
+            ]),
+            "interactive" => args.extend([
+                "-o".to_string(),
+                "PubkeyAuthentication=no".to_string(),
+                "-o".to_string(),
+                "PasswordAuthentication=no".to_string(),
+                "-o".to_string(),
+                "KbdInteractiveAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=keyboard-interactive".to_string(),
             ]),
             _ => {}
         }
@@ -69,9 +97,15 @@ impl SshLaunchPlan {
         }
         args.push(self.target());
         args.push(self.remote_command());
+        let env = if self.auth_mode == "credential_ref" {
+            crate::ssh_askpass::prepare(&self.credential_ref)?
+        } else {
+            HashMap::new()
+        };
         Ok(SshProcessLaunch {
             executable: "ssh".to_string(),
             args,
+            env,
         })
     }
 
@@ -105,14 +139,15 @@ impl SshLaunchPlan {
         if self.auth_mode == "identity_file" && self.identity_file.trim().is_empty() {
             return Err("ssh_identity_file_required".to_string());
         }
-        if self.auth_mode == "credential_ref" {
-            return Err("ssh_credential_ref_not_supported".to_string());
+        if self.auth_mode == "credential_ref" && self.credential_ref.trim().is_empty() {
+            return Err("ssh_credential_ref_required".to_string());
         }
         for value in [
             &self.config_alias,
             &self.host,
             &self.username,
             &self.identity_file,
+            &self.credential_ref,
             &self.jump_target,
             &self.proxy_command,
         ] {
@@ -257,6 +292,7 @@ mod tests {
             config_alias: String::new(),
             auth_mode: "identity_file".into(),
             identity_file: "C:/Users/dev/.ssh/id key".into(),
+            credential_ref: String::new(),
             jump_target: "bastion".into(),
             proxy_command: String::new(),
             connect_timeout_sec: 15,
@@ -290,8 +326,10 @@ mod tests {
         value.config_alias = "prod".into();
         value.host.clear();
         value.port = 0;
+        value.auth_mode = "ssh_config".into();
         let launch = value.build_process_launch().unwrap();
         assert!(!launch.args.iter().any(|arg| arg == "-p"));
+        assert!(!launch.args.iter().any(|arg| arg == "-i"));
         assert_eq!(launch.args[launch.args.len() - 2], "prod");
     }
 
@@ -322,7 +360,6 @@ mod tests {
     fn password_mode_disables_public_key_authentication() {
         let mut value = plan();
         value.auth_mode = "password_prompt".into();
-        value.identity_file.clear();
         let launch = value.build_process_launch().unwrap();
         assert!(launch
             .args
@@ -331,6 +368,31 @@ mod tests {
         assert!(launch
             .args
             .iter()
-            .any(|arg| arg == "PreferredAuthentications=password,keyboard-interactive"));
+            .any(|arg| arg == "PreferredAuthentications=password"));
+        assert!(!launch.args.iter().any(|arg| arg == "-i"));
+    }
+
+    #[test]
+    fn interactive_mode_does_not_use_stale_identity_file() {
+        let mut value = plan();
+        value.auth_mode = "interactive".into();
+        let launch = value.build_process_launch().unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-i"));
+        assert!(launch
+            .args
+            .iter()
+            .any(|arg| arg == "PreferredAuthentications=keyboard-interactive"));
+    }
+
+    #[test]
+    fn agent_mode_does_not_use_stale_identity_file() {
+        let mut value = plan();
+        value.auth_mode = "agent".into();
+        let launch = value.build_process_launch().unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-i"));
+        assert!(launch
+            .args
+            .iter()
+            .any(|arg| arg == "PreferredAuthentications=publickey"));
     }
 }

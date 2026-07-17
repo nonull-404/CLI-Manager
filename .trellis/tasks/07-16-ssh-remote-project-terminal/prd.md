@@ -8,7 +8,7 @@
 
 关联 Issue：https://github.com/dark-hxx/CLI-Manager/issues/145
 
-Changelog Target: `[TEMP]`
+Changelog Target: `V1.3.0`
 
 ## Confirmed Facts
 
@@ -67,7 +67,7 @@ Changelog Target: `[TEMP]`
 
 ## Open Questions
 
-- 设计审阅阶段确认 P1 是否包含系统凭据库保存密码；当前推荐 P1 仅保证安全交互认证，保存密码以跨平台安全存储能力为准。
+- P1 已纳入系统凭据库保存 SSH 登录密码：SQLite 仅保存 `credential_ref`，实际密码进入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service，并通过一次性 AskPass 通道交给系统 OpenSSH。
 - UI 审阅阶段确认 SSH 配置表单的信息密度、分区方式与连接诊断呈现。
 - P2/P3 的远程文件、Git、历史、Hook 优先级在 MVP 设计通过后单独排序，不在 P1 中隐式承诺。
 
@@ -88,4 +88,5 @@ Changelog Target: `[TEMP]`
 - 本任务当前仅处于规划阶段；未经用户批准不进入实现。
 - 2026-07-17：用户已批准总体设计与 UI 方向；最终项目创建方案为现有“新增终端”弹窗顶部增加“本地项目 / SSH 远程项目”类型 Tab。
 - 2026-07-17：用户已批准执行计划。实现必须在独立功能分支完成；每个阶段均需 review、验证后再 commit；全部阶段完成前不得推送；最终只推送功能分支，严禁推送 `master`。
-- 全部实现完成后更新 `CHANGELOG.md` 的 `[TEMP]`，进行整体 review，生成用户逐项验收文档，并确认所有相关改动均已提交。
+- 2026-07-17：用户已批准 SSH 主机配置返工：连接来源改为地址 / SSH Config 两种入口；认证默认“用户/密码”；分组改为多级树；测试结果放在底部测试按钮附近；用户/密码必须可用于连接测试和远程目录浏览。
+- 全部实现完成后更新 `CHANGELOG.md` 的 `V1.3.0`，进行整体 review，生成用户逐项验收文档，并确认所有相关改动均已提交。
