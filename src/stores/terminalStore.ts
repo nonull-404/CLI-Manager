@@ -6,7 +6,7 @@ import type { SubagentTranscriptSource, TerminalSession, Project, SshConnectionS
 import { debugConsoleWarn } from "../lib/debugConsole";
 import { sourceTool, type SyncedHistoryGroup } from "../lib/externalSessionGrouping";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { appendResumeCliArgs, isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand, withCodexLightTuiTheme } from "../lib/projectStartupCommand";
+import { appendResumeCliArgs, isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand, resolveProjectStartupCommand, withCodexLightTuiTheme } from "../lib/projectStartupCommand";
 import { getTerminalTheme } from "../lib/terminalThemes";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
@@ -1164,9 +1164,16 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
     const hosts = useSshHostStore.getState().hosts;
     const host = hosts.find((candidate) => candidate.id === sshHostId);
     if (!host) throw new Error("ssh_host_not_found");
+    const resolvedStartupCmd = options.startupCmd === undefined && project?.environment_type === "ssh"
+      ? resolveProjectStartupCommand(project, { includeProviderOverrides: false })
+      : options.startupCmd?.trim() || undefined;
+    const resolvedEnvironmentOverrides = options.envVars === undefined && project?.environment_type === "ssh"
+      ? parseProjectEnvVars(project) ?? {}
+      : options.envVars ?? {};
 
     return {
       shell: null,
+      startupCmd: resolvedStartupCmd,
       startupHandledByLaunch: true,
       environmentType: "ssh",
       sshHostId: host.id,
@@ -1182,9 +1189,9 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
           ...buildSshConnectionSpec(host, hosts),
           hostId: host.id,
           remotePath,
-          environmentOverrides: options.envVars ?? {},
+          environmentOverrides: resolvedEnvironmentOverrides,
           initializationCommand: host.startup_script.trim() || null,
-          startupCommand: options.startupCmd?.trim() || null,
+          startupCommand: resolvedStartupCmd ?? null,
         },
       },
     };
@@ -1306,7 +1313,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       cwd,
       shell: resolvedShell,
       envVars,
-      startupCmd,
+      startupCmd: launch.startupHandledByLaunch ? launchStartupCmd : startupCmd,
       environmentType: launch.environmentType,
       sshHostId: launch.sshHostId,
       remotePath: launch.remotePath,
@@ -1362,7 +1369,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     await useSessionStore.getState().saveActiveSessionId(sessionId);
     await useSessionStore.getState().saveWorkspans(workspans, activeWorkspanId, newSessions);
 
-    if (launchStartupCmd) {
+    if (launchStartupCmd && !launch.startupHandledByLaunch) {
       setTimeout(() => {
         invoke("pty_write", { sessionId, data: formatStartupInputForPty(launchStartupCmd, normalizeShellKey(resolvedShell) ?? null) }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
@@ -1744,7 +1751,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       cwd: options?.cwd,
       shell: resolvedShell,
       envVars: options?.envVars,
-      startupCmd: options?.startupCmd,
+      startupCmd: launch.startupHandledByLaunch ? launchStartupCmd : options?.startupCmd,
       environmentType: launch.environmentType,
       sshHostId: launch.sshHostId,
       remotePath: launch.remotePath,
@@ -1790,7 +1797,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     await useSessionStore.getState().saveSplits([]);
     await useSessionStore.getState().saveWorkspans(workspans, currentOwner.id, newSessions);
 
-    if (launchStartupCmd) {
+    if (launchStartupCmd && !launch.startupHandledByLaunch) {
       setTimeout(() => {
         invoke("pty_write", { sessionId: splitSessionId, data: formatStartupInputForPty(launchStartupCmd, normalizeShellKey(resolvedShell) ?? null) }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
@@ -2286,7 +2293,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       // 执行启动命令：CLI resume 命令 / 无历史画面的普通命令走这里直接写入；
       // 有历史画面时（仅 shell 分支）改由 XTermTerminal 在贴回完成后重放（deferStartupUntilInitialOutput），
       // 这里不再 setTimeout 写入，避免同一条 startupCmd 被执行两次。
-      if (launchStartupCmd && !hasInitialOutput) {
+      if (launchStartupCmd && !launch.startupHandledByLaunch && !hasInitialOutput) {
         setTimeout(() => {
           invoke("pty_write", { sessionId: newSessionId, data: formatStartupInputForPty(launchStartupCmd!, shellKey) }).catch((err) => {
             logError("Failed to write startup command on restore", {

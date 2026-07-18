@@ -73,8 +73,8 @@ function buildSshHost(input: CreateSshHostInput): SshHost {
     jump_mode: configManaged ? "none" : input.jump_mode ?? "none",
     jump_host_id: configManaged ? null : input.jump_host_id ?? null,
     proxy_type: configManaged ? "none" : input.proxy_type ?? "none",
-    proxy_host: input.proxy_host?.trim() ?? "",
-    proxy_port: normalizePort(input.proxy_port, 0, true),
+    proxy_host: configManaged ? "" : input.proxy_host?.trim() ?? "",
+    proxy_port: configManaged ? 0 : normalizePort(input.proxy_port, 0, true),
     proxy_command: !configManaged && input.proxy_type === "proxy_command" ? input.proxy_command?.trim() ?? "" : "",
     connect_timeout_sec: Math.max(1, Math.trunc(input.connect_timeout_sec ?? 15)),
     server_alive_interval_sec: Math.max(0, Math.trunc(input.server_alive_interval_sec ?? 30)),
@@ -99,6 +99,13 @@ function validateSshHost(host: SshHost, currentId?: string): void {
   }
   if (host.proxy_type === "proxy_command" && !host.proxy_command.trim()) {
     throw new Error("ssh_proxy_command_required");
+  }
+  if ((host.proxy_type === "http" || host.proxy_type === "socks5") && host.proxy_host.includes("@")) {
+    throw new Error("ssh_proxy_credentials_forbidden");
+  }
+  if ((host.proxy_type === "http" || host.proxy_type === "socks5")
+    && (!host.proxy_host.trim() || host.proxy_port < 1 || host.proxy_port > 65535)) {
+    throw new Error("ssh_proxy_address_invalid");
   }
   if (host.auth_mode === "identity_file" && !host.identity_file.trim()) {
     throw new Error("ssh_identity_file_required");

@@ -105,6 +105,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   );
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const dialogDescriptionId = useId();
+  const projectTypeFieldId = useId();
   const nameFieldId = useId();
   const pathFieldId = useId();
   const cliToolFieldId = useId();
@@ -117,7 +118,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [osPlatform, setOsPlatform] = useState<OsPlatform>("windows");
 
   const [name, setName] = useState(
-    cloneFrom ? `${cloneFrom.name} (副本)` : (project?.name ?? "")
+    cloneFrom ? t("configModal.cloneName", { name: cloneFrom.name }) : (project?.name ?? "")
   );
   const [path, setPath] = useState(cloneFrom?.path ?? project?.path ?? "");
   const sourceProject = cloneFrom ?? project;
@@ -127,7 +128,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [sshHostId, setSshHostId] = useState(sourceProject?.ssh_host_id ?? "");
   const [remotePath, setRemotePath] = useState(sourceProject?.remote_path ?? "");
   const [remotePickerOpen, setRemotePickerOpen] = useState(false);
-  const [remotePickerPath, setRemotePickerPath] = useState(sourceProject?.remote_path || "/home");
+  const [remotePickerPath, setRemotePickerPath] = useState(sourceProject?.remote_path || "/");
   const [remoteDirectories, setRemoteDirectories] = useState<SshDirectoryEntry[]>([]);
   const [remotePickerLoading, setRemotePickerLoading] = useState(false);
   const [remotePickerError, setRemotePickerError] = useState("");
@@ -287,7 +288,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   };
 
   const handleBrowse = async () => {
-    applySelectedPath(await open({ directory: true, title: "选择项目目录" }));
+    applySelectedPath(await open({ directory: true, title: t("configModal.chooseProjectDirectory") }));
   };
 
   const handleBrowseSymlink = async () => {
@@ -296,6 +297,14 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   };
 
   const selectedSshHost = sshHosts.find((host) => host.id === sshHostId) ?? null;
+
+  const describeRemotePathError = useCallback((err: unknown) => {
+    const code = String(err);
+    if (code === "ssh_interactive_auth_required") return t("configModal.ssh.interactiveBrowseUnavailable");
+    if (code === "ssh_remote_path_invalid") return t("configModal.ssh.pathInvalid");
+    if (code === "ssh_remote_path_parent_forbidden") return t("configModal.ssh.pathParentForbidden");
+    return code;
+  }, [t]);
 
   const checkRemotePath = async () => {
     if (!selectedSshHost || !remotePath.trim()) {
@@ -312,13 +321,13 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       setRemotePathStatus(result);
       if (!result.exists || !result.accessible) setError(t("configModal.ssh.pathUnavailable"));
     } catch (err) {
-      setError(String(err) === "ssh_interactive_auth_required"
-        ? t("configModal.ssh.interactiveBrowseUnavailable")
-        : String(err));
+      setError(describeRemotePathError(err));
     }
   };
 
   const loadRemoteDirectories = useCallback(async (nextPath: string) => {
+    const normalizedPath = nextPath.trim() || "/";
+    setRemotePickerPath(normalizedPath);
     const host = sshHosts.find((candidate) => candidate.id === sshHostId);
     if (!host) {
       setRemotePickerError(t("configModal.ssh.selectHost"));
@@ -329,22 +338,19 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
     try {
       const entries = await invoke<SshDirectoryEntry[]>("ssh_list_directories", {
         spec: buildSshConnectionSpec(host, sshHosts),
-        path: nextPath,
+        path: normalizedPath,
       });
-      setRemotePickerPath(nextPath);
       setRemoteDirectories(entries);
     } catch (err) {
       setRemoteDirectories([]);
-      setRemotePickerError(String(err) === "ssh_interactive_auth_required"
-        ? t("configModal.ssh.interactiveBrowseUnavailable")
-        : String(err));
+      setRemotePickerError(describeRemotePathError(err));
     } finally {
       setRemotePickerLoading(false);
     }
-  }, [sshHostId, sshHosts, t]);
+  }, [describeRemotePathError, sshHostId, sshHosts, t]);
 
   const openRemotePicker = () => {
-    const initialPath = remotePath.trim() || "/home";
+    const initialPath = remotePath.trim() || "/";
     setRemotePickerOpen(true);
     void loadRemoteDirectories(initialPath);
   };
@@ -425,7 +431,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
         });
-        toast.success("终端修改成功");
+        toast.success(t("configModal.toast.updated"));
       } else {
         await createProject({
           name: name.trim(),
@@ -443,13 +449,13 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
         });
-        toast.success("终端创建成功");
+        toast.success(t("configModal.toast.created"));
       }
       onClose();
     } catch (err) {
       const description = String(err);
       setError(description);
-      toast.error(isEdit ? "修改终端失败" : "新增终端失败", { description });
+      toast.error(isEdit ? t("configModal.toast.updateFailed") : t("configModal.toast.createFailed"), { description });
       logError("Failed to save project in ConfigModal", {
         isEdit,
         name: name.trim(),
@@ -464,8 +470,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   };
 
   const selectedGroupName = groupId
-    ? groups.find((g) => g.id === groupId)?.name ?? "未知分组"
-    : "不分组";
+    ? groups.find((g) => g.id === groupId)?.name ?? t("configModal.group.unknown")
+    : t("configModal.group.none");
   const shellSelectValue = getConfigModalShellPrefill(osPlatform, shell, isEdit, isClone);
   const shellSelectKey = `${osPlatform}:${isEdit ? "edit" : isClone ? "clone" : "create"}`;
 
@@ -487,7 +493,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
         }}
       >
         <DialogContent
-          className="w-[calc(100vw-2rem)] max-w-[500px] overflow-hidden p-0"
+          className="ui-config-modal w-[calc(100vw-2rem)] max-w-[540px] overflow-hidden p-0"
           showCloseButton={false}
           aria-describedby={dialogDescriptionId}
           onEscapeKeyDown={(event) => {
@@ -507,85 +513,94 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
             previousFocusRef.current?.focus();
           }}
         >
-          <form onSubmit={handleSubmit} className="flex max-h-[82vh] min-h-0 flex-col">
-            <div className="shrink-0 px-4 pt-4">
-              <DialogTitle className="mb-4 text-base font-semibold text-text-primary">
-                {isEdit ? "编辑终端" : isClone ? "复制终端配置" : "新增终端"}
+          <form onSubmit={handleSubmit} className="flex max-h-[86vh] min-h-0 flex-col">
+            <div className="shrink-0 border-b border-border/60 px-5 py-4">
+              <DialogTitle className="text-base font-semibold text-text-primary">
+                {isEdit
+                  ? t("configModal.title.edit")
+                  : isClone
+                    ? t("configModal.title.clone")
+                    : t("configModal.title.create")}
               </DialogTitle>
-              <DialogDescription id={dialogDescriptionId} className="sr-only">
+              <DialogDescription id={dialogDescriptionId} className="mt-1 text-xs leading-relaxed text-text-muted">
                 {t("configModal.a11y.dialogDescription")}
               </DialogDescription>
 
               {error && (
-                <div className="mb-3 rounded bg-danger/15 px-2 py-1.5 text-xs text-danger">
+                <div className="mt-3 rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
                   {error}
                 </div>
               )}
             </div>
 
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
-              <div className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-bg-secondary p-1">
-                {(["local", "ssh"] as const).map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    disabled={isEdit}
-                    onClick={() => setProjectType(type)}
-                    className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
-                      projectType === type
-                        ? "bg-primary/15 text-primary ring-1 ring-primary/50"
-                        : "text-text-muted hover:bg-bg-tertiary hover:text-text-secondary"
-                    } disabled:cursor-not-allowed`}
-                  >
-                    {t(type === "local" ? "configModal.type.local" : "configModal.type.ssh")}
-                  </button>
-                ))}
+            <div className="ui-config-modal-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              <div>
+                <label htmlFor={projectTypeFieldId} className="ui-config-form-label">
+                  {t("configModal.projectType")}
+                </label>
+                <Select
+                  id={projectTypeFieldId}
+                  value={projectType}
+                  disabled={isEdit}
+                  onChange={(event) => setProjectType(event.target.value as "local" | "ssh")}
+                  className="text-sm"
+                >
+                  <option value="local">{t("configModal.type.local")}</option>
+                  <option value="ssh">{t("configModal.type.ssh")}</option>
+                </Select>
               </div>
               <Field
                 id={nameFieldId}
                 inputRef={nameInputRef}
-                label="名称 *"
+                label={t("configModal.name")}
+                required
                 value={name}
                 onChange={setName}
               />
 
               {projectType === "local" ? <div>
-                <label htmlFor={pathFieldId} className="mb-1 block text-xs text-text-muted">路径 *</label>
-                <div className="flex gap-1">
+                <label htmlFor={pathFieldId} className="ui-config-form-label">
+                  {t("configModal.path")} <span className="text-danger">*</span>
+                </label>
+                <div className="flex gap-2">
                   <Input
                     id={pathFieldId}
                     type="text"
                     value={path}
                     onChange={(e) => setPath(e.target.value)}
-                    placeholder="C:\\我的项目\\my-app"
-                    className="flex-1 text-sm"
+                    placeholder={t("configModal.pathPlaceholder")}
+                    className="min-w-0 flex-1 text-sm"
                   />
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={handleBrowse}
-                    className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary"
+                    className="h-9 shrink-0 px-3"
                   >
-                    浏览
-                  </button>
+                    {t("common.browse")}
+                  </Button>
                   {symlinkCompatibilityEnabled && (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={handleBrowseSymlink}
                       aria-label={t("configModal.chooseSymlinkPath")}
                       title={t("configModal.chooseSymlinkPath")}
-                      className="shrink-0 rounded px-1.5 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-bg-tertiary hover:text-text-secondary"
+                      className="h-9 shrink-0 px-2 text-[11px]"
                     >
                       WSL
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div> : (
                 <>
                   <div>
-                    <label htmlFor={sshHostFieldId} className="mb-1 block text-xs text-text-muted">
-                      {t("configModal.ssh.host")} *
+                    <label htmlFor={sshHostFieldId} className="ui-config-form-label">
+                      {t("configModal.ssh.host")} <span className="text-danger">*</span>
                     </label>
-                    <div className="flex gap-1">
+                    <div className="flex gap-2">
                       <Select
                         id={sshHostFieldId}
                         value={sshHostId}
@@ -600,9 +615,9 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                         ))}
                       </Select>
                       {onManageSshHosts && (
-                        <button type="button" onClick={onManageSshHosts} className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary">
+                        <Button type="button" variant="outline" size="sm" onClick={onManageSshHosts} className="h-9 shrink-0 px-3">
                           {t("configModal.ssh.manageHosts")}
-                        </button>
+                        </Button>
                       )}
                     </div>
                     {sshHosts.length === 0 && (
@@ -610,10 +625,10 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                     )}
                   </div>
                   <div>
-                    <label htmlFor={remotePathFieldId} className="mb-1 block text-xs text-text-muted">
-                      {t("configModal.ssh.remotePath")} *
+                    <label htmlFor={remotePathFieldId} className="ui-config-form-label">
+                      {t("configModal.ssh.remotePath")} <span className="text-danger">*</span>
                     </label>
-                    <div className="flex gap-1">
+                    <div className="flex gap-2">
                       <Input
                         id={remotePathFieldId}
                         value={remotePath}
@@ -624,12 +639,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                         placeholder="/home/dev/projects/my-app"
                         className="min-w-0 flex-1 text-sm"
                       />
-                      <button type="button" onClick={openRemotePicker} className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary">
+                      <Button type="button" variant="outline" size="sm" onClick={openRemotePicker} className="h-9 shrink-0 px-3">
                         {t("common.browse")}
-                      </button>
-                      <button type="button" onClick={() => void checkRemotePath()} className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary">
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void checkRemotePath()} className="h-9 shrink-0 px-3">
                         {t("configModal.ssh.checkPath")}
-                      </button>
+                      </Button>
                     </div>
                     {remotePathStatus?.exists && remotePathStatus.accessible && (
                       <p className="mt-1 text-[11px] text-primary">
@@ -642,7 +657,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
 
               {/* Group selector */}
               <div>
-                <label className="mb-1 block text-xs text-text-muted">分组</label>
+                <label className="ui-config-form-label">{t("configModal.group.label")}</label>
                 <GroupSelector
                   groups={groups}
                   value={groupId}
@@ -652,7 +667,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               </div>
 
               <div>
-                <label id={cliToolLabelId} htmlFor={cliToolFieldId} className="mb-1 block text-xs text-text-muted">CLI 工具</label>
+                <label id={cliToolLabelId} htmlFor={cliToolFieldId} className="ui-config-form-label">{t("configModal.cliTool")}</label>
                 <CliToolCombobox
                   id={cliToolFieldId}
                   ariaLabel={t("configModal.a11y.cliTool")}
@@ -666,7 +681,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
 
               {cliTool.trim() !== "" && (
                 <Field
-                  label="CLI 启动参数"
+                  label={t("configModal.cliArgs")}
                   value={cliArgs}
                   onChange={setCliArgs}
                   placeholder="--permission-mode bypassPermissions"
@@ -674,7 +689,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               )}
 
               {projectType === "local" && <div>
-                  <label htmlFor={shellFieldId} className="mb-1 block text-xs text-text-muted">Shell</label>
+                  <label htmlFor={shellFieldId} className="ui-config-form-label">{t("configModal.shell")}</label>
                   <Select
                     id={shellFieldId}
                     key={shellSelectKey}
@@ -696,7 +711,6 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                       setShell(nextShell);
                     }}
                     className="text-sm"
-                    placeholder="请选择"
                   >
                     {shellOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -705,10 +719,10 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               </div>}
 
               {cliTool.trim() === "" && (
-                <Field label="启动命令" value={startupCmd} onChange={setStartupCmd} placeholder="npm run dev" />
+                <Field label={t("configModal.startupCommand")} value={startupCmd} onChange={setStartupCmd} placeholder="npm run dev" />
               )}
               <div>
-                <label className="mb-1 block text-xs text-text-muted">环境变量（JSON）</label>
+                <label className="ui-config-form-label">{t("configModal.envVars")}</label>
                 <Textarea
                   value={envVarsText}
                   onChange={(e) => setEnvVarsText(e.target.value)}
@@ -723,7 +737,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                 <div className="mb-2 text-xs font-semibold text-text-secondary">{t("worktree.settings.title")}</div>
                 <div className="space-y-3">
                   <div>
-                    <label className="mb-1 block text-xs text-text-muted">{t("worktree.settings.strategy")}</label>
+                    <label className="ui-config-form-label">{t("worktree.settings.strategy")}</label>
                     <Select
                       value={worktreeStrategy}
                       onChange={(e) => setWorktreeStrategy(e.target.value as WorktreeIsolationStrategy)}
@@ -754,8 +768,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                     </span>
                   </label>
                   <div>
-                    <label className="mb-1 block text-xs text-text-muted">{t("worktree.settings.root")}</label>
-                    <div className="flex gap-1">
+                    <label className="ui-config-form-label">{t("worktree.settings.root")}</label>
+                    <div className="flex gap-2">
                       <Input
                         type="text"
                         value={worktreeRoot}
@@ -763,16 +777,18 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                         placeholder={t("worktree.settings.rootPlaceholder")}
                         className="flex-1 text-sm"
                       />
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={async () => {
                           const selected = await open({ directory: true, title: t("worktree.settings.chooseRoot") });
                           if (selected) setWorktreeRoot(selected);
                         }}
-                        className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary"
+                        className="h-9 shrink-0 px-3"
                       >
                         {t("common.browse")}
-                      </button>
+                      </Button>
                     </div>
                     <p className="mt-1 text-[11px] leading-relaxed text-text-muted">{t("worktree.settings.rootDescription")}</p>
                   </div>
@@ -785,12 +801,18 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               )}
             </div>
 
-            <DialogFooter className="shrink-0 border-t border-border/70 px-4 py-3">
-              <Button variant="outline" onClick={onClose}>
-                取消
+            <DialogFooter className="shrink-0 border-t border-border/60 bg-surface-container-low/35 px-5 py-3">
+              <Button variant="outline" onClick={onClose} className="min-w-20">
+                {t("common.cancel")}
               </Button>
-              <Button type="submit" variant="default" disabled={submitting}>
-                {submitting ? "保存中..." : isEdit ? "保存" : isClone ? "创建副本" : "新增"}
+              <Button type="submit" variant="default" disabled={submitting} className="min-w-20">
+                {submitting
+                  ? t("common.saving")
+                  : isEdit
+                    ? t("common.save")
+                    : isClone
+                      ? t("configModal.action.clone")
+                      : t("configModal.action.create")}
               </Button>
             </DialogFooter>
           </form>
@@ -799,9 +821,9 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
 
       <ConfirmDialog
         open={showConfirmEdit}
-        title="确认修改终端？"
-        message="将保存当前修改内容。"
-        confirmText="确认保存"
+        title={t("configModal.confirmEdit.title")}
+        message={t("configModal.confirmEdit.message")}
+        confirmText={t("configModal.confirmEdit.confirm")}
         onConfirm={() => {
           setShowConfirmEdit(false);
           void saveProject();
@@ -895,7 +917,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               </Button>
               <Input
                 value={remotePickerPath}
-                onChange={(event) => setRemotePickerPath(event.target.value)}
+                aria-label={t("configModal.ssh.remotePath")}
+                placeholder="/"
+                onChange={(event) => {
+                  setRemotePickerPath(event.target.value);
+                  setRemotePickerError("");
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void loadRemoteDirectories(remotePickerPath);
                 }}
@@ -915,7 +942,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                   type="button"
                   onDoubleClick={() => void loadRemoteDirectories(entry.path)}
                   onClick={() => setRemotePickerPath(entry.path)}
-                  className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-container-highest"
+                  className="ui-focus-ring flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-text-primary transition-colors hover:bg-surface-container-highest"
                 >
                   <span className="truncate">{entry.name}</span><span className="text-text-muted">›</span>
                 </button>
@@ -927,7 +954,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
             <Button
               type="button"
               onClick={() => {
-                setRemotePath(remotePickerPath);
+                setRemotePath(remotePickerPath.trim() || "/");
                 setRemotePathStatus(null);
                 setRemotePickerOpen(false);
               }}
@@ -1151,6 +1178,7 @@ function GroupSelector({
   onChange: (id: string | null) => void;
   displayName: string;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -1199,7 +1227,7 @@ function GroupSelector({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-center justify-between rounded border border-border bg-bg-tertiary px-2 py-1.5 text-left text-sm text-text-primary outline-none"
+        className="ui-input ui-focus-ring flex h-9 w-full items-center justify-between px-3 text-left text-sm text-text-primary outline-none"
       >
         <span className={value ? "" : "opacity-50"}>{displayName}</span>
         <ChevronDown size={12} strokeWidth={1.8} className="text-text-muted" />
@@ -1208,15 +1236,15 @@ function GroupSelector({
       {open && (
         <div
           ref={panelRef}
-          className="absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-bg-secondary animate-slide-down"
+          className="ui-select-popover absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-border bg-bg-secondary py-1 animate-slide-down"
         >
           {/* No group option */}
           <button
             type="button"
             onClick={() => { onChange(null); setOpen(false); }}
-            className={`w-full px-2 py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${!value ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
+            className={`mx-1 w-[calc(100%-0.5rem)] rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${!value ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
           >
-            不分组
+            {t("configModal.group.none")}
           </button>
 
           {flatList.map(({ group: g, depth }) => (
@@ -1224,7 +1252,7 @@ function GroupSelector({
               key={g.id}
               type="button"
               onClick={() => { onChange(g.id); setOpen(false); }}
-              className={`w-full py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${value === g.id ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
+              className={`mx-1 w-[calc(100%-0.5rem)] rounded-lg py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${value === g.id ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
               style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
             >
               {g.name}
@@ -1232,7 +1260,7 @@ function GroupSelector({
           ))}
 
           {flatList.length === 0 && (
-            <div className="px-2 py-1.5 text-xs text-text-muted">暂无分组</div>
+            <div className="px-3 py-2 text-xs text-text-muted">{t("configModal.group.empty")}</div>
           )}
         </div>
       )}
@@ -1244,6 +1272,7 @@ function Field({
   id,
   inputRef,
   label,
+  required = false,
   value,
   onChange,
   placeholder,
@@ -1251,13 +1280,16 @@ function Field({
   id?: string;
   inputRef?: Ref<HTMLInputElement>;
   label: string;
+  required?: boolean;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
 }) {
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-xs text-text-muted">{label}</label>
+      <label htmlFor={id} className="ui-config-form-label">
+        {label}{required && <> <span className="text-danger">*</span></>}
+      </label>
       <Input
         id={id}
         ref={inputRef}

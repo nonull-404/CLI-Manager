@@ -9,6 +9,9 @@ export interface SshConnectionSpecPayload {
   identityFile: string;
   credentialRef: string;
   jumpTarget: string;
+  proxyType: string;
+  proxyHost: string;
+  proxyPort: number;
   proxyCommand: string;
   connectTimeoutSec: number;
   serverAliveIntervalSec: number;
@@ -30,7 +33,8 @@ export function buildSshConnectionSpec(
   host: SshHost,
   allHosts: SshHost[]
 ): SshConnectionSpecPayload {
-  const jumpHost = host.jump_mode !== "none" && host.jump_host_id
+  const hasDirectProxy = host.proxy_type === "http" || host.proxy_type === "socks5" || host.proxy_type === "proxy_command";
+  const jumpHost = !hasDirectProxy && host.jump_mode !== "none" && host.jump_host_id
     ? allHosts.find((candidate) => candidate.id === host.jump_host_id)
     : null;
   return {
@@ -42,6 +46,9 @@ export function buildSshConnectionSpec(
     identityFile: host.auth_mode === "identity_file" ? host.identity_file : "",
     credentialRef: host.auth_mode === "credential_ref" ? host.credential_ref : "",
     jumpTarget: buildJumpTarget(jumpHost),
+    proxyType: host.proxy_type,
+    proxyHost: host.proxy_host,
+    proxyPort: host.proxy_port,
     proxyCommand: host.proxy_type === "proxy_command" ? host.proxy_command : "",
     connectTimeoutSec: host.connect_timeout_sec,
     serverAliveIntervalSec: host.server_alive_interval_sec,

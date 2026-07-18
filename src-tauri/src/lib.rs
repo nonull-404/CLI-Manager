@@ -18,6 +18,7 @@ pub mod pty;
 mod shell_resolver;
 pub mod ssh_launch;
 pub mod ssh_askpass;
+pub mod ssh_proxy;
 pub mod statusline;
 pub mod statusline_profiles;
 mod sync;

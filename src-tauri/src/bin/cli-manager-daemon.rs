@@ -9,6 +9,10 @@ use cli_manager_lib::daemon::server::{DaemonServer, DaemonServerConfig};
 use cli_manager_lib::daemon::setup_process_governance;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if cli_manager_lib::ssh_proxy::is_helper_request(&args) {
+        cli_manager_lib::ssh_proxy::run_helper_and_exit(&args);
+    }
     if std::env::var_os("CLI_MANAGER_SSH_ASKPASS").is_some() {
         cli_manager_lib::ssh_askpass::run_helper_and_exit();
     }

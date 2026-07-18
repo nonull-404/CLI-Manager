@@ -14,6 +14,13 @@ pub struct SshLaunchPlan {
     #[serde(default)]
     pub credential_ref: String,
     pub jump_target: String,
+    #[serde(default)]
+    pub proxy_type: String,
+    #[serde(default)]
+    pub proxy_host: String,
+    #[serde(default)]
+    pub proxy_port: u16,
+    #[serde(default)]
     pub proxy_command: String,
     pub connect_timeout_sec: u64,
     pub server_alive_interval_sec: u64,
@@ -70,9 +77,9 @@ impl SshLaunchPlan {
                 "-o".to_string(),
                 "PasswordAuthentication=yes".to_string(),
                 "-o".to_string(),
-                "KbdInteractiveAuthentication=no".to_string(),
+                "KbdInteractiveAuthentication=yes".to_string(),
                 "-o".to_string(),
-                "PreferredAuthentications=password".to_string(),
+                "PreferredAuthentications=password,keyboard-interactive".to_string(),
             ]),
             "interactive" => args.extend([
                 "-o".to_string(),
@@ -86,14 +93,17 @@ impl SshLaunchPlan {
             ]),
             _ => {}
         }
-        if !self.jump_target.trim().is_empty() {
+        let proxy_command = crate::ssh_proxy::build_proxy_command(
+            &self.proxy_type,
+            &self.proxy_host,
+            self.proxy_port,
+            &self.proxy_command,
+        )?;
+        if proxy_command.is_empty() && !self.jump_target.trim().is_empty() {
             args.extend(["-J".to_string(), self.jump_target.trim().to_string()]);
         }
-        if !self.proxy_command.trim().is_empty() {
-            args.extend([
-                "-o".to_string(),
-                format!("ProxyCommand={}", self.proxy_command.trim()),
-            ]);
+        if !proxy_command.is_empty() {
+            args.extend(["-o".to_string(), format!("ProxyCommand={proxy_command}")]);
         }
         args.push(self.target());
         args.push(self.remote_command());
@@ -149,6 +159,8 @@ impl SshLaunchPlan {
             &self.identity_file,
             &self.credential_ref,
             &self.jump_target,
+            &self.proxy_type,
+            &self.proxy_host,
             &self.proxy_command,
         ] {
             validate_single_line(value)?;
@@ -156,6 +168,12 @@ impl SshLaunchPlan {
         if contains_url_credentials(&self.proxy_command) {
             return Err("ssh_proxy_credentials_forbidden".to_string());
         }
+        crate::ssh_proxy::build_proxy_command(
+            &self.proxy_type,
+            &self.proxy_host,
+            self.proxy_port,
+            &self.proxy_command,
+        )?;
         validate_remote_path(&self.remote_path)?;
         if self
             .environment_overrides
@@ -230,7 +248,7 @@ impl SshLaunchPlan {
             format!("{setup} && exec \"${{SHELL:-/bin/sh}}\" -l")
         } else {
             let mut command_then_shell = shell_commands.join("\n");
-            command_then_shell.push_str("\nexec \"${SHELL:-/bin/sh}\" -l");
+            command_then_shell.push_str("\nexec \"${SHELL:-/bin/sh}\" -i");
             format!(
                 "{setup} && exec \"${{SHELL:-/bin/sh}}\" -lic {}",
                 posix_quote(&command_then_shell)
@@ -294,6 +312,9 @@ mod tests {
             identity_file: "C:/Users/dev/.ssh/id key".into(),
             credential_ref: String::new(),
             jump_target: "bastion".into(),
+            proxy_type: "none".into(),
+            proxy_host: String::new(),
+            proxy_port: 0,
             proxy_command: String::new(),
             connect_timeout_sec: 15,
             server_alive_interval_sec: 30,
@@ -317,7 +338,15 @@ mod tests {
         assert!(launch.args.windows(2).any(|pair| pair == ["-J", "bastion"]));
         assert!(launch.args.iter().any(|arg| arg == "IdentitiesOnly=yes"));
         assert_eq!(launch.args[launch.args.len() - 2], "dev@example.com");
-        assert_eq!(launch.args.last().unwrap(), "cd -- '/srv/project name/开发' && printf '\\033]777;cli-manager-ssh=connected\\007' && export APP_MODE='remote dev' && exec \"${SHELL:-/bin/sh}\" -lic 'printf '\\''%s\\n'\\'' \"it'\\''s ready\"\nexec \"${SHELL:-/bin/sh}\" -l'");
+        assert_eq!(launch.args.last().unwrap(), "cd -- '/srv/project name/开发' && printf '\\033]777;cli-manager-ssh=connected\\007' && export APP_MODE='remote dev' && exec \"${SHELL:-/bin/sh}\" -lic 'printf '\\''%s\\n'\\'' \"it'\\''s ready\"\nexec \"${SHELL:-/bin/sh}\" -i'");
+    }
+
+    #[test]
+    fn startup_command_returns_to_interactive_shell_without_second_login() {
+        let command = plan().remote_command();
+        assert!(command.contains("exec \"${SHELL:-/bin/sh}\" -lic"));
+        assert!(command.contains("\nexec \"${SHELL:-/bin/sh}\" -i"));
+        assert!(!command.contains("\nexec \"${SHELL:-/bin/sh}\" -l"));
     }
 
     #[test]
@@ -341,6 +370,20 @@ mod tests {
     }
 
     #[test]
+    fn direct_proxy_takes_precedence_over_jump_host() {
+        let mut value = plan();
+        value.proxy_type = "socks5".into();
+        value.proxy_host = "127.0.0.1".into();
+        value.proxy_port = 1080;
+        let launch = value.build_process_launch().unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-J"));
+        assert!(launch
+            .args
+            .iter()
+            .any(|arg| arg.contains("ProxyCommand=") && arg.contains("__ssh_proxy --type socks5")));
+    }
+
+    #[test]
     fn rejects_parent_traversal_and_multiline_arguments() {
         let mut value = plan();
         value.remote_path = "/srv/../root".into();
@@ -357,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn password_mode_disables_public_key_authentication() {
+    fn password_mode_supports_password_and_keyboard_interactive() {
         let mut value = plan();
         value.auth_mode = "password_prompt".into();
         let launch = value.build_process_launch().unwrap();
@@ -368,7 +411,11 @@ mod tests {
         assert!(launch
             .args
             .iter()
-            .any(|arg| arg == "PreferredAuthentications=password"));
+            .any(|arg| arg == "KbdInteractiveAuthentication=yes"));
+        assert!(launch
+            .args
+            .iter()
+            .any(|arg| arg == "PreferredAuthentications=password,keyboard-interactive"));
         assert!(!launch.args.iter().any(|arg| arg == "-i"));
     }
 

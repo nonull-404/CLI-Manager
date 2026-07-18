@@ -29,7 +29,7 @@ projects.remote_path TEXT NOT NULL DEFAULT ''
 
 ```rust
 pub async fn ssh_client_status() -> SshClientStatus;
-pub async fn ssh_test_connection(spec: SshConnectionSpec)
+pub async fn ssh_test_connection(spec: SshConnectionSpec, accept_new_host_key: Option<bool>)
     -> Result<SshConnectionTestResult, String>;
 pub async fn ssh_save_password(host_id: String, password: String)
     -> Result<String, String>;
@@ -90,13 +90,25 @@ pub struct SshLaunchPlan {
 ### Remote paths and commands
 
 - Remote project paths are absolute POSIX paths.
+- The remote directory picker treats an empty or whitespace-only browse path as `/` before invoking Rust; backend validation remains strict for non-empty relative or traversal paths, and the UI localizes those validation errors.
 - Reject NUL, CR, LF, relative paths, and any `..` path segment at the Rust boundary.
 - Quote every path and environment value with the dedicated POSIX quoting helper.
 - Environment keys must match shell variable syntax.
 - Directory browsing/check commands use non-interactive `BatchMode=yes` for SSH Config, Agent, and identity-file modes.
+- HTTP and SOCKS5 proxy URLs are stored as structured `proxy_type`, `proxy_host`, and `proxy_port` fields. The app binary provides the stdio proxy helper used by OpenSSH `ProxyCommand`; users must not need to author a raw command.
+- When a direct HTTP/SOCKS5 proxy is enabled, it takes precedence over `ProxyJump`; do not emit both routes for the same connection.
+- Connection testing must probe a configured HTTP/SOCKS5 proxy as a separate diagnostic stage before starting SSH, and return the sanitized proxy endpoint plus the raw connect/handshake error when that stage fails.
+- Connection testing must run OpenSSH in verbose mode and complete as soon as stderr reports `Authenticated to ...`; it must not wait for a remote command or shell session to exit after authentication succeeds.
+- Username/password testing may try `password` and `keyboard-interactive`, with at most one password prompt, so servers that expose password login through keyboard-interactive are covered without repeated prompts.
+- Username/password terminal launches must allow both `password` and `keyboard-interactive`; the launch path must not use stricter authentication methods than the successful connection-test path.
+- The `__ssh_proxy` helper subcommand must be dispatched before inherited AskPass environment handling; password-authenticated SSH processes pass AskPass variables to ProxyCommand children.
+- The proxy stdio bridge must flush every remote-to-OpenSSH chunk immediately. SSH handshake packets are binary and may be smaller than the Windows stdout buffer; waiting for EOF to flush can deadlock key exchange at `expecting SSH2_MSG_NEWKEYS`.
 - `credential_ref` directory browsing/check commands use `BatchMode=no` plus AskPass. Any AskPass/credential error must be returned; do not silently retry without the password.
 - `password_prompt` and `interactive` modes require a real PTY and must return `ssh_interactive_auth_required` for directory browsing/check commands.
 - A successful launch enters `remote_path`, emits OSC 777 `cli-manager-ssh=connected`, applies environment overrides, runs initialization/startup commands, and finally returns to the user's remote login shell.
+- When an SSH project creates a terminal without an explicit session command, resolve its project command as `startup_cmd` first, otherwise `cli_tool + cli_args`; project environment variables follow the same fallback rule. Explicit resume/template commands take precedence, and machine-local provider overrides are not injected into the remote command.
+- SSH startup commands are embedded in `SshLaunchPlan` and executed exactly once by the remote launch command. The frontend may retain the resolved command as session metadata but must not write it again through `pty_write`.
+- A configured initialization/startup command runs inside one login shell, then hands control to a non-login interactive shell that inherits the initialized environment. Do not start a second login shell after the command; repeated MOTD/profile output can bury command output and rerun login side effects.
 
 ### PTY, daemon, and restore
 
@@ -135,12 +147,14 @@ pub struct SshLaunchPlan {
 | Invalid host id for credential account scoping | `ssh_host_id_invalid`. |
 | Host argument contains NUL/CR/LF | `ssh_launch_argument_invalid`. |
 | Proxy URL embeds `user:password@host` | `ssh_proxy_credentials_forbidden`. |
+| HTTP/SOCKS5 proxy host is empty or its port is outside 1–65535 | `ssh_proxy_address_invalid`. |
 | Remote path is relative or contains NUL/CR/LF | `ssh_remote_path_invalid`. |
 | Remote path contains a `..` segment | `ssh_remote_path_parent_forbidden`. |
 | Invalid environment key/value | `ssh_environment_key_invalid` or `ssh_environment_value_invalid`. |
 | Password/MFA directory query | `ssh_interactive_auth_required`; keep manual path input available. |
 | Referenced host missing | Block launch with `ssh_host_not_found`; never fall back to localhost. |
 | Host key changed | OpenSSH blocks the connection; do not auto-ignore the warning. |
+| First connection has no known host key | Return a confirmation-required diagnostic; only an explicit user action may retry with `StrictHostKeyChecking=accept-new`. |
 | SSH transport exits | Persist disconnected/failed state and classified reason; do not interpret remote output as local paths. |
 
 ## 5. Good / Base / Bad Cases

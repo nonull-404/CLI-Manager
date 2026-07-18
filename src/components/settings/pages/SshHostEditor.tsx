@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type UIEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Check, ChevronDown, KeyRound, Route, Server, SlidersHorizontal, Terminal } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Folder, KeyRound, Route, Server, SlidersHorizontal, Terminal, X } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 import type { CreateSshHostInput, SshAuthMode, SshHost, SshHostGroup, SshJumpMode, SshProxyType } from "../../../lib/types";
-import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../../ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../../ui/dialog";
 
 type Section = "basic" | "auth" | "routing" | "connection" | "startup";
 type Source = "address" | "config";
@@ -29,6 +29,7 @@ interface Props {
   saving: boolean;
   onOpenChange: (open: boolean) => void;
   onTest: () => void;
+  onTrustHostKey: () => void;
   onSave: () => void;
   onPasswordChange: (password: string) => void;
 }
@@ -43,6 +44,8 @@ const SECTIONS: Array<{ id: Section; icon: typeof Server; label: TranslationKey 
 
 const STAGE_LABELS: Record<string, TranslationKey> = {
   client: "settings.sshHosts.stage.client",
+  proxy: "settings.sshHosts.stage.proxy",
+  host_key: "settings.sshHosts.stage.hostKey",
   authentication: "settings.sshHosts.stage.authentication",
   connection: "settings.sshHosts.stage.connection",
   network: "settings.sshHosts.stage.network",
@@ -53,19 +56,40 @@ const DETAIL_LABELS: Record<string, TranslationKey> = {
   ssh_connection_ready: "settings.sshHosts.detail.connectionReady",
   ssh_interactive_auth_required: "settings.sshHosts.detail.interactiveRequired",
   ssh_client_unavailable: "settings.sshHosts.openSshMissing",
+  ssh_host_key_confirmation_required: "settings.sshHosts.detail.hostKeyConfirmationRequired",
+  ssh_host_key_changed: "settings.sshHosts.detail.hostKeyChanged",
+  ssh_authentication_timeout: "settings.sshHosts.detail.authenticationTimeout",
 };
 
 export function SshHostEditor(props: Props) {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<Section>("basic");
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
+  const wasTestingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sectionRefs = useRef<Record<Section, HTMLElement | null>>({ basic: null, auth: null, routing: null, connection: null, startup: null });
 
   useEffect(() => {
     if (!props.open) return;
     setActiveSection("basic");
+    setDiagnosticOpen(false);
+    wasTestingRef.current = false;
     scrollRef.current?.scrollTo({ top: 0 });
   }, [props.open, props.editingId]);
+
+  useEffect(() => {
+    if (!props.open) {
+      setDiagnosticOpen(false);
+      wasTestingRef.current = false;
+      return;
+    }
+    if (props.testing) {
+      setDiagnosticOpen(false);
+    } else if (wasTestingRef.current && (props.testError || props.diagnostic?.success === false)) {
+      setDiagnosticOpen(true);
+    }
+    wasTestingRef.current = props.testing;
+  }, [props.open, props.testing, props.testError, props.diagnostic]);
 
   useEffect(() => {
     if (!props.errorCode) return;
@@ -99,6 +123,7 @@ export function SshHostEditor(props: Props) {
   };
 
   return (
+    <>
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="flex h-[min(700px,calc(100vh-32px))] w-[min(900px,calc(100vw-32px))] max-w-[900px] flex-col overflow-hidden p-0">
         <DialogTitle className="shrink-0 border-b border-border px-5 py-3 text-base font-bold">{props.editingId ? t("settings.sshHosts.edit") : t("settings.sshHosts.add")}</DialogTitle>
@@ -126,11 +151,22 @@ export function SshHostEditor(props: Props) {
           </FormSection>
         </div>
         <DialogFooter className="shrink-0 flex items-center justify-between border-t border-border px-5 py-3">
-          <div className="flex min-w-0 items-center gap-3"><button type="button" className="ui-button-secondary h-9 shrink-0 rounded-lg px-3 text-sm font-bold" disabled={props.testing} onClick={props.onTest}>{props.testing ? t("settings.sshHosts.testing") : t("settings.sshHosts.test")}</button><TestStatus testing={props.testing} diagnostic={props.diagnostic} error={props.testError} /></div>
+          <div className="flex min-w-0 items-center gap-3"><button type="button" className="ui-button-secondary h-9 shrink-0 rounded-lg px-3 text-sm font-bold" disabled={props.testing} onClick={props.onTest}>{props.testing ? t("settings.sshHosts.testing") : t("settings.sshHosts.test")}</button><TestStatus testing={props.testing} diagnostic={props.diagnostic} error={props.testError} onOpenDiagnostic={() => setDiagnosticOpen(true)} /></div>
           <div className="flex gap-2"><button type="button" className="ui-button-secondary h-9 rounded-lg px-3 text-sm font-bold" onClick={() => props.onOpenChange(false)}>{t("common.cancel")}</button><button type="button" className="ui-button-primary h-9 rounded-lg px-4 text-sm font-bold" disabled={props.saving} onClick={props.onSave}>{props.saving ? t("common.saving") : t("common.save")}</button></div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <DiagnosticModal
+      open={props.open && diagnosticOpen}
+      diagnostic={props.diagnostic}
+      error={props.testError}
+      onOpenChange={setDiagnosticOpen}
+      onTrustHostKey={() => {
+        setDiagnosticOpen(false);
+        props.onTrustHostKey();
+      }}
+    />
+    </>
   );
 }
 
@@ -147,7 +183,73 @@ function AuthFields({ form, password, credentialStored, setValue, onPasswordChan
 
 function RoutingFields({ form, hosts, editingId, setValue }: { form: CreateSshHostInput; hosts: SshHost[]; editingId: string | null; setValue: SetValue }) {
   const { t } = useI18n();
-  return <div className="space-y-3"><FieldRow label={t("settings.sshHosts.jumpMode")}><select value={form.jump_mode} onChange={(e) => { const value = e.target.value as SshJumpMode; setValue("jump_mode", value); if (value === "none") setValue("jump_host_id", null); }}><option value="none">{t("settings.sshHosts.jump.none")}</option><option value="host">{t("settings.sshHosts.jump.host")}</option><option value="proxy_jump">{t("settings.sshHosts.jump.proxyJump")}</option></select></FieldRow>{form.jump_mode !== "none" && <FieldRow label={t("settings.sshHosts.jumpHost")} required><select value={form.jump_host_id ?? ""} onChange={(e) => setValue("jump_host_id", e.target.value || null)}><option value="">{t("common.none")}</option>{hosts.filter((host) => host.id !== editingId).map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></FieldRow>}<FieldRow label={t("settings.sshHosts.proxyType")}><select value={form.proxy_type} onChange={(e) => { const value = e.target.value as SshProxyType; setValue("proxy_type", value); if (value === "none") setValue("proxy_command", ""); }}><option value="none">{t("settings.sshHosts.proxy.none")}</option><option value="proxy_command">{t("settings.sshHosts.proxy.command")}</option></select></FieldRow>{form.proxy_type === "proxy_command" && <FieldRow label={t("settings.sshHosts.proxyCommand")} required><input value={form.proxy_command} onChange={(e) => setValue("proxy_command", e.target.value)} placeholder="connect.exe -S ..." /></FieldRow>}<InfoBox>{t("settings.sshHosts.routingWarning")}</InfoBox></div>;
+  return <div className="space-y-3"><FieldRow label={t("settings.sshHosts.jumpMode")}><select value={form.jump_mode} disabled={form.proxy_type !== "none"} onChange={(e) => { const value = e.target.value as SshJumpMode; setValue("jump_mode", value); if (value === "none") setValue("jump_host_id", null); }}><option value="none">{t("settings.sshHosts.jump.none")}</option><option value="host">{t("settings.sshHosts.jump.host")}</option><option value="proxy_jump">{t("settings.sshHosts.jump.proxyJump")}</option></select></FieldRow>{form.jump_mode !== "none" && <FieldRow label={t("settings.sshHosts.jumpHost")} description={form.proxy_type !== "none" ? t("settings.sshHosts.proxyOverridesJump") : undefined} required><select disabled={form.proxy_type !== "none"} value={form.jump_host_id ?? ""} onChange={(e) => setValue("jump_host_id", e.target.value || null)}><option value="">{t("common.none")}</option>{hosts.filter((host) => host.id !== editingId).map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></FieldRow>}<ProxySettings form={form} setValue={setValue} /></div>;
+}
+
+function ProxySettings({ form, setValue }: { form: CreateSshHostInput; setValue: SetValue }) {
+  const { t } = useI18n();
+  const initialUrl = formatProxyUrl(form);
+  const [proxyUrl, setProxyUrl] = useState(initialUrl);
+  const proxyDisabled = form.proxy_type === "none";
+  const legacyProxy = form.proxy_type === "proxy_command";
+
+  useEffect(() => {
+    if (form.proxy_type !== "none") setProxyUrl(formatProxyUrl(form));
+  }, [form.proxy_host, form.proxy_port, form.proxy_type]);
+
+  const applyProxyUrl = (value: string) => {
+    setProxyUrl(value);
+    const parsed = parseProxyUrl(value);
+    if (parsed) {
+      setValue("proxy_type", parsed.type);
+      setValue("proxy_host", parsed.host);
+      setValue("proxy_port", parsed.port);
+      setValue("proxy_command", "");
+      return;
+    }
+    const inferredType: SshProxyType = value.trim().toLowerCase().startsWith("http://") ? "http" : "socks5";
+    setValue("proxy_type", inferredType);
+    setValue("proxy_host", value.trim());
+    setValue("proxy_port", 0);
+    setValue("proxy_command", "");
+  };
+
+  const setDisabled = (disabled: boolean) => {
+    if (disabled) {
+      setValue("proxy_type", "none");
+      return;
+    }
+    const parsed = parseProxyUrl(proxyUrl);
+    setValue("proxy_type", parsed?.type ?? "socks5");
+    setValue("proxy_host", parsed?.host ?? "");
+    setValue("proxy_port", parsed?.port ?? 0);
+    setValue("proxy_command", "");
+  };
+
+  return <div className="overflow-hidden rounded-xl border border-border bg-surface-lowest"><div className="grid grid-cols-[minmax(180px,0.8fr)_minmax(280px,1.2fr)] gap-6 px-4 py-4"><div><div className="text-sm font-bold text-text-primary">{t("settings.sshHosts.proxySettings")}</div><div className="mt-1 text-[11px] leading-relaxed text-text-muted">{t("settings.sshHosts.proxyDescription")}</div></div><div className="self-center"><input disabled={proxyDisabled} value={proxyUrl} onChange={(event) => applyProxyUrl(event.target.value)} placeholder={legacyProxy ? t("settings.sshHosts.proxyLegacyConfigured") : t("settings.sshHosts.proxyUrlPlaceholder")} aria-label={t("settings.sshHosts.proxyUrl")} className="h-9 w-full rounded-lg border border-border bg-surface-low px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-55" /></div></div><div className="flex items-center justify-between border-t border-border px-4 py-3"><span className="text-xs font-bold text-text-primary">{t("settings.sshHosts.proxyDisabled")}</span><button type="button" role="switch" aria-checked={proxyDisabled} aria-label={t("settings.sshHosts.proxyDisabled")} onClick={() => setDisabled(!proxyDisabled)} className={`ui-focus-ring relative h-6 w-11 rounded-full transition-colors ${proxyDisabled ? "bg-primary" : "bg-surface-container-highest"}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${proxyDisabled ? "left-[22px]" : "left-0.5"}`} /></button></div></div>;
+}
+
+function formatProxyUrl(form: CreateSshHostInput): string {
+  if (form.proxy_type === "none") return "";
+  if (form.proxy_type === "proxy_command") return "";
+  if (!form.proxy_host?.trim()) return "";
+  if (form.proxy_host.includes("://")) return form.proxy_host;
+  const type = form.proxy_type === "http" ? "http" : "socks5";
+  const port = form.proxy_port && form.proxy_port > 0 ? `:${form.proxy_port}` : "";
+  return `${type}://${form.proxy_host}${port}`;
+}
+
+function parseProxyUrl(value: string): { type: "http" | "socks5"; host: string; port: number } | null {
+  try {
+    const parsed = new URL(value.trim());
+    const type = parsed.protocol === "http:" ? "http" : parsed.protocol === "socks5:" ? "socks5" : null;
+    if (!type || !parsed.hostname || parsed.username || parsed.password || (parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) return null;
+    const port = parsed.port ? Number(parsed.port) : type === "http" ? 8080 : 1080;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return { type, host: parsed.hostname, port };
+  } catch {
+    return null;
+  }
 }
 
 function ConnectionFields({ form, setValue }: { form: CreateSshHostInput; setValue: SetValue }) {
@@ -177,16 +279,16 @@ function SshGroupCombobox({ groups, value, onChange }: { groups: SshHostGroup[];
   const options = useMemo(() => {
     const children = new Map<string | null, SshHostGroup[]>();
     for (const group of groups) children.set(group.parent_id, [...(children.get(group.parent_id) ?? []), group]);
-    const flattened: Array<{ group: SshHostGroup; path: string }> = [];
-    const visit = (parentId: string | null, prefix: string, ancestors: Set<string>) => {
+    const flattened: Array<{ group: SshHostGroup; path: string; depth: number; hasChildren: boolean }> = [];
+    const visit = (parentId: string | null, prefix: string, depth: number, ancestors: Set<string>) => {
       for (const group of (children.get(parentId) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))) {
         if (ancestors.has(group.id)) continue;
         const path = prefix ? `${prefix} / ${group.name}` : group.name;
-        flattened.push({ group, path });
-        visit(group.id, path, new Set([...ancestors, group.id]));
+        flattened.push({ group, path, depth, hasChildren: (children.get(group.id) ?? []).length > 0 });
+        visit(group.id, path, depth + 1, new Set([...ancestors, group.id]));
       }
     };
-    visit(null, "", new Set());
+    visit(null, "", 0, new Set());
     return flattened;
   }, [groups]);
   const selected = options.find((item) => item.group.id === value) ?? null;
@@ -202,25 +304,39 @@ function SshGroupCombobox({ groups, value, onChange }: { groups: SshHostGroup[];
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
 
-  return <div ref={rootRef} className="relative"><input role="combobox" aria-expanded={open} aria-controls={listboxId} value={open ? query : selected?.path ?? ""} placeholder={t("settings.sshHosts.groupSelectPlaceholder")} onFocus={() => { setQuery(""); setOpen(true); }} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }} /><button type="button" aria-label={t("settings.sshHosts.groupOpen")} className="ui-focus-ring absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-text-muted hover:bg-surface-container-highest" onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(""); setOpen((current) => !current); }}><ChevronDown size={12} className={open ? "rotate-180" : ""} /></button>{open && <div id={listboxId} role="listbox" className="ui-select-popover absolute left-0 top-full z-[70] mt-1 max-h-52 w-full overflow-y-auto rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg"><button type="button" role="option" aria-selected={!value} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(null); setOpen(false); }} className="flex w-full items-center px-3 py-2 text-left text-text-muted hover:bg-surface-container-highest"><span className="flex-1">{t("settings.sshHosts.groupNone")}</span>{!value && <Check size={12} />}</button>{filtered.map((item) => <button key={item.group.id} type="button" role="option" aria-selected={item.group.id === value} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(item.group); setOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-text-primary hover:bg-surface-container-highest"><span className="flex-1 truncate">{item.path}</span>{item.group.id === value && <Check size={12} className="text-primary" />}</button>)}</div>}</div>;
+  return <div ref={rootRef} className="relative min-w-0 max-w-full"><input className="min-w-0 truncate pr-10" role="combobox" aria-haspopup="tree" aria-expanded={open} aria-controls={listboxId} value={open ? query : selected?.path ?? ""} placeholder={t("settings.sshHosts.groupSelectPlaceholder")} onFocus={() => { setQuery(""); setOpen(true); }} onChange={(event) => { setQuery(event.target.value); setOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }} /><button type="button" aria-label={t("settings.sshHosts.groupOpen")} className="ui-focus-ring absolute right-1 top-[18px] flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-text-muted hover:bg-surface-container-highest" onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(""); setOpen((current) => !current); }}><ChevronDown size={12} className={open ? "rotate-180" : ""} /></button>{open && <div id={listboxId} role="tree" aria-label={t("settings.sshHosts.group")} className="ui-select-popover absolute left-0 top-full z-[70] mt-1 max-h-52 w-full max-w-full overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg"><button type="button" role="treeitem" aria-level={1} aria-selected={!value} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(null); setOpen(false); }} className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-text-muted hover:bg-surface-container-highest"><span className="h-3.5 w-3.5 shrink-0" /><Folder className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">{t("settings.sshHosts.groupNone")}</span>{!value && <Check size={12} className="shrink-0" />}</button>{filtered.map((item) => <button key={item.group.id} type="button" role="treeitem" aria-level={item.depth + 1} aria-selected={item.group.id === value} title={item.path} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(item.group); setOpen(false); }} className="flex w-full min-w-0 items-center gap-2 py-2 pr-3 text-left text-text-primary hover:bg-surface-container-highest" style={{ paddingLeft: 12 + item.depth * 18 }}><span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">{item.hasChildren && <ChevronRight className="h-3 w-3 rotate-90 text-text-muted" />}</span><Folder className="h-3.5 w-3.5 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate">{item.group.name}</span>{item.group.id === value && <Check size={12} className="shrink-0 text-primary" />}</button>)}</div>}</div>;
 }
 
-function TestStatus({ testing, diagnostic, error }: { testing: boolean; diagnostic: Diagnostic | null; error: string | null }) {
+function TestStatus({ testing, diagnostic, error, onOpenDiagnostic }: { testing: boolean; diagnostic: Diagnostic | null; error: string | null; onOpenDiagnostic: () => void }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
   if (!testing && !diagnostic && !error) return null;
   const success = diagnostic?.success === true;
   const tone = testing ? "text-amber-500" : success ? "text-emerald-500" : "text-red-500";
   const label = testing ? t("settings.sshHosts.testing") : success ? t("settings.sshHosts.testPassed") : t("settings.sshHosts.testFailed");
   const message = error ? `${label}: ${error}` : label;
-  return <div className="relative min-w-0"><button type="button" title={message} className={`flex max-w-80 items-center gap-1.5 truncate text-xs font-bold ${tone}`} onClick={() => diagnostic && setOpen((current) => !current)}><span>●</span><span className="truncate">{message}</span></button>{open && diagnostic && <div className="absolute bottom-full left-0 z-[80] mb-3 w-96 max-w-[60vw] shadow-xl"><DiagnosticPanel diagnostic={diagnostic} /></div>}</div>;
+  const content = <><span>●</span><span className="truncate">{message}</span></>;
+  if (!testing && !success) return <button type="button" title={message} className={`ui-focus-ring flex min-w-0 max-w-80 cursor-pointer items-center gap-1.5 truncate rounded-md px-1.5 py-1 text-xs font-bold transition-colors hover:bg-danger/10 ${tone}`} onClick={onOpenDiagnostic}>{content}</button>;
+  return <div title={message} className={`flex min-w-0 max-w-80 items-center gap-1.5 truncate text-xs font-bold ${tone}`}>{content}</div>;
 }
 
 function ChoiceButton({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: ReactNode }) { return <button type="button" role="tab" aria-selected={selected} className={selected ? "ui-button-primary rounded-md px-3 py-1.5 text-xs font-bold" : "rounded-md px-3 py-1.5 text-xs font-bold text-text-muted hover:bg-surface-container-high"} onClick={onClick}>{children}</button>; }
 function ConfigManagedInfo({ text }: { text: string }) { return <InfoBox>{text}</InfoBox>; }
 function InfoBox({ children }: { children: ReactNode }) { return <div className="rounded-xl border border-border bg-surface-low px-3 py-2 text-xs leading-relaxed text-text-muted">{children}</div>; }
 
-function DiagnosticPanel({ diagnostic }: { diagnostic: Diagnostic }) {
+function DiagnosticModal({ open, diagnostic, error, onTrustHostKey, onOpenChange }: { open: boolean; diagnostic: Diagnostic | null; error?: string | null; onTrustHostKey: () => void; onOpenChange: (open: boolean) => void }) {
   const { t } = useI18n();
-  return <div className="space-y-2 rounded-lg border border-border bg-surface-low p-3"><div className="text-xs font-bold text-text-primary">{t("settings.sshHosts.diagnostic.title")}</div>{diagnostic.stages.map((stage) => { const tone = stage.status === "passed" ? "text-emerald-500" : stage.status === "failed" ? "text-red-500" : "text-amber-500"; return <div key={stage.key} className="flex items-start gap-2 text-sm"><span className={tone}>●</span><div><div className={`font-bold ${tone}`}>{t(STAGE_LABELS[stage.key] ?? "settings.sshHosts.stage.connection")}</div><div className="text-xs text-text-muted">{DETAIL_LABELS[stage.detail] ? t(DETAIL_LABELS[stage.detail]) : stage.detail}</div></div></div>; })}</div>;
+  const [copied, setCopied] = useState(false);
+  const formatDetail = (detail: string) => {
+    const [code, ...rest] = detail.split("\n");
+    const translated = DETAIL_LABELS[code] ? t(DETAIL_LABELS[code]) : code;
+    return [translated, ...rest.filter(Boolean)].join("\n");
+  };
+  const trustRequired = diagnostic?.stages.some((stage) => stage.detail.startsWith("ssh_host_key_confirmation_required")) === true;
+  const logText = [error, ...(diagnostic?.stages.map((stage) => `${t(STAGE_LABELS[stage.key] ?? "settings.sshHosts.stage.connection")}: ${formatDetail(stage.detail)}`) ?? [])].filter(Boolean).join("\n");
+  const copyLog = async () => {
+    await navigator.clipboard.writeText(logText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent showCloseButton={false} overlayClassName="z-[60]" className="z-[60] flex h-[min(640px,calc(100vh-48px))] w-[min(720px,calc(100vw-48px))] max-w-[720px] flex-col overflow-hidden p-0"><header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3"><div className="min-w-0"><DialogTitle className="truncate text-base font-bold">{t("settings.sshHosts.diagnostic.title")}</DialogTitle><DialogDescription className="sr-only">{t("settings.sshHosts.diagnostic.logTitle")}</DialogDescription></div><div className="flex shrink-0 items-center gap-1"><button type="button" className="ui-focus-ring flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 text-xs text-text-muted transition-colors hover:bg-surface-container-highest hover:text-text-primary" title={copied ? t("settings.sshHosts.diagnostic.copied") : t("common.copy")} aria-label={copied ? t("settings.sshHosts.diagnostic.copied") : t("common.copy")} onClick={() => void copyLog()}>{copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}<span>{copied ? t("settings.sshHosts.diagnostic.copied") : t("common.copy")}</span></button><button type="button" className="ui-icon-button h-8 w-8 cursor-pointer" title={t("common.close")} aria-label={t("common.close")} onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></button></div></header><div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-surface-low px-5 py-4">{error && <div className="whitespace-pre-wrap break-words rounded-lg border border-danger/25 bg-danger/10 px-3 py-2 font-mono text-xs leading-relaxed text-danger">{error}</div>}{diagnostic?.stages.map((stage) => { const tone = stage.status === "passed" ? "text-emerald-500" : stage.status === "failed" ? "text-red-500" : "text-amber-500"; return <section key={stage.key} className="rounded-xl border border-border bg-surface-lowest px-4 py-3"><div className="flex items-center gap-2"><span className={tone}>●</span><h4 className={`text-sm font-bold ${tone}`}>{t(STAGE_LABELS[stage.key] ?? "settings.sshHosts.stage.connection")}</h4></div><pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-text-muted">{formatDetail(stage.detail)}</pre></section>; })}</div>{trustRequired && <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-border bg-surface-lowest px-5 py-3"><div className="text-xs leading-relaxed text-warning">{t("settings.sshHosts.hostKeyTrustDescription")}</div><button type="button" className="ui-button-primary h-9 shrink-0 cursor-pointer rounded-lg px-4 text-xs font-bold" onClick={onTrustHostKey}>{t("settings.sshHosts.trustHostKeyAndRetry")}</button></footer>}</DialogContent></Dialog>;
 }
