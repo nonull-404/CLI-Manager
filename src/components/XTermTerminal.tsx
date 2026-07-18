@@ -7,6 +7,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
+import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useShallow } from "zustand/shallow";
 import {
@@ -163,8 +164,6 @@ const copyTextToClipboard = async (text: string) => {
   }
 };
 
-const readClipboardText = async () => navigator.clipboard.readText();
-
 const lineHasVisibleTextAfterColumn = (line: IBufferLine, column: number, cols: number) => {
   const width = Math.min(cols, line.length);
   for (let index = Math.max(0, column); index < width; index += 1) {
@@ -294,6 +293,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const visibilityRestorePendingRef = useRef(false);
   const visibilityRestoreRevealTimerRef = useRef<number | null>(null);
   const visibilityRestoreRevealRafRef = useRef<number | null>(null);
+  const visibilityRestoreFallbackRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
   const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
@@ -619,6 +619,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       window.cancelAnimationFrame(visibilityRestoreRevealRafRef.current);
       visibilityRestoreRevealRafRef.current = null;
     }
+    if (visibilityRestoreFallbackRafRef.current !== null) {
+      window.cancelAnimationFrame(visibilityRestoreFallbackRafRef.current);
+      visibilityRestoreFallbackRafRef.current = null;
+    }
   };
 
   const finishVisibilityRestoreReveal = () => {
@@ -628,11 +632,25 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     setVisibilityRestorePending(false);
   };
 
-  const beginVisibilityRestoreReveal = () => {
+  const scheduleVisibilityRestoreFallbackRefresh = () => {
+    visibilityRestoreFallbackRafRef.current = window.requestAnimationFrame(() => {
+      visibilityRestoreFallbackRafRef.current = window.requestAnimationFrame(() => {
+        visibilityRestoreFallbackRafRef.current = null;
+        if (!visibilityRestorePendingRef.current || !isVisibleRef.current) return;
+        markViewportRefreshNeeded();
+        scheduleFit(true, true);
+      });
+    });
+  };
+
+  const beginVisibilityRestoreReveal = (deferViewportRefresh = false) => {
     clearVisibilityRestoreRevealSchedule();
     if (!visibilityRestorePendingRef.current) {
       visibilityRestorePendingRef.current = true;
       setVisibilityRestorePending(true);
+    }
+    if (deferViewportRefresh) {
+      scheduleVisibilityRestoreFallbackRefresh();
     }
     visibilityRestoreRevealTimerRef.current = window.setTimeout(() => {
       visibilityRestoreRevealTimerRef.current = null;
@@ -650,10 +668,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     ) {
       return;
     }
-    if (visibilityRestoreRevealTimerRef.current !== null) {
-      window.clearTimeout(visibilityRestoreRevealTimerRef.current);
-      visibilityRestoreRevealTimerRef.current = null;
-    }
+    clearVisibilityRestoreRevealSchedule();
     visibilityRestoreRevealRafRef.current = window.requestAnimationFrame(() => {
       visibilityRestoreRevealRafRef.current = null;
       finishVisibilityRestoreReveal();
@@ -701,6 +716,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   // Hidden terminals stay attached and continue parsing output. Visibility only
   // controls renderer resources and when pending layout work is flushed.
   useEffect(() => {
+    const wasVisible = isVisibleRef.current;
     isVisibleRef.current = isVisible;
 
     if (!isVisible) {
@@ -713,16 +729,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const terminal = terminalRef.current;
     const baseTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
     const rendererRestored = terminal ? syncWebglRenderer(terminal, baseTheme) : false;
-    if (rendererRestored) {
-      markViewportRefreshNeeded();
-    }
+    const becameVisible = !wasVisible;
 
     if (!fitAddonRef.current || !containerRef.current) return;
+    if (becameVisible || rendererRestored) {
+      beginVisibilityRestoreReveal(becameVisible && !rendererRestored);
+    }
     if (rendererRestored) {
-      beginVisibilityRestoreReveal();
       markViewportRefreshNeeded();
     }
-    scheduleFit(true);
+    scheduleFit(true, rendererRestored);
     if (terminalRef.current) {
       normalizeTuiComposerBackground(terminalRef.current);
       scheduleTuiComposerBackgroundNormalization(terminalRef.current);

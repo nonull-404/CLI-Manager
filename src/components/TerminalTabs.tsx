@@ -25,7 +25,14 @@ import { useProjectStore } from "../stores/projectStore";
 import { isProjectFileDirty, useFileExplorerStore } from "../stores/fileExplorerStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
-import { DND_ACTIVATION_CONSTRAINT, DND_SORTABLE_TRANSITION } from "../lib/dragInteraction";
+import {
+  DND_ACTIVATION_CONSTRAINT,
+  DND_SORTABLE_TRANSITION,
+  parseWorkspanDragId,
+  resolveWorkspanDragHoverTarget,
+  WORKSPAN_DRAG_AUTO_ACTIVATE_MS,
+  WORKSPAN_DRAG_PREFIX,
+} from "../lib/dragInteraction";
 import type { TerminalPaneDropEdge, TerminalPaneLeaf, TerminalPaneSplitDirection } from "../stores/terminalPaneTree";
 import {
   collectPaneLeaves,
@@ -157,7 +164,6 @@ const PULSING_TAB_STATES = new Set<TabNotificationState>(["running", "attention"
 const PANE_DROP_PREFIX = "pane-drop:";
 const PANE_CENTER_DROP_PREFIX = "pane-center:";
 const PANE_EDGE_DROP_PREFIX = "pane-edge:";
-const WORKSPAN_DRAG_PREFIX = "workspan:";
 const WORKSPAN_SPLIT_ACTIVATION_RATIO = 0.18;
 const PANE_DROP_EDGES: TerminalPaneDropEdge[] = ["left", "right", "top", "bottom"];
 const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
@@ -213,10 +219,6 @@ interface TerminalTabHoverInfo {
 
 function isTerminalPaneDropEdge(value: string): value is TerminalPaneDropEdge {
   return PANE_DROP_EDGES.includes(value as TerminalPaneDropEdge);
-}
-
-function parseWorkspanDragId(value: string): string | null {
-  return value.startsWith(WORKSPAN_DRAG_PREFIX) ? value.slice(WORKSPAN_DRAG_PREFIX.length) || null : null;
 }
 
 function getWorkspanNotification(
@@ -2186,6 +2188,8 @@ export function TerminalTabs({
   const closeConfirmOutsideGuardUntilRef = useRef(0);
   const workspanTabBarRef = useRef<HTMLDivElement | null>(null);
   const workspanTabScrollRef = useRef<HTMLDivElement | null>(null);
+  const workspanDragHoverTargetRef = useRef<string | null>(null);
+  const workspanDragHoverTimerRef = useRef<number | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
 
@@ -2354,6 +2358,27 @@ export function TerminalTabs({
     setActiveWorkspaceTab("terminal");
     setActiveWorkspan(workspanId);
   }, [setActiveWorkspan]);
+
+  const clearWorkspanDragHoverActivation = useCallback(() => {
+    if (workspanDragHoverTimerRef.current !== null) {
+      window.clearTimeout(workspanDragHoverTimerRef.current);
+      workspanDragHoverTimerRef.current = null;
+    }
+    workspanDragHoverTargetRef.current = null;
+  }, []);
+
+  const scheduleWorkspanDragHoverActivation = useCallback((targetWorkspanId: string) => {
+    if (workspanDragHoverTargetRef.current === targetWorkspanId) return;
+    clearWorkspanDragHoverActivation();
+    workspanDragHoverTargetRef.current = targetWorkspanId;
+    workspanDragHoverTimerRef.current = window.setTimeout(() => {
+      workspanDragHoverTimerRef.current = null;
+      if (workspanDragHoverTargetRef.current !== targetWorkspanId) return;
+      activateWorkspanTab(targetWorkspanId);
+    }, WORKSPAN_DRAG_AUTO_ACTIVATE_MS);
+  }, [activateWorkspanTab, clearWorkspanDragHoverActivation]);
+
+  useEffect(() => clearWorkspanDragHoverActivation, [clearWorkspanDragHoverActivation]);
 
   const updateWorkspanTabOverflow = useCallback(() => {
     if (activeDragWorkspanId) return;
@@ -3150,12 +3175,14 @@ export function TerminalTabs({
   }, []);
 
   const clearDragState = useCallback(() => {
+    clearWorkspanDragHoverActivation();
     setActiveDragSessionId(null);
     setActiveDragWorkspanId(null);
     updateActiveDropPreview(null);
-  }, [updateActiveDropPreview]);
+  }, [clearWorkspanDragHoverActivation, updateActiveDropPreview]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    clearWorkspanDragHoverActivation();
     const dragId = String(event.active.id);
     const workspanId = parseWorkspanDragId(dragId);
     if (workspanId) {
@@ -3168,16 +3195,25 @@ export function TerminalTabs({
     if (!sessions.some((session) => session.id === sessionId)) return;
     setActiveDragSessionId(sessionId);
     setActiveWorkspaceTab("terminal");
-  }, [scopedSessionIds, sessions, workspans]);
+  }, [clearWorkspanDragHoverActivation, scopedSessionIds, sessions, workspans]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     if (!event.over) {
+      clearWorkspanDragHoverActivation();
       updateActiveDropPreview(null);
       return;
     }
 
-    const dropTarget = parsePaneDropTarget(String(event.over.id));
+    const overId = String(event.over.id);
+    const dropTarget = parsePaneDropTarget(overId);
     if (activeDragWorkspanId) {
+      const hoverTarget = resolveWorkspanDragHoverTarget(activeDragWorkspanId, overId);
+      if (hoverTarget) {
+        scheduleWorkspanDragHoverActivation(hoverTarget);
+        updateActiveDropPreview(null);
+        return;
+      }
+      clearWorkspanDragHoverActivation();
       const targetWorkspanId = activeWorkspanLayout?.workspan.id ?? null;
       const targetPaneExists = dropTarget
         && activeWorkspanLayout?.panes.some((pane) => pane.id === dropTarget.paneId);
@@ -3200,7 +3236,15 @@ export function TerminalTabs({
     }
 
     updateActiveDropPreview(null);
-  }, [activeDragSessionId, activeDragWorkspanId, activeWorkspanLayout, canSplitSessionToPaneEdge, updateActiveDropPreview]);
+  }, [
+    activeDragSessionId,
+    activeDragWorkspanId,
+    activeWorkspanLayout,
+    canSplitSessionToPaneEdge,
+    clearWorkspanDragHoverActivation,
+    scheduleWorkspanDragHoverActivation,
+    updateActiveDropPreview,
+  ]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -3581,6 +3625,24 @@ export function TerminalTabs({
     [renameOpenProjectTabs, renameSession, sessions, t, updateProject]
   );
 
+  const handlePaneSubmitEdit = useCallback((sessionId: string, title: string) => {
+    void handleSubmitTabEdit(sessionId, title);
+  }, [handleSubmitTabEdit]);
+  const handlePaneCancelEdit = useCallback(() => setEditingSessionId(null), []);
+  const handlePaneNewTab = useCallback(() => {
+    void handleNewTab();
+  }, [handleNewTab]);
+  const handlePaneUnsplit = useCallback((sessionId: string) => {
+    void unsplitTerminal(sessionId);
+  }, [unsplitTerminal]);
+  const handlePaneFinishWorktree = useCallback((project: Project, worktree: WorktreeRecord) => {
+    if (rejectMissingWorktree(worktree)) return;
+    setFinishTarget({ project, worktree });
+  }, [rejectMissingWorktree]);
+  const handlePaneDiscardWorktree = useCallback((project: Project, worktree: WorktreeRecord) => {
+    setDiscardTarget({ project, worktree });
+  }, []);
+
   const renderWorkspanLeaf = useCallback((
     pane: TerminalPaneLeaf,
     layoutPanes: TerminalPaneLeaf[],
@@ -3619,26 +3681,21 @@ export function TerminalTabs({
         onActivateSession={handleActivateSession}
         onCloseSessions={handleCloseSessions}
         onStartEdit={setEditingSessionId}
-        onSubmitEdit={(sessionId, title) => {
-          void handleSubmitTabEdit(sessionId, title);
-        }}
-        onCancelEdit={() => setEditingSessionId(null)}
-        onNewTab={() => void handleNewTab()}
+        onSubmitEdit={handlePaneSubmitEdit}
+        onCancelEdit={handlePaneCancelEdit}
+        onNewTab={handlePaneNewTab}
         onDuplicateSession={handleDuplicateSession}
         onOpenSplitPicker={handleOpenSplitPicker}
-        onUnsplit={(sessionId) => void unsplitTerminal(sessionId)}
+        onUnsplit={handlePaneUnsplit}
         onMoveToPane={moveSessionToPane}
         onHideBackground={hideBackgroundForSession}
         onShowBackground={showBackgroundForSession}
         onTogglePaneFullscreen={handleTogglePaneFullscreen}
         onOpenWorktreeChanges={handleOpenWorktreeChanges}
         onOpenWorktreeHistory={handleOpenWorktreeHistory}
-        onFinishWorktree={(project, worktree) => {
-          if (rejectMissingWorktree(worktree)) return;
-          setFinishTarget({ project, worktree });
-        }}
+        onFinishWorktree={handlePaneFinishWorktree}
         onInstallWorktreeDeps={handleInstallWorktreeDeps}
-        onDiscardWorktree={(project, worktree) => setDiscardTarget({ project, worktree })}
+        onDiscardWorktree={handlePaneDiscardWorktree}
         onOpenWorktreeDirectory={handleOpenWorktreeDirectory}
         hideTabBar={workspanEnabled && visiblePaneSessionCount <= 1}
       />
@@ -3652,7 +3709,12 @@ export function TerminalTabs({
     fontSize,
     handleActivateSession,
     handleCloseSessions,
-    handleNewTab,
+    handlePaneCancelEdit,
+    handlePaneDiscardWorktree,
+    handlePaneFinishWorktree,
+    handlePaneNewTab,
+    handlePaneSubmitEdit,
+    handlePaneUnsplit,
     handleDuplicateSession,
     handleOpenSplitPicker,
     handleOpenWorktreeChanges,
@@ -3666,8 +3728,6 @@ export function TerminalTabs({
     lightThemePalette,
     moveSessionToPane,
     projects,
-    handleSubmitTabEdit,
-    rejectMissingWorktree,
     resolvedTheme,
     scopedSessionIds,
     sessions,
@@ -3679,7 +3739,6 @@ export function TerminalTabs({
     terminalBackgroundEnabled,
     terminalBackgroundImagePath,
     terminalThemeName,
-    unsplitTerminal,
   ]);
 
   const hasScopedTerminalFilter = projectScopedTerminalViewEnabled && terminalScopeValue.kind !== "all";

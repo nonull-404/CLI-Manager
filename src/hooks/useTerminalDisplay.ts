@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from "react";
-import type { ITheme, Terminal } from "@xterm/xterm";
+import type { IMarker, ITheme, Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -38,6 +38,11 @@ interface PendingTerminalWrite {
   reset: boolean;
 }
 
+interface PendingViewportRestore {
+  marker: IMarker;
+  terminal: Terminal;
+}
+
 interface UseTerminalDisplayOptions {
   sessionId: string;
   containerRef: RefObject<HTMLDivElement | null>;
@@ -62,7 +67,7 @@ export interface UseTerminalDisplayResult {
   clearHiddenWebglDisposeTimer: () => void;
   clearWebglTextureAtlas: () => void;
   disposeWebglRenderer: () => boolean;
-  scheduleFit: (force?: boolean) => void;
+  scheduleFit: (immediateResize?: boolean, forceViewportRefresh?: boolean) => void;
   scheduleViewportRefresh: () => void;
   markViewportRefreshNeeded: () => void;
   enqueueActiveWrite: (text: string, onCommitted?: () => void) => void;
@@ -105,7 +110,39 @@ export function useTerminalDisplay({
   const ptyUnlistenRef = useRef<UnlistenFn | null>(null);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const resizeDebouncerRef = useRef<TerminalResizeDebouncer | null>(null);
+  const viewportRestoreRafRef = useRef<number | null>(null);
+  const pendingViewportRestoreRef = useRef<PendingViewportRestore | null>(null);
   const forwardPtyResizeRef = useRef(true);
+
+  const cancelPendingViewportRestore = () => {
+    if (viewportRestoreRafRef.current !== null) {
+      cancelAnimationFrame(viewportRestoreRafRef.current);
+      viewportRestoreRafRef.current = null;
+    }
+    const pending = pendingViewportRestoreRef.current;
+    pendingViewportRestoreRef.current = null;
+    if (pending && !pending.marker.isDisposed) pending.marker.dispose();
+  };
+
+  const scheduleViewportRestore = (terminal: Terminal, marker: IMarker) => {
+    const pending = { terminal, marker };
+    pendingViewportRestoreRef.current = pending;
+    viewportRestoreRafRef.current = requestAnimationFrame(() => {
+      if (pendingViewportRestoreRef.current !== pending) return;
+      viewportRestoreRafRef.current = requestAnimationFrame(() => {
+        viewportRestoreRafRef.current = null;
+        if (pendingViewportRestoreRef.current !== pending) return;
+        pendingViewportRestoreRef.current = null;
+        try {
+          if (terminalRef.current === terminal && !marker.isDisposed) {
+            terminal.scrollToLine(marker.line);
+          }
+        } finally {
+          if (!marker.isDisposed) marker.dispose();
+        }
+      });
+    });
+  };
 
   const clearHiddenWebglDisposeTimer = () => {
     if (webglDisposeTimerRef.current === null) return;
@@ -395,6 +432,7 @@ export function useTerminalDisplay({
       resizeObserver.disconnect();
       resizeDebouncerRef.current?.dispose();
       resizeDebouncerRef.current = null;
+      cancelPendingViewportRestore();
     };
   };
 
@@ -410,7 +448,18 @@ export function useTerminalDisplay({
 
   const resizeTerminal = (terminal: Terminal, cols: number, rows: number) => {
     if (terminal.cols === cols && terminal.rows === rows) return;
+    cancelPendingViewportRestore();
+    const buffer = terminal.buffer.active;
+    // Horizontal reflow changes physical row indexes; a marker follows the logical viewport line.
+    const viewportMarker = (
+      cols !== terminal.cols
+      && buffer.type === "normal"
+      && buffer.viewportY < buffer.baseY
+    )
+      ? terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY)
+      : undefined;
     terminal.resize(cols, rows);
+    if (viewportMarker) scheduleViewportRestore(terminal, viewportMarker);
   };
 
   const getResizeDebouncer = () => {
@@ -436,24 +485,24 @@ export function useTerminalDisplay({
     return debouncer;
   };
 
-  const fitWhenStable = (force = false) => {
+  const fitWhenStable = (immediateResize = false, forceViewportRefresh = immediateResize) => {
     const container = containerRef.current;
     const fitAddon = fitAddonRef.current;
     const terminal = terminalRef.current;
     if (!container || !fitAddon || !terminal) return;
-    if (!force && (!isVisibleRef.current || isComposingRef.current)) return;
+    if (!immediateResize && (!isVisibleRef.current || isComposingRef.current)) return;
     if (container.offsetWidth <= 0 || container.offsetHeight <= 0) return;
 
     const dims = fitAddon.proposeDimensions();
     if (!dims || dims.cols < MIN_TERMINAL_COLS || dims.rows < MIN_TERMINAL_ROWS) return;
-    getResizeDebouncer().resize(dims.cols, dims.rows, force);
-    if (needsViewportRefreshRef.current) {
+    getResizeDebouncer().resize(dims.cols, dims.rows, immediateResize);
+    if (forceViewportRefresh || needsViewportRefreshRef.current) {
       refreshTerminalViewport(terminal);
       needsViewportRefreshRef.current = false;
     }
   };
 
-  const cancelScheduledFit = () => {
+  const cancelFitRequest = () => {
     if (fitRafRef.current !== null) {
       cancelAnimationFrame(fitRafRef.current);
       fitRafRef.current = null;
@@ -461,11 +510,16 @@ export function useTerminalDisplay({
     resizeDebouncerRef.current?.cancel();
   };
 
-  const scheduleFit = (force = false) => {
-    cancelScheduledFit();
+  const cancelScheduledFit = () => {
+    cancelFitRequest();
+    cancelPendingViewportRestore();
+  };
+
+  const scheduleFit = (immediateResize = false, forceViewportRefresh = immediateResize) => {
+    cancelFitRequest();
     fitRafRef.current = requestAnimationFrame(() => {
       fitRafRef.current = null;
-      fitWhenStable(force);
+      fitWhenStable(immediateResize, forceViewportRefresh);
     });
   };
 

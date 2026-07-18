@@ -23,12 +23,14 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 };
 
+function flushNextAnimationFrame() {
+  const callbacks = [...rafCallbacks.values()];
+  rafCallbacks.clear();
+  callbacks.forEach((callback) => callback(performance.now()));
+}
+
 function flushAnimationFrames() {
-  while (rafCallbacks.size > 0) {
-    const callbacks = [...rafCallbacks.values()];
-    rafCallbacks.clear();
-    callbacks.forEach((callback) => callback(performance.now()));
-  }
+  while (rafCallbacks.size > 0) flushNextAnimationFrame();
 }
 
 writeFileSync(join(tempDir, "react.mjs"), "export const useRef = (value) => ({ current: value });\n");
@@ -39,7 +41,15 @@ export class WebglAddon {
   clearTextureAtlas() {}
 }
 `);
-writeFileSync(join(tempDir, "visibility.mjs"), "export function refreshTerminalViewport() {}\n");
+writeFileSync(join(tempDir, "visibility.mjs"), `
+export const refreshCalls = [];
+export function refreshTerminalViewport(terminal) {
+  refreshCalls.push([0, terminal.rows - 1]);
+}
+export function resetVisibility() {
+  refreshCalls.length = 0;
+}
+`);
 writeFileSync(join(tempDir, "themes.mjs"), "export function isLightTerminalTheme() { return false; }\n");
 writeFileSync(join(tempDir, "logger.mjs"), "export function logError() {} export function logWarn() {}\n");
 writeFileSync(join(tempDir, "snapshot.mjs"), "export function markTerminalSnapshotDirty() {}\n");
@@ -100,15 +110,23 @@ writeFileSync(modulePath, transpiled, "utf8");
 
 const { useTerminalDisplay } = await import(pathToFileURL(modulePath).href);
 const managerStub = await import(pathToFileURL(join(tempDir, "manager.mjs")).href);
+const visibilityStub = await import(pathToFileURL(join(tempDir, "visibility.mjs")).href);
 
 class FakeTerminal {
   constructor(events) {
     this.events = events;
     this.cols = 80;
     this.rows = 24;
-    this.buffer = { normal: { length: 0 } };
+    this.buffer = {
+      normal: { length: 0 },
+      active: { type: "normal", baseY: 0, cursorY: 0, viewportY: 0 },
+    };
     this.writeCallbacks = [];
     this.resizeListeners = new Set();
+    this.markers = new Set();
+    this.reflowBaseYDelta = 0;
+    this.reflowMarkerLineDelta = 0;
+    this.viewportMaxScrollLine = 0;
   }
 
   write(text, callback) {
@@ -123,10 +141,45 @@ class FakeTerminal {
   }
 
   resize(cols, rows) {
+    const colsChanged = this.cols !== cols;
     this.cols = cols;
     this.rows = rows;
+    if (colsChanged && this.reflowBaseYDelta > 0) {
+      const wasAtBottom = this.buffer.active.viewportY === this.buffer.active.baseY;
+      this.buffer.active.baseY += this.reflowBaseYDelta;
+      if (wasAtBottom) {
+        this.buffer.active.viewportY = this.buffer.active.baseY;
+      }
+      this.markers.forEach((marker) => {
+        if (!marker.isDisposed) marker.line += this.reflowMarkerLineDelta;
+      });
+    }
+    if (colsChanged) {
+      const nextViewportMaxScrollLine = this.buffer.active.baseY;
+      requestAnimationFrame(() => {
+        this.viewportMaxScrollLine = nextViewportMaxScrollLine;
+      });
+    }
     this.events.push(`resize:${cols}x${rows}`);
     this.resizeListeners.forEach((listener) => listener({ cols, rows }));
+  }
+
+  registerMarker(cursorYOffset) {
+    const marker = {
+      line: this.buffer.active.baseY + this.buffer.active.cursorY + cursorYOffset,
+      isDisposed: false,
+      dispose: () => {
+        marker.isDisposed = true;
+        this.markers.delete(marker);
+      },
+    };
+    this.markers.add(marker);
+    return marker;
+  }
+
+  scrollToLine(line) {
+    this.buffer.active.viewportY = Math.max(0, Math.min(line, this.viewportMaxScrollLine));
+    this.events.push(`scroll:${this.buffer.active.viewportY}`);
   }
 
   onResize(listener) {
@@ -137,7 +190,8 @@ class FakeTerminal {
   loadAddon() {}
 }
 
-function createDisplay() {
+function createDisplay(proposedDimensions = { cols: 120, rows: 30 }) {
+  visibilityStub.resetVisibility();
   const events = [];
   const terminal = new FakeTerminal(events);
   const container = {
@@ -151,7 +205,7 @@ function createDisplay() {
     sessionId: "session-1",
     containerRef: { current: container },
     terminalRef,
-    fitAddonRef: { current: { proposeDimensions: () => ({ cols: 120, rows: 30 }) } },
+    fitAddonRef: { current: { proposeDimensions: () => proposedDimensions } },
     isVisibleRef: { current: true },
     isComposingRef: { current: false },
     lowMemoryMode: false,
@@ -166,6 +220,104 @@ function createDisplay() {
   const detachViewport = display.attachViewport(terminal);
   return { display, terminal, terminalRef, events, detachViewport };
 }
+
+test("immediate fit does not force a viewport refresh when dimensions are unchanged", () => {
+  const { display, terminal, detachViewport } = createDisplay();
+  terminal.cols = 120;
+  terminal.rows = 30;
+
+  display.scheduleFit(true, false);
+  flushAnimationFrames();
+
+  assert.deepEqual(visibilityStub.refreshCalls, []);
+  detachViewport();
+});
+
+test("explicit viewport refresh repaints the full grid when dimensions are unchanged", () => {
+  const { display, terminal, detachViewport } = createDisplay();
+  terminal.cols = 120;
+  terminal.rows = 30;
+
+  display.scheduleFit(true, true);
+  flushAnimationFrames();
+
+  assert.deepEqual(visibilityStub.refreshCalls, [[0, 29]]);
+  detachViewport();
+});
+
+test("horizontal reflow preserves the visible normal-buffer line", () => {
+  const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
+  terminal.cols = 120;
+  terminal.rows = 24;
+  terminal.buffer.normal.length = 300;
+  terminal.buffer.active.baseY = 277;
+  terminal.buffer.active.cursorY = 23;
+  terminal.buffer.active.viewportY = 177;
+  terminal.viewportMaxScrollLine = 277;
+  terminal.reflowBaseYDelta = 300;
+  terminal.reflowMarkerLineDelta = 177;
+
+  display.scheduleFit(true, false);
+
+  flushNextAnimationFrame();
+  assert.deepEqual(events, ["resize:60x24"]);
+  assert.equal(terminal.markers.size, 1);
+
+  flushNextAnimationFrame();
+  assert.deepEqual(events, ["resize:60x24"]);
+  assert.equal(terminal.markers.size, 1);
+
+  flushNextAnimationFrame();
+
+  assert.equal(terminal.buffer.active.viewportY, 354);
+  assert.deepEqual(events, ["resize:60x24", "scroll:354"]);
+  assert.equal(terminal.markers.size, 0);
+  detachViewport();
+});
+
+test("horizontal reflow keeps live-bottom following without forcing a scroll", () => {
+  const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
+  terminal.cols = 120;
+  terminal.rows = 24;
+  terminal.buffer.active.baseY = 277;
+  terminal.buffer.active.cursorY = 23;
+  terminal.buffer.active.viewportY = 277;
+  terminal.viewportMaxScrollLine = 277;
+  terminal.reflowBaseYDelta = 300;
+  terminal.reflowMarkerLineDelta = 177;
+
+  display.scheduleFit(true, false);
+  flushAnimationFrames();
+
+  assert.equal(terminal.buffer.active.viewportY, 577);
+  assert.deepEqual(events, ["resize:60x24"]);
+  assert.equal(terminal.markers.size, 0);
+  detachViewport();
+});
+
+test("cancelling a scheduled fit disposes a pending viewport marker", () => {
+  const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
+  terminal.cols = 120;
+  terminal.rows = 24;
+  terminal.buffer.normal.length = 300;
+  terminal.buffer.active.baseY = 277;
+  terminal.buffer.active.cursorY = 23;
+  terminal.buffer.active.viewportY = 177;
+  terminal.viewportMaxScrollLine = 277;
+  terminal.reflowBaseYDelta = 300;
+  terminal.reflowMarkerLineDelta = 177;
+
+  display.scheduleFit(true, false);
+  flushNextAnimationFrame();
+  assert.equal(terminal.markers.size, 1);
+
+  display.cancelScheduledFit();
+  flushAnimationFrames();
+
+  assert.deepEqual(events, ["resize:60x24"]);
+  assert.equal(terminal.markers.size, 0);
+  detachViewport();
+});
 
 function frame(sequence, text, cols, rows, replayBatchEnd = false) {
   return {
