@@ -195,59 +195,15 @@ pub async fn sync_local_import(zip_path: String) -> Result<SyncData, String> {
     Ok(data)
 }
 
-// WebDAV 密码存系统原生凭据存储，固定条目（service=CLI-Manager, user=webdav），不落明文配置文件
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-fn webdav_password_entry() -> Result<keyring_core::Entry, String> {
-    use std::sync::OnceLock;
-    static STORE_INIT: OnceLock<Result<(), String>> = OnceLock::new();
-    STORE_INIT
-        .get_or_init(|| {
-            #[cfg(target_os = "windows")]
-            let store = windows_native_keyring_store::Store::new()
-                .map_err(|e| format!("初始化 Windows 凭据存储失败: {}", e))?;
-            #[cfg(target_os = "macos")]
-            let store = apple_native_keyring_store::keychain::Store::new()
-                .map_err(|e| format!("初始化 macOS 钥匙串失败: {}", e))?;
-            #[cfg(target_os = "linux")]
-            let store =
-                zbus_secret_service_keyring_store::Store::new().map_err(|e| e.to_string())?;
-            keyring_core::set_default_store(store);
-            Ok(())
-        })
-        .clone()?;
-
-    #[cfg(target_os = "linux")]
-    let entry = {
-        let modifiers = std::collections::HashMap::from([("target", "CLI-Manager")]);
-        keyring_core::Entry::new_with_modifiers("CLI-Manager", "webdav", &modifiers)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let entry = keyring_core::Entry::new("CLI-Manager", "webdav");
-
-    entry.map_err(|e| format!("创建凭据条目失败: {}", e))
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-fn delete_webdav_password_blocking() -> Result<(), String> {
-    let entry = webdav_password_entry()?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("删除 WebDAV 密码失败: {}", e)),
-    }
-}
-
 #[tauri::command]
 pub async fn sync_save_password(password: String) -> Result<(), String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
         tokio::task::spawn_blocking(move || {
             if password.is_empty() {
-                return delete_webdav_password_blocking();
+                return crate::credential_store::delete("webdav");
             }
-            let entry = webdav_password_entry()?;
-            entry
-                .set_password(&password)
-                .map_err(|e| format!("保存 WebDAV 密码失败: {}", e))
+            crate::credential_store::set("webdav", &password)
         })
         .await
         .map_err(|e| format!("内部错误: {}", e))?
@@ -264,12 +220,7 @@ pub async fn sync_load_password() -> Result<Option<String>, String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
         tokio::task::spawn_blocking(|| {
-            let entry = webdav_password_entry()?;
-            match entry.get_password() {
-                Ok(password) => Ok(Some(password)),
-                Err(keyring_core::Error::NoEntry) => Ok(None),
-                Err(e) => Err(format!("读取 WebDAV 密码失败: {}", e)),
-            }
+            crate::credential_store::get("webdav")
         })
         .await
         .map_err(|e| format!("内部错误: {}", e))?
@@ -282,7 +233,7 @@ pub async fn sync_load_password() -> Result<Option<String>, String> {
 pub async fn sync_delete_password() -> Result<(), String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
-        tokio::task::spawn_blocking(delete_webdav_password_blocking)
+        tokio::task::spawn_blocking(|| crate::credential_store::delete("webdav"))
             .await
             .map_err(|e| format!("内部错误: {}", e))?
     }

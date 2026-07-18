@@ -64,6 +64,7 @@ type LastSettingsTab =
   | "providers"
   | "model-pricing"
   | "cc-connect"
+  | "ssh-hosts"
   | "sync"
   | "hooks"
   | "statusline"
@@ -581,6 +582,7 @@ const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "providers",
   "model-pricing",
   "cc-connect",
+  "ssh-hosts",
   "sync",
   "hooks",
   "statusline",
