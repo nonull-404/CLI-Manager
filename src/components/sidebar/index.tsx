@@ -1617,6 +1617,11 @@ export function Sidebar({
     [projects, selectedProjectIds]
   );
 
+  const showProjectBatchContextMenu =
+    contextMenu?.kind === "project"
+    && selectedProjectIds.has(contextMenu.project.id)
+    && selectedProjectIds.size + selectedGroupIds.size > 1;
+
   // 分组右键菜单“批量修改本组 Shell”的作用范围（含子组项目）；组内项目数 >1 才显示入口
   const contextMenuGroupProjectIds = useMemo(
     () => (contextMenu?.kind === "group" ? collectProjectIdsForGroup(groups, projects, contextMenu.groupId) : null),
@@ -1966,6 +1971,7 @@ export function Sidebar({
               <>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     void handleOpen(contextMenu.project);
@@ -1977,6 +1983,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     void handleNewProjectTerminal(contextMenu.project);
@@ -1988,6 +1995,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   disabled={compactMode || useExternalTerminal || !activeSessionId}
                   onClick={() => {
@@ -2000,6 +2008,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   disabled={compactMode || useExternalTerminal || !activeSessionId}
                   onClick={() => {
@@ -2010,9 +2019,10 @@ export function Sidebar({
                   <SquareSplitVertical size={14} strokeWidth={1.5} />
                   {t("sidebar.menu.splitDown")}
                 </button>
-                <div className="context-menu-separator" role="separator" />
+                <div className="context-menu-separator" role="separator" hidden={showProjectBatchContextMenu} />
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     handleCloneProject(contextMenu.project);
@@ -2060,6 +2070,7 @@ export function Sidebar({
                 )}
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     void handleOpenProjectDirectory(contextMenu.project);
@@ -2071,6 +2082,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     void handleOpenProjectFiles(contextMenu.project);
@@ -2082,6 +2094,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     handleOpenProjectHistory(contextMenu.project);
@@ -2091,7 +2104,7 @@ export function Sidebar({
                   <ListClockIcon size={14} />
                   {t("sidebar.menu.sessionHistory")}
                 </button>
-                {getProviderSwitchAppType(contextMenu.project) && (
+                {!showProjectBatchContextMenu && getProviderSwitchAppType(contextMenu.project) && (
                   <button
                     className="context-menu-item"
                     role="menuitem"
@@ -2106,6 +2119,7 @@ export function Sidebar({
                 )}
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     ensureSidebarExpanded();
@@ -2118,6 +2132,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
                   role="menuitem"
                   onClick={() => {
                     setEditingProject(contextMenu.project);
@@ -2143,6 +2158,7 @@ export function Sidebar({
                 )}
                 <button
                   className="context-menu-item danger"
+                  hidden={showProjectBatchContextMenu}
                   onClick={() => {
                     handleRequestDeleteProject(contextMenu.project);
                     setContextMenu(null);
