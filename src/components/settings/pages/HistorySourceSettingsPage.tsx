@@ -5,6 +5,7 @@ import {
   Card,
   Group,
   SimpleGrid,
+  Select,
   Stack,
   Switch,
   Text,
@@ -13,7 +14,6 @@ import {
 } from "@mantine/core";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { Database, FolderOpen, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -87,6 +87,17 @@ interface HistoryBackupRecoveryPlan {
   actions: string[];
 }
 
+interface HistoryBackupRestoreCandidate {
+  originalPath: string;
+  source: string;
+  sourceSessionId: string;
+  mutationKind: string;
+  createdAt: number;
+  state: string;
+  backupPath: string;
+  manifestPath: string;
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KiB", "MiB", "GiB"];
@@ -97,6 +108,19 @@ function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatBackupTime(timestamp: number, language: string): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
+  return new Intl.DateTimeFormat(language === "zh-CN" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
 }
 
 function validationMessage(code: string, text: (zh: string, en: string) => string): string {
@@ -116,6 +140,8 @@ export function HistorySourceSettingsPage() {
   const [detectingSourceId, setDetectingSourceId] = useState<HistorySourceId | null>(null);
   const [backupStatus, setBackupStatus] = useState<HistoryBackupRootStatus | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [restoreCandidates, setRestoreCandidates] = useState<HistoryBackupRestoreCandidate[]>([]);
+  const [restoreCandidatesLoading, setRestoreCandidatesLoading] = useState(false);
   const [restoreOriginalPath, setRestoreOriginalPath] = useState("");
   const [restoreSource, setRestoreSource] = useState("claude");
   const [restorePlan, setRestorePlan] = useState<HistoryBackupRecoveryPlan | null>(null);
@@ -130,7 +156,7 @@ export function HistorySourceSettingsPage() {
     for (const descriptor of HISTORY_SOURCE_DESCRIPTORS) {
       nextDrafts[descriptor.id] = sourcePath(descriptor, settings[descriptor.id]?.activeInstance?.locations);
     }
-    setDrafts((current) => ({ ...nextDrafts, ...current }));
+    setDrafts(nextDrafts);
   }, [settings]);
 
   const loadBackupStatus = async () => {
@@ -138,17 +164,45 @@ export function HistorySourceSettingsPage() {
     setBackupStatus(status);
   };
 
+  const loadRestoreCandidates = async () => {
+    setRestoreCandidatesLoading(true);
+    try {
+      const candidates = await invoke<HistoryBackupRestoreCandidate[]>("history_backup_list_restore_candidates");
+      setRestoreCandidates(candidates);
+    } finally {
+      setRestoreCandidatesLoading(false);
+    }
+  };
+
   useEffect(() => {
-    void loadBackupStatus().catch((error) => {
-      console.warn("Failed to load history backup status", error);
+    void Promise.all([loadBackupStatus(), loadRestoreCandidates()]).catch((error) => {
+      console.warn("Failed to load history backup state", error);
     });
   }, []);
+
+  useEffect(() => {
+    if (restoreCandidates.length === 0) {
+      setRestoreOriginalPath("");
+      setRestorePlan(null);
+      return;
+    }
+    const selected = restoreCandidates.find((candidate) => candidate.originalPath === restoreOriginalPath);
+    if (selected) {
+      setRestoreSource(selected.source);
+      return;
+    }
+    const first = restoreCandidates[0];
+    setRestoreOriginalPath(first.originalPath);
+    setRestoreSource(first.source);
+    setRestorePlan(null);
+  }, [restoreCandidates, restoreOriginalPath]);
 
   const handleBackupCleanup = async () => {
     try {
       setBackupBusy(true);
       const status = await invoke<HistoryBackupRootStatus>("history_backup_cleanup");
       setBackupStatus(status);
+      await loadRestoreCandidates();
       toast.success(t("historySources.backup.cleanupSuccess"));
     } catch (error) {
       toast.error(t("historySources.backup.cleanupFailed"), {
@@ -176,7 +230,7 @@ export function HistorySourceSettingsPage() {
         toast.success(t("historySources.backup.restorePlanReady"));
       } else {
         toast.warning(t("historySources.backup.restorePlanBlocked"), {
-          description: plan.conflict ?? undefined,
+          description: restoreConflictText(plan.conflict) || undefined,
         });
       }
     } catch (error) {
@@ -203,6 +257,7 @@ export function HistorySourceSettingsPage() {
       });
       setRestorePlan(plan);
       await loadBackupStatus();
+      await loadRestoreCandidates();
       toast.success(t("historySources.backup.restoreSuccess"));
     } catch (error) {
       toast.error(t("historySources.backup.restoreFailed"), {
@@ -217,8 +272,9 @@ export function HistorySourceSettingsPage() {
     const backupPath = restorePlan?.backupPath;
     if (!backupPath) return;
     try {
-      const manifestPath = await invoke<string>("history_backup_export_manifest", { backupPath });
-      await openPath(manifestPath);
+      const manifestPath = restorePlan?.manifestPath
+        ?? await invoke<string>("history_backup_export_manifest", { backupPath });
+      await invoke("open_folder_in_explorer", { path: manifestPath, openFile: true });
     } catch (error) {
       toast.error(t("historySources.backup.exportManifestFailed"), {
         description: error instanceof Error ? error.message : String(error),
@@ -230,6 +286,52 @@ export function HistorySourceSettingsPage() {
     () => HISTORY_SOURCE_DESCRIPTORS.filter((descriptor) => settings[descriptor.id]?.enabled).length,
     [settings]
   );
+
+  const selectedRestoreCandidate = useMemo(
+    () => restoreCandidates.find((candidate) => candidate.originalPath === restoreOriginalPath) ?? null,
+    [restoreCandidates, restoreOriginalPath]
+  );
+  const restoreMutationLabel = (kind: string) => {
+    if (kind === "delete" || kind === "sessionDelete") return t("history.edit.op.delete");
+    if (kind === "insert") return t("history.edit.op.insert");
+    if (kind === "restore") return t("history.edit.op.restore");
+    return t("history.edit.op.edit");
+  };
+  const restoreCandidateOptions = useMemo(
+    () => restoreCandidates.map((candidate) => ({
+      value: candidate.originalPath,
+      label: `${HISTORY_SOURCE_DESCRIPTORS.find((descriptor) => descriptor.id === candidate.source)
+        ? t(HISTORY_SOURCE_DESCRIPTORS.find((descriptor) => descriptor.id === candidate.source)!.labelKey)
+        : candidate.source} · ${candidate.sourceSessionId} · ${formatBackupTime(candidate.createdAt, language)}`,
+    })),
+    [language, restoreCandidates, t]
+  );
+
+  const handleRestoreCandidateChange = (originalPath: string | null) => {
+    const candidate = restoreCandidates.find((item) => item.originalPath === originalPath);
+    setRestoreOriginalPath(candidate?.originalPath ?? "");
+    setRestoreSource(candidate?.source ?? "");
+    setRestorePlan(null);
+  };
+
+  const handleOpenBackupRoot = async () => {
+    if (!backupStatus?.root) return;
+    try {
+      await invoke("open_folder_in_explorer", { path: backupStatus.root });
+    } catch (error) {
+      toast.error(t("historySources.backup.openFailed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const restoreConflictText = (conflict: string | null | undefined) => {
+    if (conflict === "history_target_tool_running") return t("historySources.backup.conflict.toolRunning");
+    if (conflict === "history_backup_fingerprint_conflict") return t("historySources.backup.conflict.changed");
+    if (conflict === "backup_not_found") return t("historySources.backup.conflict.backupMissing");
+    if (conflict === "original_not_found") return t("historySources.backup.conflict.originalMissing");
+    return conflict ?? "";
+  };
 
   const handleBrowse = async (descriptor: HistorySourceDescriptor) => {
     const slot = descriptor.locations[0];
@@ -265,11 +367,11 @@ export function HistorySourceSettingsPage() {
     const normalizedPath = slot ? result.normalizedLocations[slot.id] ?? path : path;
     await setSourceSettings(descriptor.id, buildSourceSettings(descriptor, normalizedPath));
     if (result.warnings.length > 0) {
-      toast.warning(text("历史来源已保存，但存在提示", "History source saved with warnings"), {
+      toast.warning(text("历史会话目录已保存，但存在提示", "History session location saved with warnings"), {
         description: result.warnings.map((code) => validationMessage(code, text)).join("；"),
       });
     } else {
-      toast.success(text("历史来源已保存", "History source saved"), { description: descriptor.defaultLabel });
+      toast.success(text("历史会话目录已保存", "History session location saved"), { description: descriptor.defaultLabel });
     }
   };
 
@@ -288,7 +390,7 @@ export function HistorySourceSettingsPage() {
       setDrafts((current) => ({ ...current, [descriptor.id]: candidate.path }));
       toast.success(text("已填入检测到的候选位置，请确认后保存", "Detected candidate filled in; confirm and save"));
     } catch (error) {
-      toast.error(text("检测历史来源失败", "Failed to detect history source"), {
+      toast.error(text("检测历史会话目录失败", "Failed to detect history session location"), {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -319,12 +421,12 @@ export function HistorySourceSettingsPage() {
         <Group align="flex-start" justify="space-between" gap="sm">
           <Stack gap={4}>
             <Text fw={600} c="var(--on-surface)">
-              {text("历史来源", "History Sources")}
+              {text("历史会话", "History Sessions")}
             </Text>
             <Text size="sm" c="var(--on-surface-variant)">
               {text(
-                "这里先确认每个来源的唯一读取位置。当前版本不会改变 Claude/Codex 既有历史读取链路。",
-                "Confirm one read location per source. This version does not change the existing Claude/Codex history read path."
+                "每个 CLI 使用一个历史会话位置。Claude/Codex 与 Hook 设置共用同一目录，任一处修改都会同步。",
+                "Each CLI uses one history session location. Claude and Codex share their directories with Hook settings, and changes sync both ways."
               )}
             </Text>
           </Stack>
@@ -371,9 +473,7 @@ export function HistorySourceSettingsPage() {
               variant="default"
               color="gray"
               disabled={!backupStatus?.root}
-              onClick={() => {
-                if (backupStatus?.root) void openPath(backupStatus.root);
-              }}
+              onClick={() => void handleOpenBackupRoot()}
             >
               {t("historySources.backup.open")}
             </Button>
@@ -382,24 +482,57 @@ export function HistorySourceSettingsPage() {
             </Button>
           </Group>
         </Group>
-        <Stack gap="xs" mt="md">
-          <Group gap="xs" align="flex-end">
-            <TextInput
-              className="min-w-0 flex-1"
+        <Stack gap="sm" mt="md" className="rounded-lg border border-border bg-bg-secondary/40 p-3">
+          <Stack gap={2}>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              {t("historySources.backup.restoreTitle")}
+            </Text>
+            <Text size="xs" c="var(--on-surface-variant)">
+              {t("historySources.backup.restoreDescription")}
+            </Text>
+          </Stack>
+          <Select
+            size="xs"
+            searchable
+            label={t("historySources.backup.restoreCandidate")}
+            placeholder={t("historySources.backup.restoreCandidatePlaceholder")}
+            nothingFoundMessage={t("historySources.backup.restoreCandidateEmpty")}
+            data={restoreCandidateOptions}
+            value={restoreOriginalPath || null}
+            onChange={handleRestoreCandidateChange}
+            disabled={restoreCandidatesLoading || restoreCandidateOptions.length === 0}
+          />
+          {selectedRestoreCandidate ? (
+            <Stack gap={3} className="rounded-md border border-border bg-bg-primary/60 px-3 py-2">
+              <Group gap={6}>
+                <Badge color="blue" variant="light">
+                  {HISTORY_SOURCE_DESCRIPTORS.find((descriptor) => descriptor.id === selectedRestoreCandidate.source)
+                    ? t(HISTORY_SOURCE_DESCRIPTORS.find((descriptor) => descriptor.id === selectedRestoreCandidate.source)!.labelKey)
+                    : selectedRestoreCandidate.source}
+                </Badge>
+                <Badge color="gray" variant="light">{restoreMutationLabel(selectedRestoreCandidate.mutationKind)}</Badge>
+                <Text size="xs" c="var(--on-surface-variant)">
+                  {t("historySources.backup.backupAt", { time: formatBackupTime(selectedRestoreCandidate.createdAt, language) })}
+                </Text>
+              </Group>
+              <Text size="xs" c="var(--on-surface-variant)" className="break-all">
+                {t("historySources.backup.originalLocation", { path: selectedRestoreCandidate.originalPath })}
+              </Text>
+            </Stack>
+          ) : (
+            <Text size="xs" c="var(--on-surface-variant)">
+              {t("historySources.backup.restoreCandidateEmpty")}
+            </Text>
+          )}
+          <Group gap="xs">
+            <Button
               size="xs"
-              label={t("historySources.backup.restoreOriginalPath")}
-              placeholder={t("historySources.backup.restoreOriginalPathPlaceholder")}
-              value={restoreOriginalPath}
-              onChange={(event) => setRestoreOriginalPath(event.currentTarget.value)}
-            />
-            <TextInput
-              w={120}
-              size="xs"
-              label={t("historySources.backup.restoreSource")}
-              value={restoreSource}
-              onChange={(event) => setRestoreSource(event.currentTarget.value)}
-            />
-            <Button size="xs" variant="default" color="gray" loading={restoreBusy} onClick={() => void handleBuildRestorePlan()}>
+              variant="default"
+              color="gray"
+              loading={restoreBusy}
+              disabled={!selectedRestoreCandidate}
+              onClick={() => void handleBuildRestorePlan()}
+            >
               {t("historySources.backup.restorePlan")}
             </Button>
             <Button
@@ -421,16 +554,8 @@ export function HistorySourceSettingsPage() {
                 {restorePlan.canRestore
                   ? t("historySources.backup.restorePlanReady")
                   : t("historySources.backup.restorePlanBlocked")}
-                {restorePlan.conflict ? `: ${restorePlan.conflict}` : ""}
+                {restorePlan.conflict ? `: ${restoreConflictText(restorePlan.conflict)}` : ""}
               </Text>
-              <Text size="xs" c="var(--on-surface-variant)" className="break-all">
-                {restorePlan.backupPath}
-              </Text>
-              {restorePlan.manifestPath ? (
-                <Text size="xs" c="var(--on-surface-variant)" className="break-all">
-                  {restorePlan.manifestPath}
-                </Text>
-              ) : null}
             </Stack>
           ) : null}
         </Stack>
@@ -463,7 +588,7 @@ export function HistorySourceSettingsPage() {
                     checked={Boolean(current?.enabled)}
                     onChange={(event) => void handleToggle(descriptor, event.currentTarget.checked)}
                     color="cliPrimary"
-                    aria-label={text("启用历史来源", "Enable history source")}
+                    aria-label={text("启用历史会话来源", "Enable history session source")}
                   />
                 </Group>
 

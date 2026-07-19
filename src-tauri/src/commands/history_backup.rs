@@ -6,6 +6,7 @@
 use crate::app_paths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -70,6 +71,19 @@ pub struct HistoryBackupRecoveryPlan {
     pub required_tool_closed: bool,
     pub conflict: Option<String>,
     pub actions: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryBackupRestoreCandidate {
+    pub original_path: String,
+    pub source: String,
+    pub source_session_id: String,
+    pub mutation_kind: String,
+    pub created_at: i64,
+    pub state: String,
+    pub backup_path: String,
+    pub manifest_path: String,
 }
 
 struct BackupEntry {
@@ -387,6 +401,48 @@ fn find_file_backup_hit(session_path: &Path, backups_dir: &Path) -> Option<FileB
         .min_by(|left, right| left.created_at.cmp(&right.created_at))
 }
 
+fn list_file_restore_candidates(backups_dir: &Path) -> Vec<HistoryBackupRestoreCandidate> {
+    let mut candidates_by_original = HashMap::<String, HistoryBackupRestoreCandidate>::new();
+    for manifest_path in collect_manifest_paths(backups_dir) {
+        let Some(manifest) = parse_manifest(&manifest_path) else {
+            continue;
+        };
+        for artifact in &manifest.artifacts {
+            if artifact.kind != "file" || artifact.original_path.trim().is_empty() {
+                continue;
+            }
+            let backup_path = PathBuf::from(&artifact.backup_path);
+            if !backup_path.is_file() {
+                continue;
+            }
+            let candidate = HistoryBackupRestoreCandidate {
+                original_path: artifact.original_path.clone(),
+                source: manifest.source.clone(),
+                source_session_id: manifest.source_session_id.clone(),
+                mutation_kind: manifest.mutation_kind.clone(),
+                created_at: manifest.created_at,
+                state: manifest.state.clone(),
+                backup_path: artifact.backup_path.clone(),
+                manifest_path: manifest_path.to_string_lossy().to_string(),
+            };
+            match candidates_by_original.get(&candidate.original_path) {
+                Some(existing) if existing.created_at <= candidate.created_at => {}
+                _ => {
+                    candidates_by_original.insert(candidate.original_path.clone(), candidate);
+                }
+            }
+        }
+    }
+    let mut candidates = candidates_by_original.into_values().collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.original_path.cmp(&right.original_path))
+    });
+    candidates
+}
+
 fn create_file_backup_snapshot_with_limit(
     session_path: &Path,
     backups_dir: &Path,
@@ -638,6 +694,32 @@ pub async fn history_backup_cleanup() -> Result<HistoryBackupRootStatus, String>
 }
 
 #[tauri::command]
+pub async fn history_backup_list_restore_candidates(
+) -> Result<Vec<HistoryBackupRestoreCandidate>, String> {
+    let root = default_backup_root()?;
+    fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    Ok(list_file_restore_candidates(&root)
+        .into_iter()
+        .filter(|candidate| {
+            matches!(
+                candidate.source.as_str(),
+                "claude"
+                    | "codex"
+                    | "gemini"
+                    | "copilot"
+                    | "antigravity"
+                    | "grok"
+                    | "pi"
+                    | "opencode"
+                    | "kiro"
+                    | "cursor"
+                    | "cline"
+            )
+        })
+        .collect())
+}
+
+#[tauri::command]
 pub async fn history_backup_build_restore_plan(
     original_path: String,
     source: Option<String>,
@@ -745,6 +827,25 @@ mod tests {
         assert!(backup.to_string_lossy().contains("\\files\\") || backup.to_string_lossy().contains("/files/"));
         let manifest = backup.parent().unwrap().parent().unwrap().join("manifest.json");
         assert!(manifest.exists());
+    }
+
+    #[test]
+    fn restore_candidates_expose_original_session_without_manual_path_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("session.jsonl");
+        let backups = temp.path().join("backups");
+        write_text(&session, "{}\n");
+
+        let backup =
+            create_file_backup_snapshot(&session, &backups, "claude", "session-1", "edit")
+                .unwrap();
+        let candidates = list_file_restore_candidates(&backups);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, "claude");
+        assert_eq!(candidates[0].source_session_id, "session-1");
+        assert_eq!(candidates[0].original_path, session.to_string_lossy());
+        assert_eq!(candidates[0].backup_path, backup.to_string_lossy());
     }
 
     #[test]

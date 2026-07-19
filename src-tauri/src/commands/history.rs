@@ -4023,7 +4023,10 @@ fn convert_history_session(
     })
 }
 
-fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
+fn delete_session_tree_with_backup_root(
+    file_ref: &SessionFileRef,
+    backups_dir: &Path,
+) -> Result<usize, String> {
     if is_subagent_transcript_path(&file_ref.path) {
         return Err("history_subagent_mutation_not_allowed".to_string());
     }
@@ -4037,7 +4040,6 @@ fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
     paths.sort();
     paths.push(file_ref.path.clone());
 
-    let backups_dir = default_backup_root()?;
     let mut backups = Vec::with_capacity(paths.len());
     for path in &paths {
         if path.exists() {
@@ -4047,7 +4049,7 @@ fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
                 .unwrap_or_else(|| "session".to_string());
             let backup = create_file_backup_snapshot(
                 path,
-                &backups_dir,
+                backups_dir,
                 &file_ref.source,
                 &source_session_id,
                 "sessionDelete",
@@ -4085,6 +4087,11 @@ fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
         }
     }
     Ok(deleted)
+}
+
+fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
+    let backups_dir = default_backup_root()?;
+    delete_session_tree_with_backup_root(file_ref, &backups_dir)
 }
 
 fn converted_session_cwd(detail: &HistorySessionDetail) -> Option<String> {
@@ -13258,7 +13265,11 @@ mod tests {
             project_key: "CLI-Manager".to_string(),
             path: parent_file.clone(),
         };
-        assert_eq!(delete_session_tree(&parent_ref).unwrap(), 2);
+        let backups_dir = temp_dir.path().join("backups");
+        assert_eq!(
+            delete_session_tree_with_backup_root(&parent_ref, &backups_dir).unwrap(),
+            2
+        );
         assert!(!parent_file.exists());
         assert!(!child_file.exists());
     }

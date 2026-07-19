@@ -110,6 +110,13 @@ async fn open_catalog() -> Result<SqliteConnection, String> {
 }
 
 async fn ensure_schema(conn: &mut SqliteConnection) -> Result<(), String> {
+    let current_version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    if current_version >= HISTORY_INDEX_SCHEMA_VERSION {
+        return Ok(());
+    }
     let statements = [
         "CREATE TABLE IF NOT EXISTS history_catalog_sessions (
             roots_key TEXT NOT NULL,
@@ -472,16 +479,10 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             .await
             .map_err(|err| err.to_string())?;
     }
-    let current_version: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(&mut *conn)
+    sqlx::query(&format!("PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"))
+        .execute(&mut *conn)
         .await
         .map_err(|err| err.to_string())?;
-    if current_version < HISTORY_INDEX_SCHEMA_VERSION {
-        sqlx::query(&format!("PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"))
-            .execute(&mut *conn)
-            .await
-            .map_err(|err| err.to_string())?;
-    }
     let now = now_millis();
     for (key, value) in [
         (
@@ -804,6 +805,12 @@ fn catalog_path_within_roots(source: &str, file_path: &str, roots: &HistoryRoots
     if source == "opencode" {
         return opencode_locator_in_default_scope(file_path);
     }
+    if source == "cline" {
+        let requested = Path::new(file_path);
+        return resolve_cline_history_roots()
+            .into_iter()
+            .any(|base| path_within_history_scope(requested, &base));
+    }
     let Ok(base) = history_source_base(source, roots) else {
         return false;
     };
@@ -1037,7 +1044,7 @@ fn merge_session_summaries(
 
 async fn list_sessions_from_v2(
     conn: &mut SqliteConnection,
-    roots: &HistoryRoots,
+    _roots: &HistoryRoots,
     source: Option<String>,
     project_path: Option<String>,
     query: Option<String>,
@@ -1097,14 +1104,10 @@ async fn list_sessions_from_v2(
         .fetch_all(&mut *conn)
         .await
         .map_err(|err| err.to_string())?;
-    let sessions = rows
+    rows
         .into_iter()
         .map(session_summary_from_row)
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(sessions
-        .into_iter()
-        .filter(|session| catalog_path_within_roots(&session.source, &session.file_path, roots))
-        .collect())
+        .collect::<Result<Vec<_>, String>>()
 }
 
 async fn list_sessions_from_legacy_catalog(
@@ -1353,7 +1356,7 @@ async fn search_sessions_from_legacy_catalog(
 
 async fn search_sessions_from_v2(
     conn: &mut SqliteConnection,
-    roots: &HistoryRoots,
+    _roots: &HistoryRoots,
     normalized: &str,
     source_filter: Option<&str>,
     project_filter: Option<&str>,
@@ -1393,7 +1396,6 @@ async fn search_sessions_from_v2(
         .into_iter()
         .map(search_result_from_v2_row)
         .collect::<Result<Vec<_>, String>>()?;
-    hits.retain(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots));
     if hits.len() >= max_hits {
         return Ok(hits);
     }
@@ -1435,11 +1437,7 @@ async fn search_sessions_from_v2(
         .into_iter()
         .map(search_result_from_v2_row)
         .collect::<Result<Vec<_>, String>>()?;
-    hits.extend(
-        message_hits
-            .into_iter()
-            .filter(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots)),
-    );
+    hits.extend(message_hits);
     Ok(hits)
 }
 
@@ -1527,7 +1525,7 @@ pub(super) async fn stats_session_facts(
 
 async fn stats_session_facts_from_v2(
     conn: &mut SqliteConnection,
-    roots: &HistoryRoots,
+    _roots: &HistoryRoots,
     source_filter: Option<&str>,
     target_project: Option<&str>,
     target_project_paths: &[String],
@@ -1593,10 +1591,6 @@ async fn stats_session_facts_from_v2(
         {
             continue;
         }
-        if !catalog_path_within_roots(&summary.source, &summary.file_path, roots) {
-            continue;
-        }
-
         let event_index = row
             .try_get::<Option<i64>, _>("event_index")
             .map_err(|err| err.to_string())?;
@@ -1697,7 +1691,7 @@ pub(super) async fn get_session_detail_from_v2(
 
 async fn get_session_detail_from_v2_with_conn(
     conn: &mut SqliteConnection,
-    roots: &HistoryRoots,
+    _roots: &HistoryRoots,
     file_path: &str,
     source: &str,
     project_key: &str,
@@ -1733,9 +1727,6 @@ async fn get_session_detail_from_v2_with_conn(
     let session_row_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
     let source: String = row.try_get("source").map_err(|err| err.to_string())?;
     let file_path: String = row.try_get("file_path").map_err(|err| err.to_string())?;
-    if !catalog_path_within_roots(&source, &file_path, roots) {
-        return Ok(None);
-    }
     let input_tokens = row
         .try_get::<i64, _>("input_tokens")
         .map_err(|err| err.to_string())?
@@ -3203,6 +3194,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_initialization_uses_user_version_fast_path() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        sqlx::query("UPDATE history_meta SET updated_at = 7 WHERE key = 'schema_version'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        ensure_schema(&mut conn).await.unwrap();
+
+        let updated_at: i64 = sqlx::query_scalar(
+            "SELECT updated_at FROM history_meta WHERE key = 'schema_version'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(updated_at, 7);
+    }
+
+    #[tokio::test]
     async fn list_sessions_merges_v2_first_and_legacy_gaps() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         ensure_schema(&mut conn).await.unwrap();
@@ -3386,7 +3397,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stats_session_facts_reads_v2_usage_events() {
+    async fn stats_session_facts_reads_all_active_v2_sources() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         ensure_schema(&mut conn).await.unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -3406,6 +3417,44 @@ mod tests {
                 '{}', 'settings', 'active', 1, 1
              )",
         )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'gemini-custom', 'gemini', 'windows', 'windows', 'file',
+                '{\"configRoot\":\"D:/custom-gemini\"}', 'gemini-settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        let gemini_result = sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind, primary_path,
+                project_key, cwd, cwd_normalized, title, created_at, updated_at,
+                message_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, fingerprint_kind, fingerprint_value, parser_version,
+                model_version, parse_status, last_seen_generation, indexed_at
+             ) VALUES (
+                'gemini-custom', 'gemini-v2', 'file', 'D:/custom-gemini/session.json',
+                'gemini-proj', 'D:/work/gemini', 'd:/work/gemini', 'Gemini stats', 10, 30,
+                1, 7, 4, 0, 0, 'file-stat', 'gemini-fp', 1, 1, 'ok', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_usage_events(
+                session_id, event_index, timestamp_ms, model, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd
+             ) VALUES (?1, 0, 2000, 'gemini-2.5-pro', 7, 4, 0, 0, 0)",
+        )
+        .bind(gemini_result.last_insert_rowid())
         .execute(&mut conn)
         .await
         .unwrap();
@@ -3441,13 +3490,22 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].summary.session_id, "stats-v2");
-        assert_eq!(facts[0].occurred_at, 1000);
-        assert_eq!(facts[0].stats.input_tokens, 10);
-        assert_eq!(facts[0].stats.output_tokens, 5);
-        assert_eq!(facts[0].stats.cache_read_tokens, 3);
-        assert_eq!(facts[0].stats.cache_creation_tokens, 2);
+        assert_eq!(facts.len(), 2);
+        let claude = facts
+            .iter()
+            .find(|fact| fact.summary.session_id == "stats-v2")
+            .unwrap();
+        assert_eq!(claude.occurred_at, 1000);
+        assert_eq!(claude.stats.input_tokens, 10);
+        assert_eq!(claude.stats.output_tokens, 5);
+        assert_eq!(claude.stats.cache_read_tokens, 3);
+        assert_eq!(claude.stats.cache_creation_tokens, 2);
+        let gemini = facts
+            .iter()
+            .find(|fact| fact.summary.session_id == "gemini-v2")
+            .unwrap();
+        assert_eq!(gemini.summary.source, "gemini");
+        assert_eq!(gemini.stats.input_tokens, 7);
     }
 
     #[tokio::test]

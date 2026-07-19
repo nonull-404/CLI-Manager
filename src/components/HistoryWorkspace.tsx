@@ -205,7 +205,7 @@ function makeConvertedSessionKey(result: HistoryConversionResult): string {
 }
 
 export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const loadingSessions = useHistoryStore((s) => s.loadingSessions);
   const loadingMoreSessions = useHistoryStore((s) => s.loadingMoreSessions);
   const loadingSessionDetail = useHistoryStore((s) => s.loadingSessionDetail);
@@ -290,6 +290,11 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const [liveEditWarningOpen, setLiveEditWarningOpen] = useState(false);
   const liveEditResolverRef = useRef<((allowed: boolean) => void) | null>(null);
   const [resumeIntent, setResumeIntent] = useState<ResumeIntent | null>(null);
+  const processModelCacheRef = useRef<{
+    session: HistorySessionDetail;
+    language: string;
+    model: SessionProcessModel;
+  } | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSessionQuery(sessionQuery), 150);
@@ -603,8 +608,14 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const processModel = useMemo(() => {
     if (!activeSession) return EMPTY_PROCESS_MODEL;
     if (detailView === "transcript" || detailView === "context") return EMPTY_PROCESS_MODEL;
-    return buildSessionProcessModel(activeSession, t);
-  }, [activeSession, detailView, t]);
+    const cached = processModelCacheRef.current;
+    if (cached?.session === activeSession && cached.language === language) {
+      return cached.model;
+    }
+    const model = buildSessionProcessModel(activeSession, t);
+    processModelCacheRef.current = { session: activeSession, language, model };
+    return model;
+  }, [activeSession, detailView, language, t]);
 
   const hasMoreMessages = visibleMessageCount < (activeSession?.messages.length ?? 0);
 

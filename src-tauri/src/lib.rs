@@ -84,6 +84,11 @@ fn app_show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn app_exit(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 fn app_open_devtools(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -805,6 +810,7 @@ pub fn run() {
             commands::terminal::pty_reconcile_active_sessions,
             commands::terminal::pty_status,
             commands::terminal::pty_daemon_active,
+            commands::terminal::pty_daemon_shutdown_if_idle,
             commands::terminal::pty_host_get_endpoint,
             commands::terminal::pty_legacy_request,
             commands::terminal::pty_daemon_upgrade_if_idle,
@@ -870,6 +876,7 @@ pub fn run() {
             commands::history_edit::history_get_backup_status,
             commands::history_backup::history_backup_get_root_status,
             commands::history_backup::history_backup_cleanup,
+            commands::history_backup::history_backup_list_restore_candidates,
             commands::history_backup::history_backup_build_restore_plan,
             commands::history_backup::history_backup_execute_restore,
             commands::history_backup::history_backup_preflight_file,
@@ -1020,6 +1027,7 @@ pub fn run() {
             crash_reporter::crash_context_update,
             crash_reporter::frontend_crash_report,
             app_show_main_window,
+            app_exit,
         ])
         .build(context)
         .expect("error while building tauri application")

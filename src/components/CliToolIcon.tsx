@@ -1,9 +1,8 @@
 import type { ComponentType } from "react";
 import AmpColor from "@lobehub/icons/es/Amp/components/Color";
 import AntigravityColor from "@lobehub/icons/es/Antigravity/components/Color";
-import ClaudeCodeColor from "@lobehub/icons/es/ClaudeCode/components/Color";
+import ClaudeColor from "@lobehub/icons/es/Claude/components/Color";
 import ClineMono from "@lobehub/icons/es/Cline/components/Mono";
-import CodexColor from "@lobehub/icons/es/Codex/components/Color";
 import CopilotColor from "@lobehub/icons/es/Copilot/components/Color";
 import CursorMono from "@lobehub/icons/es/Cursor/components/Mono";
 import GeminiCliColor from "@lobehub/icons/es/GeminiCLI/components/Color";
@@ -11,6 +10,7 @@ import GooseMono from "@lobehub/icons/es/Goose/components/Mono";
 import GrokMono from "@lobehub/icons/es/Grok/components/Mono";
 import KiroColor from "@lobehub/icons/es/Kiro/components/Color";
 import OpenCodeMono from "@lobehub/icons/es/OpenCode/components/Mono";
+import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
 import QwenColor from "@lobehub/icons/es/Qwen/components/Color";
 import { Bot, Heart, Pi } from "lucide-react";
 import type { CliToolIconKey } from "../lib/cliTools";
@@ -21,8 +21,8 @@ type IconComponent = ComponentType<{
 }>;
 
 const CLI_TOOL_ICONS: Record<CliToolIconKey, IconComponent> = {
-  "claude-code": ClaudeCodeColor,
-  codex: CodexColor,
+  "claude-code": ClaudeColor,
+  codex: OpenAI,
   opencode: OpenCodeMono,
   grok: GrokMono,
   qwen: QwenColor,
@@ -41,5 +41,5 @@ const CLI_TOOL_ICONS: Record<CliToolIconKey, IconComponent> = {
 
 export function CliToolIcon({ icon, size = 16 }: { icon: CliToolIconKey; size?: number }) {
   const Icon = CLI_TOOL_ICONS[icon];
-  return <Icon size={size} />;
+  return <Icon size={size} className="text-text-primary" />;
 }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCliManagerDataPaths } from "../lib/appPaths";
+import { useSettingsStore } from "./settingsStore";
 import {
   HISTORY_SOURCE_DESCRIPTOR_BY_ID,
   createHistorySourceInstanceId,
@@ -20,6 +21,7 @@ interface HistorySourceSettingsStore {
   load: () => Promise<void>;
   setSourceSettings: (sourceId: HistorySourceId, settings: HistorySourceSettings) => Promise<void>;
   clearSource: (sourceId: HistorySourceId) => Promise<void>;
+  syncHookConfigRoot: (sourceId: "claude" | "codex", path: string | null) => Promise<void>;
 }
 
 let store: Store | null = null;
@@ -98,12 +100,12 @@ async function loadSettingsWithLegacyMigration(s: Store): Promise<HistorySourceS
   const claudeLegacy = instanceFromLegacyPath("claude", await s.get<string>("claudeHookConfigDir"));
   const codexLegacy = instanceFromLegacyPath("codex", await s.get<string>("codexHookConfigDir"));
   let changed = false;
-  if (!stored.claude?.activeInstance && claudeLegacy) {
-    stored.claude = { enabled: true, activeInstance: claudeLegacy };
+  if (claudeLegacy && stored.claude?.activeInstance?.locations.configRoot !== claudeLegacy.locations.configRoot) {
+    stored.claude = { enabled: stored.claude?.enabled ?? true, activeInstance: claudeLegacy };
     changed = true;
   }
-  if (!stored.codex?.activeInstance && codexLegacy) {
-    stored.codex = { enabled: true, activeInstance: codexLegacy };
+  if (codexLegacy && stored.codex?.activeInstance?.locations.configRoot !== codexLegacy.locations.configRoot) {
+    stored.codex = { enabled: stored.codex?.enabled ?? true, activeInstance: codexLegacy };
     changed = true;
   }
   if (changed) {
@@ -133,6 +135,14 @@ function stableSettingsHash(sourceId: HistorySourceId, sourceSettings: HistorySo
     enabled: sourceSettings.enabled,
     activeInstance: sourceSettings.activeInstance ?? null,
   });
+}
+
+function hookSettingKey(sourceId: "claude" | "codex"): "claudeHookConfigDir" | "codexHookConfigDir" {
+  return sourceId === "claude" ? "claudeHookConfigDir" : "codexHookConfigDir";
+}
+
+function normalizedConfigRoot(sourceSettings: HistorySourceSettings | undefined): string | null {
+  return sourceSettings?.activeInstance?.locations.configRoot?.trim() || null;
 }
 
 async function syncIndexSourceInstance(sourceId: HistorySourceId, sourceSettings: HistorySourceSettings): Promise<void> {
@@ -178,6 +188,13 @@ export const useHistorySourceSettingsStore = create<HistorySourceSettingsStore>(
         void syncIndexSourceInstanceBestEffort(sourceId, sourceSettings);
       }
     }
+    for (const sourceId of ["claude", "codex"] as const) {
+      const configRoot = normalizedConfigRoot(settings[sourceId]);
+      const key = hookSettingKey(sourceId);
+      if (configRoot && useSettingsStore.getState()[key]?.trim() !== configRoot) {
+        await useSettingsStore.getState().update(key, configRoot);
+      }
+    }
   },
 
   setSourceSettings: async (sourceId, sourceSettings) => {
@@ -189,6 +206,13 @@ export const useHistorySourceSettingsStore = create<HistorySourceSettingsStore>(
     await s.set("historySourceSettings", next);
     set({ settings: next });
     void syncIndexSourceInstanceBestEffort(sourceId, sourceSettings);
+    if (sourceId === "claude" || sourceId === "codex") {
+      const configRoot = normalizedConfigRoot(sourceSettings);
+      const key = hookSettingKey(sourceId);
+      if (configRoot && useSettingsStore.getState()[key]?.trim() !== configRoot) {
+        await useSettingsStore.getState().update(key, configRoot);
+      }
+    }
   },
 
   clearSource: async (sourceId) => {
@@ -198,5 +222,42 @@ export const useHistorySourceSettingsStore = create<HistorySourceSettingsStore>(
     await s.set("historySourceSettings", next);
     set({ settings: next });
     void syncIndexSourceInstanceBestEffort(sourceId, { enabled: false });
+    if (sourceId === "claude" || sourceId === "codex") {
+      const key = hookSettingKey(sourceId);
+      if (useSettingsStore.getState()[key] !== null) {
+        await useSettingsStore.getState().update(key, null);
+      }
+    }
+  },
+
+  syncHookConfigRoot: async (sourceId, path) => {
+    if (!get().loaded) await get().load();
+    const normalizedPath = path?.trim() || null;
+    const current = get().settings[sourceId];
+    if (normalizedConfigRoot(current) === normalizedPath) return;
+    const nextSourceSettings: HistorySourceSettings = normalizedPath
+      ? {
+          enabled: current?.enabled ?? true,
+          activeInstance: instanceFromLegacyPath(sourceId, normalizedPath),
+        }
+      : { enabled: current?.enabled ?? true };
+    const next = { ...get().settings, [sourceId]: nextSourceSettings };
+    const s = await getStore();
+    await s.set("historySourceSettings", next);
+    set({ settings: next });
+    void syncIndexSourceInstanceBestEffort(sourceId, nextSourceSettings);
   },
 }));
+
+useSettingsStore.subscribe((state, previous) => {
+  if (state.claudeHookConfigDir !== previous.claudeHookConfigDir) {
+    void useHistorySourceSettingsStore
+      .getState()
+      .syncHookConfigRoot("claude", state.claudeHookConfigDir);
+  }
+  if (state.codexHookConfigDir !== previous.codexHookConfigDir) {
+    void useHistorySourceSettingsStore
+      .getState()
+      .syncHookConfigRoot("codex", state.codexHookConfigDir);
+  }
+});

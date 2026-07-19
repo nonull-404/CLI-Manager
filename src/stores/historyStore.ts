@@ -171,6 +171,8 @@ function effectiveProjectPathFilter(state: Pick<HistoryStore, "projectPathFilter
 const statsCache = new Map<string, StatsCacheEntry>();
 const statsProjectOptionsCache = new Map<string, StatsProjectOptionsCacheEntry>();
 let statsRequestSeq = 0;
+let historyMetaReady = false;
+let historyMetaInitPromise: Promise<void> | null = null;
 
 function statsCacheGet(key: string): StatsCacheEntry | undefined {
   const entry = statsCache.get(key);
@@ -1416,8 +1418,11 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   indexStatus: { ...DEFAULT_HISTORY_INDEX_STATUS },
 
   ensureMetaTable: async () => {
-    const db = await getDb();
-    await db.execute(`
+    if (historyMetaReady) return;
+    if (!historyMetaInitPromise) {
+      historyMetaInitPromise = (async () => {
+        const db = await getDb();
+        await db.execute(`
       CREATE TABLE IF NOT EXISTS session_meta (
         session_key TEXT PRIMARY KEY,
         session_id  TEXT NOT NULL,
@@ -1429,14 +1434,14 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         tags_json   TEXT NOT NULL DEFAULT '[]',
         updated_at  TEXT NOT NULL
       )
-    `);
-    await db.execute(
+        `);
+        await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_meta_source ON session_meta(source)"
-    );
-    await db.execute(
+        );
+        await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_meta_updated ON session_meta(updated_at DESC)"
-    );
-    await db.execute(`
+        );
+        await db.execute(`
       CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
         session_key   TEXT PRIMARY KEY,
         session_id    TEXT NOT NULL,
@@ -1451,15 +1456,15 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         detail_json   TEXT NOT NULL,
         snapshot_at   TEXT NOT NULL
       )
-    `);
-    await db.execute(
+        `);
+        await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_source ON session_favorite_snapshots(source)"
-    );
-    await db.execute(
+        );
+        await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_updated ON session_favorite_snapshots(updated_at DESC)"
-    );
-    // 与 lib.rs migration v18 同构，双保险（老库升级顺序不确定时仍可用）。
-    await db.execute(`
+        );
+        // 与 lib.rs migration v18 同构，双保险（老库升级顺序不确定时仍可用）。
+        await db.execute(`
       CREATE TABLE IF NOT EXISTS history_edit_audit (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         session_key TEXT NOT NULL,
@@ -1474,10 +1479,20 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         backup_path TEXT,
         created_at  INTEGER NOT NULL
       )
-    `);
-    await db.execute(
+        `);
+        await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_history_edit_audit_session ON history_edit_audit(session_key, created_at DESC)"
-    );
+        );
+      })()
+        .then(() => {
+          historyMetaReady = true;
+        })
+        .catch((error) => {
+          historyMetaInitPromise = null;
+          throw error;
+        });
+    }
+    await historyMetaInitPromise;
   },
 
   openHistory: async (options) => {
