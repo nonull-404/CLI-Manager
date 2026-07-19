@@ -48,7 +48,6 @@ import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { BackgroundTasksPanel, type BackgroundTaskMeta } from "./BackgroundTasksPanel";
 import { CliCat } from "./desktop-pet/CliCat";
-import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
 import { SystemResourcesPanel } from "./terminal/SystemResourcesPanel";
 import {
   ResizableTerminalPanelFrame,
@@ -56,10 +55,7 @@ import {
   TERMINAL_SIDE_PANEL_TAB_ORDER,
   type TerminalSidePanelTab,
 } from "./terminal/TerminalSidePanel";
-import { SubagentTranscriptView } from "./terminal/SubagentTranscriptView";
-import { SessionReplayPanel } from "./terminal/SessionReplayPanel";
 import { WorktreeFinishDialog } from "./worktree/WorktreeFinishDialog";
-import { FileEditorPane } from "./files/FileEditorPane";
 import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
@@ -110,6 +106,22 @@ const HistoryWorkspace = lazy(() =>
 
 const GitChangesPanel = lazy(() =>
   import("./git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
+);
+
+const TerminalStatsPanel = lazy(() =>
+  import("./terminal/TerminalStatsPanel").then((module) => ({ default: module.TerminalStatsPanel }))
+);
+
+const FileEditorPane = lazy(() =>
+  import("./files/FileEditorPane").then((module) => ({ default: module.FileEditorPane }))
+);
+
+const SubagentTranscriptView = lazy(() =>
+  import("./terminal/SubagentTranscriptView").then((module) => ({ default: module.SubagentTranscriptView }))
+);
+
+const SessionReplayPanel = lazy(() =>
+  import("./terminal/SessionReplayPanel").then((module) => ({ default: module.SessionReplayPanel }))
 );
 
 const normalizeTabMenuHex = (value: string | undefined, fallback: string) => (
@@ -1666,18 +1678,22 @@ function PaneLeafView({
             style={{ display: session.id === effectivePaneActiveSessionId ? "block" : "none" }}
           >
             {session.kind === "file-editor" ? (
-              <FileEditorPane
-                session={session}
-                isActive={session.id === activeSessionId}
-                terminalThemeBackground={terminalThemeBackground}
-                onClose={() => onCloseSessions([session.id])}
-              />
+              <Suspense fallback={null}>
+                <FileEditorPane
+                  session={session}
+                  isActive={session.id === activeSessionId}
+                  terminalThemeBackground={terminalThemeBackground}
+                  onClose={() => onCloseSessions([session.id])}
+                />
+              </Suspense>
             ) : session.kind === "subagent-transcript" ? (
-              <SubagentTranscriptView
-                sessionId={session.id}
-                title={session.title}
-                isVisible={!historyActive && isLayoutVisible && session.id === effectivePaneActiveSessionId}
-              />
+              <Suspense fallback={null}>
+                <SubagentTranscriptView
+                  sessionId={session.id}
+                  title={session.title}
+                  isVisible={!historyActive && isLayoutVisible && session.id === effectivePaneActiveSessionId}
+                />
+              </Suspense>
             ) : (
               <XTermTerminal
                 sessionId={session.id}
@@ -4207,7 +4223,9 @@ export function TerminalTabs({
                   resizeLabel={t("terminal.panel.resizeStatsLabel")}
                   resizeTitle={t("terminal.panel.resizeStatsTitle")}
                 >
-                  <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
+                  <Suspense fallback={null}>
+                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
+                  </Suspense>
                 </ResizableTerminalPanelFrame>
               )}
               {gitOpen && panelCapabilities.git && (
@@ -4229,7 +4247,9 @@ export function TerminalTabs({
                   resizeLabel={t("terminal.panel.resizeReplayLabel")}
                   resizeTitle={t("terminal.panel.resizeReplayTitle")}
                 >
-                  <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
+                  <Suspense fallback={null}>
+                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
+                  </Suspense>
                 </ResizableTerminalPanelFrame>
               )}
               {filesOpen && panelCapabilities.files && (
