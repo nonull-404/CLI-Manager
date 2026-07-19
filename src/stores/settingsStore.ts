@@ -5,6 +5,7 @@ import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
 import { backgroundImageExists } from "../lib/assetUrl";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey } from "../lib/shell";
 import { getCliManagerDataPaths } from "../lib/appPaths";
+import { singleFlight } from "../lib/singleFlight";
 import {
   DEFAULT_TERMINAL_INPUT_SUGGESTION_USAGE,
   TERMINAL_INPUT_SUGGESTION_AI_MODEL,
@@ -54,6 +55,7 @@ export const LINUX_GRAPHICS_MODES = ["auto", "system", "disable-dmabuf", "disabl
 export type LinuxGraphicsMode = (typeof LINUX_GRAPHICS_MODES)[number];
 type LastSettingsTab =
   | "general"
+  | "desktop-pet"
   | "developer"
   | "sidebar"
   | "terminal-theme"
@@ -61,6 +63,8 @@ type LastSettingsTab =
   | "templates"
   | "providers"
   | "model-pricing"
+  | "cc-connect"
+  | "ssh-hosts"
   | "sync"
   | "hooks"
   | "statusline"
@@ -140,7 +144,7 @@ export type ShortcutAction =
   | "commandPalette"
   | "sessionHistory"
   | "copyAi"
-  | "pasteFileToAiTui"
+  | "toggleSidebar"
   | "toggleTerminalFullscreen";
 export type TabSwitchShortcutModifier = "Alt" | "Ctrl" | "Shift";
 export type KeyboardShortcutMap = Record<ShortcutAction, string>;
@@ -149,6 +153,30 @@ export type UnsplitBehavior = "merge" | "close";
 export type FileExplorerIgnoredPaths = Record<string, string[]>;
 export type LanguagePreference = "auto" | "zh-CN" | "en-US";
 export type BatchLaunchPaneDirection = "vertical" | "horizontal";
+export type DesktopPetSize = "small" | "medium" | "large";
+export const DESKTOP_PET_WORK_BOUNCE_MIN_PX = 0;
+export const DESKTOP_PET_WORK_BOUNCE_MAX_PX = 5;
+
+export interface DesktopPetPosition {
+  x: number;
+  y: number;
+}
+
+export interface DesktopPetSettings {
+  enabled: boolean;
+  petId: string;
+  alwaysOnTop: boolean;
+  size: DesktopPetSize;
+  workingBounceEnabled: boolean;
+  workingBounceDistancePx: number;
+  showStatus: boolean;
+  showSessionName: boolean;
+  autoHideFullscreen: boolean;
+  lockPosition: boolean;
+  position: DesktopPetPosition | null;
+}
+
+export const BUILTIN_DESKTOP_PET_ID = "builtin.cli-cat";
 
 export type HookEventType =
   | "SessionStart"
@@ -166,13 +194,12 @@ const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
   "commandPalette",
   "sessionHistory",
   "copyAi",
-  "pasteFileToAiTui",
+  "toggleSidebar",
   "toggleTerminalFullscreen",
 ];
 
 export interface TerminalToolbarVisibilitySettings {
   templates: boolean;
-  commandHistory: boolean;
   fullscreen: boolean;
   sessionHistory: boolean;
   replay: boolean;
@@ -222,7 +249,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   commandPalette: "Ctrl+P",
   sessionHistory: "Ctrl+K",
   copyAi: "Alt+P",
-  pasteFileToAiTui: "Alt+V",
+  toggleSidebar: "Ctrl+B",
   toggleTerminalFullscreen: "F11",
 };
 
@@ -268,7 +295,7 @@ const TERMINAL_BACKGROUND_POSITIONS: readonly TerminalBackgroundPosition[] = [
   "bottom-right",
 ] as const;
 
-interface Settings {
+export interface Settings {
   language: LanguagePreference;
   theme: ThemeMode;
   lightThemePalette: LightThemePalette;
@@ -291,9 +318,12 @@ interface Settings {
   terminalThemeMode: TerminalThemeMode;
   terminalThemeName: string;
   sidebarDensity: SidebarDensity;
+  sidebarProjectFilterVisible: boolean;
   viewMode: ViewMode;
   closeBehavior: CloseBehavior;
   exitWithRunningTasksBehavior: ExitWithRunningTasksBehavior;
+  /** 退出检测是否把「已完成/失败」的 Claude/Codex 会话也算作可转入后台的任务（默认仅检测运行中）。 */
+  backgroundIncludeFinishedTasks: boolean;
   keyboardShortcuts: KeyboardShortcutMap;
   terminalNewlineShortcut: TerminalNewlineShortcut;
   unsplitBehavior: UnsplitBehavior;
@@ -365,6 +395,7 @@ interface Settings {
   batchLaunchPaneDirection: BatchLaunchPaneDirection;
   projectScopedTerminalViewEnabled: boolean;
   workspanEnabled: boolean;
+  desktopPet: DesktopPetSettings;
 }
 
 interface SettingsStore extends Settings {
@@ -405,15 +436,16 @@ const DEFAULTS: Settings = {
   terminalThemeMode: "independent",
   terminalThemeName: "forestNightDark",
   sidebarDensity: "comfortable",
+  sidebarProjectFilterVisible: true,
   viewMode: "standard",
   closeBehavior: "ask",
   exitWithRunningTasksBehavior: "ask",
+  backgroundIncludeFinishedTasks: false,
   keyboardShortcuts: DEFAULT_KEYBOARD_SHORTCUTS,
   terminalNewlineShortcut: "Shift+Enter",
   unsplitBehavior: "merge",
   terminalToolbarVisibility: {
     templates: true,
-    commandHistory: false,
     fullscreen: true,
     sessionHistory: true,
     replay: false,
@@ -428,7 +460,7 @@ const DEFAULTS: Settings = {
     stats: true,
     gitChanges: true,
   },
-  terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "replay", "files", "gitChanges", "stats", "systemResources", "backgroundTasks"],
+  terminalToolbarOrder: ["new", "templates", "fullscreen", "sessionHistory", "replay", "files", "gitChanges", "stats", "systemResources", "backgroundTasks"],
   terminalSidePanelMerged: true,
   terminalSidePanelSingleOpen: true,
   terminalSidePanelSkin: "terminal",
@@ -518,6 +550,19 @@ const DEFAULTS: Settings = {
   batchLaunchPaneDirection: "horizontal",
   projectScopedTerminalViewEnabled: false,
   workspanEnabled: true,
+  desktopPet: {
+    enabled: false,
+    petId: BUILTIN_DESKTOP_PET_ID,
+    alwaysOnTop: true,
+    size: "medium",
+    workingBounceEnabled: false,
+    workingBounceDistancePx: 5,
+    showStatus: true,
+    showSessionName: false,
+    autoHideFullscreen: true,
+    lockPosition: false,
+    position: null,
+  },
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -536,6 +581,7 @@ const LEGACY_TERMINAL_THEME_MAP: Partial<Record<string, string>> = {
 
 const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "general",
+  "desktop-pet",
   "developer",
   "sidebar",
   "terminal-theme",
@@ -543,6 +589,8 @@ const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "templates",
   "providers",
   "model-pricing",
+  "cc-connect",
+  "ssh-hosts",
   "sync",
   "hooks",
   "statusline",
@@ -634,7 +682,6 @@ export function migrateTerminalToolbarVisibility(value: unknown): TerminalToolba
 
   return {
     templates: typeof raw.templates === "boolean" ? raw.templates : defaults.templates,
-    commandHistory: typeof raw.commandHistory === "boolean" ? raw.commandHistory : defaults.commandHistory,
     fullscreen: typeof raw.fullscreen === "boolean" ? raw.fullscreen : defaults.fullscreen,
     sessionHistory: typeof raw.sessionHistory === "boolean" ? raw.sessionHistory : defaults.sessionHistory,
     replay: typeof raw.replay === "boolean" ? raw.replay : defaults.replay,
@@ -918,6 +965,61 @@ export function migrateTerminalBackground(value: unknown): TerminalBackgroundSet
   return { enabled, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken };
 }
 
+export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {
+  const defaults = DEFAULTS.desktopPet;
+  if (!value || typeof value !== "object") {
+    return { ...defaults, position: null };
+  }
+  const raw = value as Record<string, unknown>;
+  const rawPosition = raw.position;
+  const position = rawPosition && typeof rawPosition === "object"
+    ? (() => {
+        const candidate = rawPosition as Record<string, unknown>;
+        if (
+          typeof candidate.x !== "number" ||
+          !Number.isFinite(candidate.x) ||
+          typeof candidate.y !== "number" ||
+          !Number.isFinite(candidate.y)
+        ) {
+          return null;
+        }
+        return {
+          x: Math.round(clampNumber(candidate.x, -100_000, 100_000, 0)),
+          y: Math.round(clampNumber(candidate.y, -100_000, 100_000, 0)),
+        };
+      })()
+    : null;
+  const petId = typeof raw.petId === "string" && raw.petId.trim() && raw.petId.length <= 80
+    ? raw.petId.trim()
+    : defaults.petId;
+  const size: DesktopPetSize = raw.size === "small" || raw.size === "medium" || raw.size === "large"
+    ? raw.size
+    : defaults.size;
+  const workingBounceDistancePx = Math.round(clampNumber(
+    raw.workingBounceDistancePx,
+    DESKTOP_PET_WORK_BOUNCE_MIN_PX,
+    DESKTOP_PET_WORK_BOUNCE_MAX_PX,
+    defaults.workingBounceDistancePx
+  ));
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : defaults.enabled,
+    petId,
+    alwaysOnTop: typeof raw.alwaysOnTop === "boolean" ? raw.alwaysOnTop : defaults.alwaysOnTop,
+    size,
+    workingBounceEnabled:
+      typeof raw.workingBounceEnabled === "boolean"
+        ? raw.workingBounceEnabled
+        : defaults.workingBounceEnabled,
+    workingBounceDistancePx,
+    showStatus: typeof raw.showStatus === "boolean" ? raw.showStatus : defaults.showStatus,
+    showSessionName: typeof raw.showSessionName === "boolean" ? raw.showSessionName : defaults.showSessionName,
+    autoHideFullscreen:
+      typeof raw.autoHideFullscreen === "boolean" ? raw.autoHideFullscreen : defaults.autoHideFullscreen,
+    lockPosition: typeof raw.lockPosition === "boolean" ? raw.lockPosition : defaults.lockPosition,
+    position,
+  };
+}
+
 let store: Store | null = null;
 const TERMINAL_INPUT_SUGGESTION_USAGE_SAVE_DELAY_MS = 800;
 let terminalInputSuggestionUsageSaveTimer: number | null = null;
@@ -946,7 +1048,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   loaded: false,
   terminalBackgroundMissing: false,
 
-  load: async () => {
+  load: singleFlight(async () => {
     const s = await getStore();
     const rawEntries = await s.entries();
     const entries = Object.fromEntries(
@@ -1066,6 +1168,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.systemResourceCardVisibility = migrateSystemResourceCardVisibility(entries.systemResourceCardVisibility);
     entries.systemResourceCardOrder = migrateSystemResourceCardOrder(entries.systemResourceCardOrder);
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+    entries.desktopPet = migrateDesktopPetSettings(entries.desktopPet);
     entries.terminalShellProfiles = migrateTerminalShellProfiles(entries.terminalShellProfiles);
     entries.terminalSettingsSectionsExpanded = migrateTerminalSettingsSectionsExpanded(
       entries.terminalSettingsSectionsExpanded
@@ -1090,6 +1193,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       entries.sidebarDensity === "compact" || entries.sidebarDensity === "comfortable"
         ? entries.sidebarDensity
         : DEFAULTS.sidebarDensity;
+    entries.sidebarProjectFilterVisible =
+      typeof entries.sidebarProjectFilterVisible === "boolean"
+        ? entries.sidebarProjectFilterVisible
+        : DEFAULTS.sidebarProjectFilterVisible;
     entries.viewMode =
       entries.viewMode === "standard" || entries.viewMode === "compact"
         ? entries.viewMode
@@ -1105,6 +1212,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       entries.exitWithRunningTasksBehavior === "discard"
         ? entries.exitWithRunningTasksBehavior
         : DEFAULTS.exitWithRunningTasksBehavior;
+    entries.backgroundIncludeFinishedTasks =
+      typeof entries.backgroundIncludeFinishedTasks === "boolean"
+        ? entries.backgroundIncludeFinishedTasks
+        : DEFAULTS.backgroundIncludeFinishedTasks;
     entries.ccusageAnalyticsEnabled =
       typeof entries.ccusageAnalyticsEnabled === "boolean"
         ? entries.ccusageAnalyticsEnabled
@@ -1314,7 +1425,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         })
         .catch(() => {});
     }
-  },
+  }),
 
   syncSystemTheme: () => {
     if (get().theme === "system") {

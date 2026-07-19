@@ -1,5 +1,63 @@
 # Component Guidelines
 
+## Convention: Terminal output uses PtyHost binary frames and xterm parse ACK
+
+**What**: `XTermTerminal` receives PTY data only through `TerminalProcessManager` / `PtyHostSocket`. Hidden terminals remain attached and parse output. ACK is sent from the `terminal.write` callback, never when the WebSocket message arrives.
+
+**Why**: This keeps process transport out of components, prevents hidden-tab replay corruption, and makes daemon backpressure represent xterm parser progress instead of network delivery.
+
+**Contracts**:
+
+- Output/replay frames carry `sessionId`, `sequence`, `cols`, `rows`, and raw bytes.
+- Initial and reconnect Replay apply recorded dimensions before each frame while PTY resize forwarding is suspended. The final Replay frame is an explicit client-side batch boundary; force-fit the current container before releasing queued live output or resuming normal resize forwarding.
+- `TerminalProcessManager` owns every received frame until xterm's write callback commits it. Component cleanup must only detach the consumer; it must not discard or persist-and-duplicate uncommitted frames.
+- Live frames may be combined for one xterm write, but completion commits and ACKs the constituent frames in sequence order using each frame's raw UTF-16 length.
+- A remounted Display receives all uncommitted frames again. Commit callbacks from an older attachment generation are ignored.
+- Closing the last attached session cancels any scheduled reconnect; a delayed reconnect callback must return without opening a socket when no non-tombstoned sessions remain.
+- No component or store may call `listen("pty-output-...")` or invoke `pty_write/pty_resize/pty_close` directly.
+- Large-buffer horizontal resize is delayed 100ms; vertical resize remains immediate. Before a normal-buffer column change, if the user is above the live bottom, register a temporary marker at `viewportY`; after `Terminal.resize()` wait two animation frames for xterm's queued render and DOM viewport synchronization, then scroll to the marker's updated line and dispose it. A synchronous `scrollToLine()` is forbidden because the old DOM scroll height clamps the target before xterm's queued viewport sync. Cancel and dispose a pending marker on a newer resize or terminal detach. Do not force bottom-following or alternate-buffer terminals. Visibility restore fits immediately and forces a full refresh only when natural rendering does not complete within two frames or the renderer was rebuilt.
+
+**Wrong**:
+
+```tsx
+listen(`pty-output-${sessionId}`, ({ payload }) => terminal.write(atob(payload)));
+```
+
+**Correct**:
+
+```tsx
+terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
+  terminal.write(decode(delivery.frame.data), () => {
+    delivery.commit(rawLength);
+  });
+});
+```
+
+**Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs`; manually verify background output, reconnect replay, split/fullscreen resize, IME, WebGL fallback, and no duplicate output after daemon reconnect.
+
+### Convention: Replay normalization has no PTY input side effects
+
+**What**: OSC 10/11 color queries may be answered only while processing live PTY output. Replay must remove these queries from the display stream without writing a response to the current PTY. Multiple live color queries received in one output batch are combined into one ordered write.
+
+**Why**: Replay contains historical terminal output. Re-executing its terminal queries injects stale OSC responses into the current CLI input state; separate asynchronous replies also increase the chance that a short-lived terminal probe has already switched to its composer.
+
+**Correct**:
+
+```ts
+normalizeOutput(rawText, {
+  replyToColorQueries: frame.kind === "output",
+});
+```
+
+**Wrong**:
+
+```ts
+// Historical queries must not produce live input.
+normalizeOutput(replayText);
+```
+
+**Tests**: Run `node --test scripts/terminalOsc.test.mjs`; assert live OSC 10/11 queries produce one combined write and replay queries produce no write.
+
 > How components are built in this project.
 
 ---
@@ -303,6 +361,22 @@ const detachPtyOutput = display.attachPtyOutput();
 
 **Tests**: Run `npx tsc --noEmit` and `node scripts/terminalVisibility.test.mjs`. Manually verify tab switching with background output, resize, WebGL restoration, and IME composition after any Display controller change.
 
+### Convention: Terminal focus requires active and visible layout state
+
+**What**: `XTermTerminal` may focus xterm only when the session is both globally active and currently visible. On Tab, Workspan, history-workspace, or split-pane transitions, defer `terminal.focus()` to the next animation frame after `display:block` layout takes effect.
+
+**Why**: `isActive` can update before pane/workspan visibility. Synchronous focus against a hidden xterm helper textarea is lost when layout finishes, forcing the user to click again; focusing every visible split would instead steal input from the globally active pane.
+
+**Contracts**:
+
+- Depend on both `isActive` and `isVisible`.
+- Blur when either value is false.
+- Re-check `terminalRef`, `isActiveRef`, and `isVisibleRef` inside the animation-frame callback.
+- Cancel the pending frame during effect cleanup.
+- A visible but inactive split pane renders live output but never takes keyboard or IME focus.
+
+**Tests**: Switch by mouse, keyboard, Workspan, and split pane; return from history and fullscreen; type immediately without clicking and confirm input reaches only the active visible terminal.
+
 ### Convention: Async terminal suggestions are scoped to one input attachment
 
 **What**: `useTerminalInput.attachSuggestions()` resets all suggestion state and assigns an attachment generation. Delayed template/history/path/AI results must verify that generation before they update the ghost suggestion.
@@ -329,19 +403,20 @@ if (!isCurrentAttachment() || context.input !== getInput()) return;
 
 **Tests**: Run `npx tsc --noEmit`. With AI suggestions enabled, type a prefix and immediately switch sessions or close/reopen the tab; no ghost text from the old session may appear. Also verify local, path, and AI suggestions still accept with Tab, Right Arrow, and Ctrl+Space.
 
-### Convention: Visibility-restoration refresh stays masked until xterm render completes
+### Convention: Visibility restoration prefers natural rendering with a bounded refresh fallback
 
-**What**: When `XTermTerminal` changes from hidden to visible, keep the existing queued-write recovery and full viewport refresh, but hide the xterm drawing container until `Terminal.onRender` reports a range covering the current viewport. Reveal on the next animation frame and keep a bounded timeout fallback.
+**What**: When `XTermTerminal` changes from hidden to visible, mask the drawing container synchronously, fit the terminal immediately without forcing a full viewport refresh, and wait for xterm's natural visibility-resume render. If no full-viewport `Terminal.onRender` arrives within two animation frames, request one full refresh. Renderer recreation still refreshes immediately. Reveal on the next animation frame after the full render and keep a bounded timeout fallback.
 
-**Why**: `Terminal.refresh(0, rows - 1)` schedules work for the next rendering opportunity; it does not mean the pixels are complete when `refresh()` returns. Exposing the container immediately can show xterm repainting from the top-left toward the bottom-right. Removing the refresh instead can restore the intermittent blank/stale terminal bug that the visibility recovery path was added to prevent.
+**Why**: Coupling `scheduleFit(true)` to `Terminal.refresh(0, rows - 1)` makes every ordinary Tab switch repaint the complete viewport and can visibly draw from top to bottom. Never forcing a refresh reintroduces the intermittent blank/stale terminal bug. Keeping immediate resize and forced viewport refresh as separate decisions preserves both fast normal switching and a bounded recovery path.
 
 **Correct**:
 
 ```tsx
-const beginVisibilityRestore = () => {
+const beginVisibilityRestore = (deferViewportRefresh: boolean) => {
   visibilityRestorePendingRef.current = true;
   setVisibilityRestorePending(true);
   revealTimerRef.current = window.setTimeout(finishVisibilityRestore, 500);
+  if (deferViewportRefresh) scheduleTwoFrameRefreshFallback();
 };
 
 terminal.onRender((range) => {
@@ -350,32 +425,46 @@ terminal.onRender((range) => {
   revealRafRef.current = window.requestAnimationFrame(finishVisibilityRestore);
 });
 
+// Ordinary visibility restore: resize now, refresh only if natural rendering stalls.
+beginVisibilityRestore(true);
+scheduleFit(true, false);
+
+// Recreated WebGL/default renderer: the canvas is known to need a complete refresh.
+beginVisibilityRestore(false);
+scheduleFit(true, true);
+
 const hidden = inactiveReplayPending || visibilityRestorePending;
 ```
 
 **Wrong**:
 
 ```tsx
-// Removing the refresh can bring back blank/stale restored terminals.
-if (becameVisible) scheduleFit(false);
+// This forces a complete repaint on every ordinary Tab switch.
+if (becameVisible) {
+  markViewportRefreshNeeded();
+  scheduleFit(true);
+}
 
-// Revealing immediately exposes the renderer's progressive full repaint.
-terminal.refresh(0, terminal.rows - 1);
-setVisibilityRestorePending(false);
+// This has no bounded recovery when xterm does not naturally repaint.
+if (becameVisible) scheduleFit(true, false);
 ```
 
 **Contracts**:
 
 - Mask only the xterm drawing container; keep the wrapper/background mounted and never recreate the `Terminal`, PTY listener, addons, scrollback, or input state.
 - The hidden-to-visible render must be masked synchronously from the first visible React commit, before the visibility effect schedules fit/refresh.
+- `scheduleFit(immediateResize, forceViewportRefresh)` keeps immediate geometry synchronization separate from complete viewport repainting. Existing callers that pass only `true` retain the explicit full-refresh behavior.
+- Ordinary Tab/Workspan visibility restore calls `scheduleFit(true, false)` and gives xterm two animation frames to emit a natural full-viewport render.
+- If no full render arrives within those two frames, mark the viewport dirty and call `scheduleFit(true, true)`. WebGL/default-renderer recreation takes this immediate full-refresh path without waiting.
 - Use the public `Terminal.onRender` row range as the primary completion signal. A full viewport render covers row `0` through the current `terminal.rows - 1`.
 - Reveal on the next animation frame after the full render event so canvas/WebGL output can reach the compositor.
-- Keep a short timeout fallback and clear timer, animation-frame, and pending state on repeated restores, visibility loss, and unmount.
+- Keep a short final timeout fallback and clear the reveal timer, reveal frame, two-frame refresh fallback, and pending state on repeated restores, visibility loss, and unmount.
 - Inactive-output replay masking remains independent. Clearing visibility-refresh masking must not reveal a terminal whose queued replay is still running.
 
 **Tests**:
 
 - Unit-test full, partial, and zero-row render-range decisions.
+- Unit-test that immediate fit can skip viewport refresh and that an explicit refresh still repaints the complete grid when dimensions are unchanged.
 - Run `npx tsc --noEmit` and the terminal visibility regression tests.
 - Manually switch normal tabs and Workspans repeatedly; verify there is no progressive diagonal repaint.
 - Manually switch back to a terminal with background output; verify the final buffer appears without blanking, partial replay, lost scrollback, or shell restart.
@@ -1161,43 +1250,13 @@ If a CLI draws large opaque panels or status rows over a terminal background ima
 
 Do not keep WebGL enabled while a terminal background image is active. The default renderer is the safer path for transparent backgrounds and xterm buffer-attr corrections; WebGL can preserve or redraw opaque TUI cells in ways that make Codex/Ratatui panels appear as black blocks.
 
-### Convention: Click-based terminal cursor movement uses the shortest line-editor path
+### Convention: Click-based terminal cursor relocation is unsupported
 
-**What**: Mouse clicks inside tracked terminal input must move the PTY line editor, not only xterm's rendered cursor. Compare direct arrow movement with Home + right arrows and End + left arrows, then send the lowest-cost sequence. Use `terminal.modes.applicationCursorKeysMode` to select CSI (`ESC [`) or application (`ESC O`) key sequences.
+**What**: Clicking terminal content does not reposition the PTY line-editor cursor. The application must not register a click handler that emits cursor-movement sequences.
 
-**Why**: Repeating one arrow escape per character makes long-distance clicks visibly crawl across the input. Writing an absolute cursor-position sequence to xterm would only change terminal rendering and desynchronize PowerShell, Readline, Claude Code, or Codex input state.
+**Why**: Rendered xterm coordinates are not a reliable representation of shell or TUI input state. Enabling this behavior desynchronizes the visible caret, the PTY line editor, and TUI-owned input boxes.
 
-**Correct**:
-
-```tsx
-const data = buildFastCursorMoveSequence(
-  currentCursorIndex,
-  targetCursorIndex,
-  inputLength,
-  !/[\r\n]/.test(currentInput),
-  terminal.modes.applicationCursorKeysMode
-);
-invoke("pty_write", { sessionId, data });
-```
-
-**Wrong**:
-
-```tsx
-// Long inputs visibly move one character at a time.
-const data = "\x1b[D".repeat(currentCursorIndex - targetCursorIndex);
-
-// Rendering-only cursor movement does not update the PTY line editor.
-terminal.write(`\x1b[${targetColumn}G`);
-```
-
-**Contracts**:
-
-- Keep `ENABLE_CLICK_CURSOR_POSITIONING` disabled until click relocation can meet the required responsiveness without desynchronizing the PTY line editor.
-- Prefer direct arrows when they are tied for the lowest cost, avoiding unnecessary Home/End semantics.
-- Do not use Home/End optimization when tracked input contains explicit CR/LF; line editors may treat them as current-line anchors instead of whole-input anchors.
-- Keep the tracked input cursor index synchronized with the selected target after the PTY write is queued.
-
-**Tests**: Cover line-start, line-end, nearby movement, explicit multiline fallback, and application cursor mode. Run `npx tsc --noEmit`; manually verify continued typing and deletion occur at the clicked character in PowerShell, Git Bash, Claude Code, and Codex.
+**Tests**: Verify normal click-to-focus and mouse text selection still work. Do not add a click-to-caret acceptance test because cursor relocation is intentionally absent.
 
 ### Convention: xterm Windows PTY and paste handling
 
@@ -1243,6 +1302,30 @@ invoke("pty_write", { sessionId, data });
 - [ ] Claude Code multi-line paste preserves line order and is not submitted line-by-line.
 - [ ] CMD still accepts normal paste and Enter behavior.
 - [ ] Browser text/image paste, app-internal file drag, and system file drop all focus the intended visible terminal only once.
+
+### Convention: Terminal input selection state stays in the Input controller
+
+**What**: useTerminalInput.attachSelection() owns current-input selection state and its mouse listeners: select-all, Shift+Arrow expansion, Arrow collapse, selection deletion/replacement, and the disabled-by-default click-cursor path. XTermTerminal may route keyboard branches to the returned controller, but must not recreate its selection snapshots or cursor-range state.
+
+**Why**: Selection editing combines xterm viewport cells with the PTY line-editor sequence. Keeping its state inside Input prevents changes to display rendering, output buffering, or context-menu UI from silently changing selection semantics.
+
+**Correct**:
+
+    const selection = attachSelection(terminal, {
+      markAttentionInputHandled,
+      reportPtyWriteError,
+    });
+    inputDisposables.push({ dispose: selection.dispose });
+
+**Contracts**:
+
+- Create one controller per terminal attachment; its selection state must start empty and dispose() must remove its DOM listeners.
+- Input owns the current-input buffer and cursor index. Callers must use the controller API rather than passing or mutating those refs.
+- Use the existing terminalTextEditing and terminalCellWidth helpers for cursor indices and display cells. Do not approximate CJK/wide-character offsets with string length.
+- The shared TUI composer markers belong in src/lib/terminalTui.ts; selection and rendering import the same patterns instead of defining local copies.
+- forwardTerminalInput() consumes a replacement selection before writing to the PTY, then clears only the state required by the original input path.
+
+**Tests**: Run npx tsc --noEmit; manually verify Ctrl/Cmd+A, Shift+Left/Right, collapse with Left/Right, Backspace/Delete, typing to replace a selection, Ctrl/Cmd+C selection copy versus Ctrl+C interrupt, and switching sessions after a selection.
 
 ### Common Mistake: Letting xterm sync updates clear the screen while the user is reading scrollback
 

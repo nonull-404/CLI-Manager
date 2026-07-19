@@ -12,6 +12,7 @@ export function findProjectByPath(projects: Project[], path: string | null | und
   let bestMatchLength = -1;
 
   for (const project of projects) {
+    if (project.environment_type === "ssh" || !project.path.trim()) continue;
     const normalizedProjectPath = normalizeProjectPath(project.path);
     const matches = normalizedPath === normalizedProjectPath || normalizedPath.startsWith(`${normalizedProjectPath}/`);
     if (!matches || normalizedProjectPath.length <= bestMatchLength) continue;
@@ -91,6 +92,16 @@ export function projectWithWorktreeProviderOverrides(project: Project, worktree:
     ...project,
     provider_overrides: providerOverrides,
   };
+}
+
+export function resolveProjectForProviderLaunch(
+  project: Project,
+  worktrees: WorktreeRecord[],
+  worktreeId?: string
+): Project {
+  if (!worktreeId) return project;
+  const worktree = worktrees.find((item) => item.id === worktreeId && item.project_id === project.id);
+  return worktree ? projectWithWorktreeProviderOverrides(project, worktree) : project;
 }
 
 export function resolveProjectForSession(
