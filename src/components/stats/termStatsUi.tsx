@@ -3,7 +3,7 @@ import type { HistorySessionDetail } from "../../lib/types";
 import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { CliToolIcon } from "../CliToolIcon";
-import { translateCurrent } from "../../lib/i18n";
+import { getCurrentLanguage, getLanguageLocale, translateCurrent } from "../../lib/i18n";
 import type { TerminalSidePanelSkin } from "../../stores/settingsStore";
 
 // 终端侧边面板语义配色。具体值由终端主题或侧边栏皮肤写入 CSS 变量。
@@ -125,7 +125,7 @@ export const SOURCE_COLORS: Record<string, string> = {
 };
 
 export function formatCount(value: number): string {
-  return new Intl.NumberFormat("zh-CN").format(Math.max(0, Math.round(value)));
+  return new Intl.NumberFormat(getLanguageLocale(getCurrentLanguage())).format(Math.max(0, Math.round(value)));
 }
 
 export function formatCompactCount(value: number): string {
