@@ -536,6 +536,7 @@ mod tests {
                 port: 22,
                 username: "dev".into(),
                 config_alias: String::new(),
+                config_file: String::new(),
                 auth_mode: "agent".into(),
                 identity_file: String::new(),
                 credential_ref: String::new(),
