@@ -36,6 +36,7 @@ src-tauri/target/
 server/target/
 apps/server/target
 apps/web/dist
+crates/web-protocol/target
 
 prototype/
 .cursor

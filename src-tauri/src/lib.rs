@@ -843,6 +843,7 @@ pub fn run() {
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
+            commands::fs::file_get_path_kind,
             commands::fs::file_watch_start,
             commands::fs::file_watch_stop,
             commands::fs::file_list_dir,

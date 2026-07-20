@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex as AsyncMutex;
 
 const CATALOG_DB_FILE: &str = "history-catalog.db";
 const CATALOG_PARSER_VERSION: i64 = 1;
@@ -18,7 +19,7 @@ const CATALOG_SEARCH_MIN_CHARS: usize = 3;
 const CATALOG_PARSE_BATCH_SIZE: usize = 2;
 const CATALOG_PROGRESS_BATCH_SIZE: usize = 20;
 
-static RUNNING_REFRESHES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static CATALOG_REFRESH_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static CATALOG_DIRTY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
@@ -47,8 +48,8 @@ struct V2LegacySessionRow {
     session_id: String,
 }
 
-fn running_refreshes() -> &'static Mutex<HashSet<String>> {
-    RUNNING_REFRESHES.get_or_init(|| Mutex::new(HashSet::new()))
+fn catalog_refresh_lock() -> &'static AsyncMutex<()> {
+    CATALOG_REFRESH_LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
 pub(super) fn mark_dirty() {
@@ -3003,12 +3004,6 @@ async fn mark_refresh_error(app: &AppHandle, roots: &HistoryRoots, error: String
     emit_status(app, &status);
 }
 
-fn finish_running(roots_key: &str) {
-    if let Ok(mut running) = running_refreshes().lock() {
-        running.remove(roots_key);
-    }
-}
-
 pub(super) async fn ensure_refresh(
     app: AppHandle,
     roots: HistoryRoots,
@@ -3029,48 +3024,39 @@ pub(super) async fn ensure_refresh(
         return Ok(status);
     }
 
-    let acquired = running_refreshes()
-        .lock()
-        .map(|mut running| running.insert(roots_key.clone()))
-        .unwrap_or(false);
-    if acquired {
-        if wait {
-            let result = refresh_catalog(&app, &roots).await;
-            finish_running(&roots_key);
-            if let Err(error) = &result {
-                mark_refresh_error(&app, &roots, error.clone()).await;
-            }
-            return result;
+    if wait {
+        let _refresh_guard = catalog_refresh_lock().lock().await;
+        let result = refresh_catalog(&app, &roots).await;
+        if let Err(error) = &result {
+            mark_refresh_error(&app, &roots, error.clone()).await;
         }
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = refresh_catalog(&app, &roots).await {
-                warn!("history catalog refresh failed: roots={roots_key}, err={error}");
-                mark_refresh_error(&app, &roots, error).await;
-            }
-            finish_running(&roots_key);
-        });
-        return Ok(status);
+        return result;
     }
 
-    if wait {
-        for _ in 0..1200 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let running = running_refreshes()
-                .lock()
-                .map(|running| running.contains(&roots_key))
-                .unwrap_or(false);
-            if !running {
-                return get_status(&roots).await;
-            }
+    let Ok(refresh_guard) = catalog_refresh_lock().try_lock() else {
+        return Ok(status);
+    };
+    tauri::async_runtime::spawn(async move {
+        let _refresh_guard = refresh_guard;
+        if let Err(error) = refresh_catalog(&app, &roots).await {
+            warn!("history catalog refresh failed: roots={roots_key}, err={error}");
+            mark_refresh_error(&app, &roots, error).await;
         }
-        return Err("history_index_refresh_timeout".to_string());
-    }
+    });
     Ok(status)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn catalog_refresh_lock_serializes_all_roots() {
+        let first_refresh = catalog_refresh_lock().lock().await;
+        assert!(catalog_refresh_lock().try_lock().is_err());
+        drop(first_refresh);
+        assert!(catalog_refresh_lock().try_lock().is_ok());
+    }
 
     #[test]
     fn fts_literal_escapes_quotes() {
