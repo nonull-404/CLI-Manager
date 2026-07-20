@@ -372,11 +372,13 @@ let workspanIdSeq = 0;
 let subagentSeq = 0;
 const subagentCloseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const subagentDiscoveryTimers = new Map<string, ReturnType<typeof setInterval>>();
-const subagentTranscriptRetryTimers = new Map<string, ReturnType<typeof setInterval>>();
+const subagentTranscriptRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const SUBAGENT_CLOSE_DELAY_MS = 1500;
 const SUBAGENT_CHILD_JSONL_CLOSE_DELAY_MS = 10_000;
 const SUBAGENT_DISCOVERY_INTERVAL_MS = 1000;
-const SUBAGENT_DISCOVERY_TTL_MS = 15000;
+const SUBAGENT_DISCOVERY_FAST_WINDOW_MS = 15000;
+const SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS = 5000;
+const SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS = 15000;
 const PTY_ORPHAN_RECONCILE_INTERVAL_MS = 30_000;
 const TERMINAL_STORE_IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -471,7 +473,7 @@ function inferWslDistroFromCwd(cwd: string | null | undefined): string | null {
   const value = trimOptional(cwd);
   if (!value) return null;
   const normalized = value.replace(/\//g, "\\");
-  const match = normalized.match(/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(?:\\|$)/i);
+  const match = normalized.match(/^(?:\\\\wsl(?:\.localhost|\$)\\|\\\\\?\\UNC\\wsl(?:\.localhost|\$)\\)([^\\]+)(?:\\|$)/i);
   return match?.[1]?.trim() || null;
 }
 
@@ -594,7 +596,7 @@ function shouldAttemptDerivedChildTranscript(payload: CliHookPayload, source: Su
 function stopSubagentTranscriptRetry(sessionId: string, reason: string) {
   const timer = subagentTranscriptRetryTimers.get(sessionId);
   if (!timer) return;
-  clearInterval(timer);
+  clearTimeout(timer);
   subagentTranscriptRetryTimers.delete(sessionId);
   logInfo("[subagent_transcript] stopped transcript discovery retry", { sessionId, reason });
 }
@@ -602,37 +604,46 @@ function stopSubagentTranscriptRetry(sessionId: string, reason: string) {
 function startSubagentTranscriptRetry(sessionId: string, attempt: () => Promise<boolean>) {
   if (subagentTranscriptRetryTimers.has(sessionId)) return;
 
-  const startTime = Date.now();
-  let running = false;
-  const intervalId = setInterval(() => {
-    const elapsed = Date.now() - startTime;
+  const startedAt = Date.now();
+  const runAttempt = () => {
     const store = useTerminalStore.getState();
     const transcript = store.subagentTranscripts[sessionId];
     if (
-      elapsed > SUBAGENT_DISCOVERY_TTL_MS ||
       !store.sessions.some((session) => session.id === sessionId) ||
       transcript?.source.kind === "child-jsonl"
     ) {
-      stopSubagentTranscriptRetry(sessionId, elapsed > SUBAGENT_DISCOVERY_TTL_MS ? "ttl_expired" : "inactive");
+      stopSubagentTranscriptRetry(sessionId, "inactive");
       return;
     }
-    if (running) return;
 
-    running = true;
     void attempt()
       .then((subscribed) => {
-        if (subscribed) stopSubagentTranscriptRetry(sessionId, "subscribed");
+        if (subscribed) {
+          stopSubagentTranscriptRetry(sessionId, "subscribed");
+          return;
+        }
+        if (!subagentTranscriptRetryTimers.has(sessionId)) return;
+        const elapsed = Date.now() - startedAt;
+        const delay = elapsed < SUBAGENT_DISCOVERY_FAST_WINDOW_MS ? SUBAGENT_DISCOVERY_INTERVAL_MS : SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS;
+        const timerId = setTimeout(runAttempt, delay);
+        subagentTranscriptRetryTimers.set(sessionId, timerId);
       })
-      .finally(() => {
-        running = false;
+      .catch((err) => {
+        logWarn("[subagent_transcript] transcript discovery retry failed", { sessionId, err });
+        if (!subagentTranscriptRetryTimers.has(sessionId)) return;
+        const timerId = setTimeout(runAttempt, SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS);
+        subagentTranscriptRetryTimers.set(sessionId, timerId);
       });
-  }, SUBAGENT_DISCOVERY_INTERVAL_MS);
+  };
 
-  subagentTranscriptRetryTimers.set(sessionId, intervalId);
+  const timerId = setTimeout(runAttempt, SUBAGENT_DISCOVERY_INTERVAL_MS);
+  subagentTranscriptRetryTimers.set(sessionId, timerId);
   logInfo("[subagent_transcript] started transcript discovery retry", {
     sessionId,
-    intervalMs: SUBAGENT_DISCOVERY_INTERVAL_MS,
-    ttlMs: SUBAGENT_DISCOVERY_TTL_MS,
+    fastIntervalMs: SUBAGENT_DISCOVERY_INTERVAL_MS,
+    slowIntervalMs: SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS,
+    fastWindowMs: SUBAGENT_DISCOVERY_FAST_WINDOW_MS,
+    stopConditions: ["subscribed", "finished", "session_closed", "pane_unsplit"],
   });
 }
 
@@ -658,7 +669,7 @@ function startSubagentDiscovery(
 
   const intervalId = setInterval(() => {
     const elapsed = Date.now() - startTime;
-    if (elapsed > SUBAGENT_DISCOVERY_TTL_MS) {
+    if (elapsed > SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS) {
       clearInterval(intervalId);
       subagentDiscoveryTimers.delete(key);
       logInfo("[subagent_discovery] TTL expired", { parentTabId, elapsed });
@@ -750,7 +761,7 @@ function startSubagentDiscovery(
   }, SUBAGENT_DISCOVERY_INTERVAL_MS);
 
   subagentDiscoveryTimers.set(key, intervalId);
-  logInfo("[subagent_discovery] started", { parentTabId, cwd, sessionId: parentSessionId, wslDistroName, ttlMs: SUBAGENT_DISCOVERY_TTL_MS });
+  logInfo("[subagent_discovery] started", { parentTabId, cwd, sessionId: parentSessionId, wslDistroName, ttlMs: SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS });
 }
 
 function findSubagentSessionId(sessions: TerminalSession[], payload: CliHookPayload): string | null {
