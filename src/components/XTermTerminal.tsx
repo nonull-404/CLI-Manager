@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Terminal, type IBufferLine, type IDisposable, type ILink, type ITheme } from "@xterm/xterm";
+import {
+  Terminal,
+  type IBufferLine,
+  type IBufferRange,
+  type IDisposable,
+  type ILink,
+  type ITheme,
+} from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
@@ -24,7 +31,7 @@ import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
-import { useTerminalOsc, type TerminalOutputNormalizationOptions } from "../hooks/useTerminalOsc";
+import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth } from "../lib/terminalCellWidth";
@@ -144,6 +151,62 @@ const getTerminalRenderedCellSize = (terminal: Terminal, terminalContainer: HTML
   };
 };
 
+type TerminalLinkIconKind = "file" | "directory";
+type TerminalPathKind = "file" | "directory" | "missing";
+
+interface TerminalLinkHoverIcon extends IDisposable {
+  hide(): void;
+  showBufferRange(kind: TerminalLinkIconKind, range: IBufferRange): void;
+}
+
+const createTerminalLinkHoverIcon = (
+  terminal: Terminal,
+  terminalContainer: HTMLElement,
+  fallbackFontSize: number,
+): TerminalLinkHoverIcon => {
+  const element = document.createElement("div");
+  element.className = "terminal-link-hover-icon xterm-hover";
+  element.setAttribute("aria-hidden", "true");
+  element.hidden = true;
+  terminal.element?.appendChild(element);
+
+  const showAt = (kind: TerminalLinkIconKind, x: number, y: number) => {
+    const terminalElement = terminal.element;
+    const screen = terminalElement?.querySelector<HTMLElement>(".xterm-screen");
+    if (!terminalElement || !screen || y < 0 || y >= terminal.rows) {
+      element.hidden = true;
+      return;
+    }
+
+    const terminalRect = terminalElement.getBoundingClientRect();
+    const screenRect = screen.getBoundingClientRect();
+    const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fallbackFontSize);
+    const left = screenRect.left - terminalRect.left + x * cell.width - 10;
+    const top = screenRect.top - terminalRect.top + y * cell.height - 8;
+    element.dataset.kind = kind;
+    element.style.setProperty("--terminal-link-icon-fg", terminal.options.theme?.foreground ?? "#d8dee9");
+    element.style.setProperty("--terminal-link-icon-bg", terminal.options.theme?.background ?? "#111827");
+    element.style.transform = `translate3d(${Math.max(2, left)}px, ${Math.max(2, top)}px, 0)`;
+    element.hidden = false;
+  };
+
+  return {
+    hide: () => {
+      element.hidden = true;
+    },
+    showBufferRange: (kind, range) => {
+      showAt(
+        kind,
+        range.start.x - 1,
+        range.start.y - terminal.buffer.active.viewportY - 1,
+      );
+    },
+    dispose: () => {
+      element.remove();
+    },
+  };
+};
+
 const copyTextToClipboard = async (text: string) => {
   if (!text) return;
   try {
@@ -212,28 +275,35 @@ const cleanupExpiredAttachments = async (rootPath: string) => (
   invoke<number>("file_cleanup_expired_attachments", { rootPath })
 );
 
-const openTerminalFilePath = async (sessionId: string, rawPath: string) => {
+const getTerminalFileLinkContext = (sessionId: string, rawPath: string) => {
   const terminalState = useTerminalStore.getState();
   const session = terminalState.sessions.find((item) => item.id === sessionId) ?? null;
   const projectState = useProjectStore.getState();
   const currentProject = session?.projectId
     ? projectState.projects.find((item) => item.id === session.projectId) ?? null
     : findProjectByPath(projectState.projects, session?.cwd);
-  if (!projectSupportsCapability(currentProject, "files")) {
+  const currentWorktree = session?.worktreeId
+    ? projectState.worktrees.find((item) => item.id === session.worktreeId) ?? null
+    : findWorktreeByPath(projectState.worktrees, session?.cwd);
+  const currentRootPath = currentWorktree?.path ?? currentProject?.path ?? session?.cwd ?? null;
+  return {
+    supportsFiles: projectSupportsCapability(currentProject, "files"),
+    systemPath: resolveTerminalFileSystemPath(rawPath, currentRootPath),
+  };
+};
+
+const openTerminalFilePath = async (sessionId: string, rawPath: string) => {
+  const context = getTerminalFileLinkContext(sessionId, rawPath);
+  if (!context.supportsFiles) {
     toast.info(translateCurrent("remoteCapabilities.unsupportedTitle"), {
       description: translateCurrent("remoteCapabilities.unsupportedDescription"),
     });
     return;
   }
-  const currentWorktree = session?.worktreeId
-    ? projectState.worktrees.find((item) => item.id === session.worktreeId) ?? null
-    : findWorktreeByPath(projectState.worktrees, session?.cwd);
-  const currentRootPath = currentWorktree?.path ?? currentProject?.path ?? session?.cwd ?? null;
-  const systemPath = resolveTerminalFileSystemPath(rawPath, currentRootPath);
-  if (!systemPath) return;
+  if (!context.systemPath) return;
 
-  void invoke("open_folder_in_explorer", { path: systemPath }).catch((err) => {
-    logError("Failed to open terminal file", { sessionId, path: systemPath, err });
+  void invoke("open_folder_in_explorer", { path: context.systemPath }).catch((err) => {
+    logError("Failed to open terminal file", { sessionId, path: context.systemPath, err });
     toast.error(translateCurrent("files.toast.openFileFailed"), { description: String(err) });
   });
 };
@@ -297,10 +367,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const visibilityRestoreFallbackRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
-  const displayNormalizeOutputRef = useRef<(
-    text: string,
-    options?: TerminalOutputNormalizationOptions,
-  ) => string>((text) => text);
+  const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
   const displayTransformOutputRef = useRef<(text: string) => string>((text) => text);
   const displayAfterWriteRef = useRef<((terminal: Terminal) => void) | null>(null);
   const cleanedAttachmentRootsRef = useRef<Set<string>>(new Set());
@@ -523,11 +590,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const {
     normalizeTerminalOutput,
     updateSessionCwdIfChanged,
-    updateTerminalColorReplies,
   } = useTerminalOsc({
     sessionId,
     osPlatformRef,
-    onPtyWriteError: reportPtyWriteError,
   });
   displayNormalizeOutputRef.current = normalizeTerminalOutput;
 
@@ -811,6 +876,47 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (!containerRef.current) return;
 
     const baseTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
+    let linkHoverIcon: TerminalLinkHoverIcon | null = null;
+    let ctrlKeyDown = false;
+    let fileHoverGeneration = 0;
+    const pathKindCache = new Map<string, TerminalPathKind>();
+    const shouldActivateTerminalLink = (event: MouseEvent) => (
+      event.button === 0 && (event.ctrlKey || ctrlKeyDown)
+    );
+    const hideLinkHoverIcon = () => {
+      fileHoverGeneration += 1;
+      linkHoverIcon?.hide();
+    };
+    const showFileLinkIcon = (rawPath: string, range: IBufferRange) => {
+      const generation = ++fileHoverGeneration;
+      const context = getTerminalFileLinkContext(sessionId, rawPath);
+      if (!context.supportsFiles || !context.systemPath) {
+        linkHoverIcon?.hide();
+        return;
+      }
+      const systemPath = context.systemPath;
+
+      const showKind = (kind: TerminalPathKind) => {
+        if (generation !== fileHoverGeneration) return;
+        if (kind === "file" || kind === "directory") {
+          linkHoverIcon?.showBufferRange(kind, range);
+        } else {
+          linkHoverIcon?.hide();
+        }
+      };
+      const cachedKind = pathKindCache.get(systemPath);
+      if (cachedKind) {
+        showKind(cachedKind);
+        return;
+      }
+
+      invoke<TerminalPathKind>("file_get_path_kind", { path: systemPath })
+        .then((kind) => {
+          if (kind !== "missing") pathKindCache.set(systemPath, kind);
+          showKind(kind);
+        })
+        .catch(() => showKind("missing"));
+    };
     const terminal = new Terminal({
       cols: 80,
       rows: 24,
@@ -889,15 +995,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           return;
         }
         const line = terminal.buffer.active.getLine(bufferLineNumber - 1)?.translateToString(true) ?? "";
-        const links: ILink[] = findTerminalFileLinks(line).map((match) => ({
-          range: {
+        const links: ILink[] = findTerminalFileLinks(line).map((match) => {
+          const range: IBufferRange = {
             start: { x: match.startIndex + 1, y: bufferLineNumber },
             end: { x: match.endIndex, y: bufferLineNumber },
-          },
-          text: match.text,
-          activate: () => void openTerminalFilePath(sessionId, match.text),
-          decorations: { pointerCursor: true, underline: true },
-        }));
+          };
+          return {
+            range,
+            text: match.text,
+            activate: (event) => {
+              if (shouldActivateTerminalLink(event)) void openTerminalFilePath(sessionId, match.text);
+            },
+            hover: () => showFileLinkIcon(match.text, range),
+            leave: hideLinkHoverIcon,
+            decorations: { pointerCursor: true, underline: true },
+          };
+        });
         callback(links.length > 0 ? links : undefined);
       },
     }));
@@ -907,6 +1020,24 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     terminal.loadAddon(unicode11Addon);
     terminal.unicode.activeVersion = "11";
     terminal.open(containerRef.current);
+    const updateCtrlKeyState = (event: KeyboardEvent) => {
+      if (event.key === "Control") ctrlKeyDown = event.type === "keydown";
+    };
+    const resetCtrlKeyState = () => {
+      ctrlKeyDown = false;
+    };
+    window.addEventListener("keydown", updateCtrlKeyState, true);
+    window.addEventListener("keyup", updateCtrlKeyState, true);
+    window.addEventListener("blur", resetCtrlKeyState);
+    baseDisposables.push({
+      dispose: () => {
+        window.removeEventListener("keydown", updateCtrlKeyState, true);
+        window.removeEventListener("keyup", updateCtrlKeyState, true);
+        window.removeEventListener("blur", resetCtrlKeyState);
+      },
+    });
+    linkHoverIcon = createTerminalLinkHoverIcon(terminal, containerRef.current, fontSize);
+    baseDisposables.push(linkHoverIcon);
     // 注册定时节流落盘的快照来源：让崩溃/强杀也能恢复到最近一次落盘的画面。
     const serializeAfterWriteBarrier = () => new Promise<string>((resolve) => {
       terminal.write("", () => resolve(serializeAddon.serialize()));
@@ -1291,10 +1422,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   const backgroundOverlayColor = getTerminalBackgroundOverlayColor(terminalTheme);
   const showBackgroundImage = isTransparent && assetUrl !== null;
-  updateTerminalColorReplies({
-    foreground: normalizeHexColor(terminalTheme.foreground, "#d8dee9"),
-    background: normalizeHexColor(terminalTheme.background, backgroundColor),
-  });
+  const terminalForegroundColor = normalizeHexColor(terminalTheme.foreground, "#d8dee9");
+  const terminalBackgroundColor = normalizeHexColor(terminalTheme.background, backgroundColor);
+  useEffect(() => {
+    terminalProcessManager.setTerminalColors(sessionId, {
+      foreground: terminalForegroundColor,
+      background: terminalBackgroundColor,
+    }).catch((err) => reportPtyWriteError("terminal_colors", err));
+  }, [sessionId, terminalForegroundColor, terminalBackgroundColor]);
   const searchForeground = normalizeHexColor(terminalTheme.foreground, "#d8dee9");
   const searchBackground = normalizeHexColor(terminalTheme.background, backgroundColor);
   const searchAccent = normalizeHexColor(terminalTheme.cursor, searchForeground);
