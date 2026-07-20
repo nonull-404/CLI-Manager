@@ -18,8 +18,8 @@ mod linux_graphics;
 mod log_rotation;
 pub mod pty;
 mod shell_resolver;
-pub mod ssh_launch;
 pub mod ssh_askpass;
+pub mod ssh_launch;
 pub mod ssh_proxy;
 pub mod statusline;
 pub mod statusline_profiles;
@@ -856,6 +856,7 @@ pub fn run() {
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
+            commands::fs::file_get_path_kind,
             commands::fs::file_watch_start,
             commands::fs::file_watch_stop,
             commands::fs::file_list_dir,
@@ -1141,19 +1142,38 @@ mod ssh_migration_tests {
     #[tokio::test]
     async fn ssh_group_migration_preserves_flat_groups_as_roots() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
-        sqlx::query("PRAGMA foreign_keys = ON").execute(&mut conn).await.unwrap();
-        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)")
-            .execute(&mut conn).await.unwrap();
-        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO ssh_hosts (id, name, group_name, host, created_at, updated_at) VALUES ('host-1', 'Server', 'Production', 'example.com', '1', '1')")
             .execute(&mut conn).await.unwrap();
 
-        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
 
-        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'").fetch_one(&mut conn).await.unwrap();
+        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         let group_id = host.get::<Option<String>, _>("group_id").unwrap();
         let group = sqlx::query("SELECT name, parent_id FROM ssh_host_groups WHERE id = ?")
-            .bind(group_id).fetch_one(&mut conn).await.unwrap();
+            .bind(group_id)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         assert_eq!(group.get::<String, _>("name"), "Production");
         assert_eq!(group.get::<Option<String>, _>("parent_id"), None);
     }
